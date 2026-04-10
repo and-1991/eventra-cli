@@ -1,12 +1,17 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "Eventra CLI",
   "type": "commonjs",
   "bin": {
     "eventra": "./dist/index.js"
   },
   "access": "public",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/and-1991/eventa-cli"
+  },
+  "homepage": "https://eventra.dev",
   "license": "MIT",
   "scripts": {
     "build": "tsc && chmod +x dist/index.js",

@@ -1,309 +1,136 @@
+```{=html}
+<p align="center">
+```
+`<img src="https://eventra.dev/eventra-icon-animated.svg" width="120" />`{=html}
+```{=html}
+</p>
+```
 # Eventra CLI
 
-Eventra CLI automatically discovers feature usage events in your codebase and syncs them with Eventra.
+[![npm
+version](https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
+[![npm
+downloads](https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
+[![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
 
-It helps you:
+Eventra CLI automatically discovers feature usage events in your
+codebase and syncs them with Eventra.
 
-- Automatically discover events
-- Detect wrapper components
-- Keep events in sync
-- Register features in Eventra
-- Works with any JS framework (React, Vue, Svelte, Node, etc.)
+Eventra CLI helps you:
 
----
+-   Discover feature usage automatically
+-   Detect wrapper components
+-   Keep events in sync
+-   Register features in Eventra
+-   Maintain consistent event naming
+
+It is designed to be:
+
+-   framework-agnostic
+-   static analysis based
+-   zero runtime overhead
+-   production-safe
+
+------------------------------------------------------------------------
 
 # Installation
 
-Using npm
+### npm
 
-```bash
+``` bash
 npm install -D @eventra_dev/eventra-cli
 ```
 
-Using pnpm
+### pnpm
 
-```bash
+``` bash
 pnpm add -D @eventra_dev/eventra-cli
 ```
 
-Using npx
+### yarn
 
-```bash
+``` bash
+yarn add -D @eventra_dev/eventra-cli
+```
+
+### npx
+
+``` bash
 npx eventra init
 ```
 
----
+------------------------------------------------------------------------
 
 # Quick Start
 
-```bash
+``` bash
 eventra init
 eventra sync
 eventra send
 ```
 
----
+------------------------------------------------------------------------
 
 # Commands
 
 ## eventra init
 
-Creates `eventra.json` config file.
+Creates `eventra.json` configuration file.
 
-```bash
+``` bash
 eventra init
 ```
 
-Example:
-
-```json
-{
-  "apiKey": "",
-  "events": [],
-  "wrappers": [],
-  "sync": {
-    "include": ["**/*.{ts,tsx,js,jsx}"],
-    "exclude": ["node_modules", "dist", ".next", ".git"]
-  }
-}
-```
-
----
+------------------------------------------------------------------------
 
 ## eventra sync
 
-Scans your project and finds all tracking events automatically.
+Scans your project and discovers events automatically.
 
-```bash
-eventra sync
-```
-
-Eventra CLI searches for:
-
-### Direct tracking calls
-
-```ts
+``` ts
 tracker.track("feature_created")
 ```
 
-### Wrapper components
-
-```tsx
+``` tsx
 <TrackedButton event="feature_created" />
 ```
 
-### Custom wrappers
-
-```tsx
+``` tsx
 <MyComponent event="user_signup" />
 ```
 
----
-
-# Wrapper detection
-
-If you use wrapper components, Eventra CLI will ask:
-
-```
-Use wrapper components? (Y/n)
-```
-
-Then:
-
-```
-Wrapper component name:
-> TrackedButton
-```
-
-```
-Event prop name:
-> event
-```
-
-You can add multiple wrappers:
-
-```
-Add another wrapper? (y/N)
-```
-
-Example config:
-
-```json
-{
-  "wrappers": [
-    {
-      "name": "TrackedButton",
-      "prop": "event"
-    },
-    {
-      "name": "Feature",
-      "prop": "name"
-    }
-  ]
-}
-```
-
----
-
-# Example sync output
-
-```bash
-eventra sync
-```
-
-Output:
-
-```
-Scanning project...
-
-Found events:
-
-- landing_login_clicked
-- feature_created
-- user_signup
-```
-
----
-
-# Diff detection
-
-Eventra CLI automatically detects changes:
-
-```
-Changes:
-
-New events:
-+ landing_signup_clicked
-
-Removed events:
-- old_event
-```
-
----
+------------------------------------------------------------------------
 
 ## eventra send
 
 Send events to Eventra backend.
 
-```bash
+``` bash
 eventra send
 ```
 
-If API key is missing:
+------------------------------------------------------------------------
 
-```
-API key is not configured
-Enter your API key:
-```
+# Supported Frameworks
 
-Events are registered in Eventra.
+-   React
+-   Next.js
+-   Vue
+-   Nuxt
+-   Svelte
+-   Astro
+-   Node.js
+-   Express
+-   NestJS
 
-Example output:
-
-```
-Events registered successfully
-
-New events:
-+ feature_created
-```
-
----
-
-# Example workflow
-
-```bash
-eventra init
-eventra sync
-eventra send
-```
-
----
-
-# Configuration
-
-eventra.json
-
-```json
-{
-  "apiKey": "",
-  "events": [],
-  "wrappers": [],
-  "sync": {
-    "include": ["**/*.{ts,tsx,js,jsx}"],
-    "exclude": ["node_modules", "dist", ".next", ".git"]
-  }
-}
-```
-
----
-
-# Supported patterns
-
-## Direct tracking
-
-```ts
-tracker.track("feature_created")
-```
-
-## Wrapper components
-
-```tsx
-<TrackedButton event="feature_created" />
-```
-
-## Custom wrapper props
-
-```tsx
-<MyComponent eventName="user_signup" />
-```
-
----
-
-# Supported frameworks
-
-Eventra CLI works with:
-
-- React
-- Next.js
-- Vue
-- Nuxt
-- Svelte
-- Astro
-- Node.js
-- Express
-- NestJS
-- Vanilla JavaScript
-
----
-
-# Important
-
-Eventra CLI detects only string literals:
-
-Supported:
-
-```ts
-track("event_name")
-```
-
-Not supported:
-
-```ts
-track(eventName)
-track(EVENTS.event)
-track(getEvent())
-```
-
-This ensures reliable and predictable event detection.
-
----
+------------------------------------------------------------------------
 
 # Requirements
 
-- Node.js 18+
-- JavaScript / TypeScript project
+-   Node.js 18+
+-   JavaScript / TypeScript project
 
----
+------------------------------------------------------------------------
 
 # License
 
