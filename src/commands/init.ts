@@ -39,6 +39,7 @@ export async function init() {
     apiKey: answers.apiKey || "",
     events: [],
     wrappers: [],
+    functionWrappers: [],
     sync: {
       include: ["**/*.{ts,tsx,js,jsx}"],
       exclude: [

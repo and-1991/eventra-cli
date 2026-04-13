@@ -5,12 +5,15 @@ import {
   saveConfig
 } from "../utils/config";
 
-const EVENTRA_ENDPOINT = process.env.EVENTRA_ENDPOINT ?? "";
+import pkg from "../../package.json";
 
-const CLI_VERSION = "0.0.1";
+const EVENTRA_ENDPOINT =
+  process.env.EVENTRA_ENDPOINT ?? "";
+
+const CLI_VERSION = pkg.version;
 
 export async function send() {
-  let config = await loadConfig();
+  const config = await loadConfig();
 
   if (!config) {
     console.log(
@@ -23,6 +26,7 @@ export async function send() {
 
   let apiKey = config.apiKey;
 
+  // ask api key
   if (!apiKey) {
     const answers =
       await inquirer.prompt([
@@ -41,13 +45,12 @@ export async function send() {
     await saveConfig(config);
 
     console.log(
-      chalk.green(
-        "API key saved"
-      )
+      chalk.green("API key saved")
     );
   }
 
-  if (!config.events.length) {
+  // no events
+  if (!config.events?.length) {
     console.log(
       chalk.yellow(
         "No events found. Run 'eventra sync'"
@@ -56,12 +59,32 @@ export async function send() {
     return;
   }
 
+  if (!apiKey) {
+    console.log(
+      chalk.red("API key required")
+    );
+    return;
+  }
+
+  if (!EVENTRA_ENDPOINT) {
+    console.log(
+      chalk.red(
+        "EVENTRA_ENDPOINT not configured"
+      )
+    );
+    return;
+  }
+
+  console.log("");
   console.log(
-    chalk.blue("Sending events...")
+    chalk.blue(
+      `Sending ${config.events.length} events...`
+    )
   );
 
   try {
-    const res = await fetch(EVENTRA_ENDPOINT,
+    const res = await fetch(
+      EVENTRA_ENDPOINT,
       {
         method: "POST",
         headers: {
@@ -81,17 +104,27 @@ export async function send() {
       }
     );
 
-    if (res.status >= 400) {
+    if (!res.ok) {
       console.log(
         chalk.red(
-          `Failed (${res.status})`
+          `Request failed (${res.status})`
         )
       );
+
+      try {
+        const text =
+          await res.text();
+
+        console.log(
+          chalk.gray(text)
+        );
+      } catch {}
 
       return;
     }
 
-    const data = await res.json();
+    const data =
+      await res.json();
 
     console.log(
       chalk.green(
@@ -99,11 +132,10 @@ export async function send() {
       )
     );
 
+    // created
     if (data.created?.length) {
       console.log(
-        chalk.green(
-          "\nNew events:"
-        )
+        chalk.green("\nNew events:")
       );
 
       data.created.forEach(
@@ -116,9 +148,61 @@ export async function send() {
       );
     }
 
-  } catch {
+    // existing
+    if (data.existing?.length) {
+      console.log(
+        chalk.gray(
+          "\nExisting events:"
+        )
+      );
+
+      data.existing.forEach(
+        (e: string) =>
+          console.log(
+            chalk.gray(
+              `• ${e}`
+            )
+          )
+      );
+    }
+
+    // processing notice
+    if (data.created?.length) {
+      console.log("");
+      console.log(
+        chalk.yellow(
+          "Events queued for processing (~2 min)"
+        )
+      );
+
+      console.log(
+        chalk.gray(
+          "They will appear in dashboard shortly"
+        )
+      );
+    }
+
+    console.log("");
+
     console.log(
-      chalk.red("Network error")
+      chalk.gray(
+        `Sent ${config.events.length} events`
+      )
     );
+
+  } catch (err) {
+    console.log(
+      chalk.red(
+        "Network error"
+      )
+    );
+
+    if (err instanceof Error) {
+      console.log(
+        chalk.gray(
+          err.message
+        )
+      );
+    }
   }
 }
