@@ -40,6 +40,8 @@ export async function sync() {
   const aliases =
     config.aliases ?? {};
 
+  const asked = new Set<string>()
+
   const files = await fg(
     config.sync.include,
     {
@@ -102,7 +104,7 @@ export async function sync() {
       }
 
       // dynamic event
-      if (dynamic) {
+      if (dynamic && !asked.has(value)) {
         console.log(
           chalk.yellow(
             "\nDynamic event detected:"
@@ -119,13 +121,15 @@ export async function sync() {
               type: "input",
               name: "name",
               message:
-                "Enter event name:",
-              validate: (v) =>
-                v
-                  ? true
-                  : "Required"
+                "Enter event name (or type 'skip'):"
             }
           ]);
+
+        asked.add(value);
+
+        if (!name || name === "skip") {
+          continue;
+        }
 
         aliases[value] = name;
 
