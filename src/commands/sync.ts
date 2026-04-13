@@ -2,6 +2,7 @@ import chalk from "chalk";
 import fg from "fast-glob";
 import { Project } from "ts-morph";
 import fs from "fs/promises";
+import inquirer from "inquirer";
 
 import {
   loadConfig,
@@ -34,24 +35,15 @@ export async function sync() {
   const project = new Project();
   const events = new Set<string>();
 
+  const aliases =
+    config.aliases ?? {};
+
   const files = await fg(
     config.sync.include,
     {
       ignore: config.sync.exclude
     }
   );
-
-  const functionWrappers =
-    (config.functionWrappers ?? []).map(
-      (w) => ({
-        name: w.name,
-        path: w.event
-          ? `0.${w.event}`
-          : "0"
-      })
-    );
-  const componentWrappers =
-    config.wrappers ?? [];
 
   for (const file of files) {
     const parser =
@@ -84,25 +76,77 @@ export async function sync() {
         { overwrite: true }
       );
 
-    scanTrack(source).forEach(
-      (e) => events.add(e)
-    );
+    const found = [
+      ...scanTrack(source),
+      ...scanFunctionWrappers(
+        source,
+        config.functionWrappers ?? []
+      ),
+      ...scanComponentWrappers(
+        source,
+        config.wrappers ?? []
+      )
+    ];
 
+    for (const event of found) {
+      if (!event) continue;
 
-    scanFunctionWrappers(
-      source,
-      functionWrappers
-    ).forEach((e) =>
-      events.add(e)
-    );
+      const value =
+        typeof event === "string"
+          ? event
+          : event.value;
 
-    scanComponentWrappers(
-      source,
-      componentWrappers
-    ).forEach((e) =>
-      events.add(e)
-    );
+      const dynamic =
+        typeof event === "string"
+          ? false
+          : event.dynamic;
+
+      // alias exists
+      if (aliases[value]) {
+        events.add(
+          aliases[value]
+        );
+        continue;
+      }
+
+      // dynamic event
+      if (dynamic) {
+        console.log(
+          chalk.yellow(
+            "\nDynamic event detected:"
+          )
+        );
+
+        console.log(
+          chalk.gray(value)
+        );
+
+        const { name } =
+          await inquirer.prompt([
+            {
+              type: "input",
+              name: "name",
+              message:
+                "Enter event name:",
+              validate: (v) =>
+                v
+                  ? true
+                  : "Required"
+            }
+          ]);
+
+        aliases[value] = name;
+
+        events.add(name);
+
+        continue;
+      }
+
+      events.add(value);
+    }
   }
+
+  config.aliases = aliases;
 
   const list =
     [...events].sort();

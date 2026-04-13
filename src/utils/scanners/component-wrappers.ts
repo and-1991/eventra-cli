@@ -1,15 +1,18 @@
 import {
   SourceFile,
   SyntaxKind,
+  Node
 } from "ts-morph";
 
-import { ComponentWrapper } from "../../types";
+import { ComponentWrapper, ExtractedEvent } from "../../types";
+import { extractExpression } from "../extract";
 
 export function scanComponentWrappers(
   source: SourceFile,
   wrappers: ComponentWrapper[]
 ) {
-  const events = new Set<string>();
+  const events =
+    new Set<ExtractedEvent>();
 
   const elements = [
     ...source.getDescendantsOfKind(
@@ -61,44 +64,31 @@ export function scanComponentWrappers(
 
         if (!init) continue;
 
+        // event="signup"
         if (
-          init.getKind() ===
-          SyntaxKind.StringLiteral
+          Node.isStringLiteral(init)
         ) {
-          const value =
-            init.asKindOrThrow(
-              SyntaxKind.StringLiteral
-            );
-
-          events.add(
-            value.getLiteralText()
-          );
+          events.add({
+            value:
+              init.getLiteralText(),
+            dynamic: false
+          });
         }
 
+        // event={...}
         if (
-          init.getKind() ===
-          SyntaxKind.JsxExpression
+          Node.isJsxExpression(init)
         ) {
           const expr =
-            init
-              .asKindOrThrow(
-                SyntaxKind.JsxExpression
-              )
-              .getExpression();
+            init.getExpression();
 
-          if (
-            expr?.getKind() ===
-            SyntaxKind.StringLiteral
-          ) {
-            const value =
-              expr.asKindOrThrow(
-                SyntaxKind.StringLiteral
-              );
+          if (!expr) continue;
 
-            events.add(
-              value.getLiteralText()
-            );
-          }
+          const result =
+            extractExpression(expr);
+
+          if (result)
+            events.add(result);
         }
       }
     }

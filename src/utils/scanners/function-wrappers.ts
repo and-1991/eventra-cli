@@ -6,14 +6,15 @@ import {
   PropertyAccessExpression,
 } from "ts-morph";
 
-import { extractEvent } from "../extract";
-import { FunctionWrapper } from "../../types";
+import { extractExpression } from "../extract";
+import { FunctionWrapper, ExtractedEvent } from "../../types";
 
 export function scanFunctionWrappers(
   source: SourceFile,
   wrappers: FunctionWrapper[]
 ) {
-  const events = new Set<string>();
+  const events =
+    new Set<ExtractedEvent>();
 
   const calls =
     source.getDescendantsOfKind(
@@ -30,14 +31,14 @@ export function scanFunctionWrappers(
       if (wrapper.name !== name)
         continue;
 
-      const event =
+      const result =
         extractEventFromArgs(
           call,
           wrapper.event
         );
 
-      if (event)
-        events.add(event);
+      if (result)
+        events.add(result);
     }
   }
 
@@ -50,16 +51,12 @@ function getFunctionName(
   const expression =
     call.getExpression();
 
-  // trackFeature()
   if (
-    Node.isIdentifier(
-      expression
-    )
+    Node.isIdentifier(expression)
   ) {
     return expression.getText();
   }
 
-  // analytics.trackFeature()
   if (
     Node.isPropertyAccessExpression(
       expression
@@ -97,42 +94,52 @@ function getDeepName(
   return name;
 }
 
-
 function extractEventFromArgs(
   call: CallExpression,
   event?: string
-): string | null {
-  const args = call.getArguments();
+): ExtractedEvent | null {
+
+  const args =
+    call.getArguments();
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
 
-    // string case
+    // track("event")
     if (!event) {
-      if (Node.isStringLiteral(arg)) {
-        return arg.getLiteralText();
-      }
+      const result =
+        extractExpression(arg);
 
-      // template literal
-      if (
-        arg.getKind() ===
-        SyntaxKind.NoSubstitutionTemplateLiteral
-      ) {
-        return arg
-          .getText()
-          .replace(/`/g, "");
-      }
+      if (result)
+        return result;
     }
 
-    // object case
+    // track({ event: "..." })
     if (event) {
-      const result =
-        extractEvent(
-          call,
-          `${i}.${event}`
+      const obj =
+        arg.asKind(
+          SyntaxKind.ObjectLiteralExpression
         );
 
-      if (result) return result;
+      if (!obj) continue;
+
+      const prop =
+        obj.getProperty(event);
+
+      if (!prop) continue;
+
+      if (
+        Node.isPropertyAssignment(prop)
+      ) {
+        const init =
+          prop.getInitializer();
+
+        if (!init) continue;
+
+        return extractExpression(
+          init
+        );
+      }
     }
   }
 

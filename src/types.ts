@@ -13,8 +13,14 @@ export type EventraConfig = {
   events: string[];
   wrappers: ComponentWrapper[];
   functionWrappers: FunctionWrapper[];
+  aliases?: Record<string, string>;
   sync: {
     include: string[];
     exclude: string[];
   };
+};
+
+export type ExtractedEvent = {
+  value: string;
+  dynamic: boolean;
 };

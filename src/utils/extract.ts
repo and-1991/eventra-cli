@@ -1,74 +1,97 @@
 import {
-  CallExpression,
   Node,
-  ObjectLiteralExpression,
-  SyntaxKind,
+  SyntaxKind
 } from "ts-morph";
 
-export function extractEvent(
-  call: CallExpression,
-  path: string
-): string | null {
-  const parts = path.split(".");
+import { ExtractedEvent } from "../types";
 
-  let node: Node | undefined =
-    call.getArguments()[Number(parts[0])];
+export function extractExpression(
+  expr: Node
+): ExtractedEvent | null {
 
-  if (!node) return null;
-
-  node = unwrap(node);
-
-  for (let i = 1; i < parts.length; i++) {
-    if (!Node.isObjectLiteralExpression(node)) {
-      return null;
-    }
-
-    const obj: ObjectLiteralExpression =
-      node;
-
-    const prop =
-      obj.getProperty(parts[i]);
-
-    if (!prop) return null;
-
-    if (!Node.isPropertyAssignment(prop)) {
-      return null;
-    }
-
-    const initializer =
-      prop.getInitializer();
-
-    if (!initializer) return null;
-
-    node = unwrap(initializer);
+  // "signup"
+  if (Node.isStringLiteral(expr)) {
+    return {
+      value: expr.getLiteralText(),
+      dynamic: false
+    };
   }
 
-  if (Node.isStringLiteral(node)) {
-    return node.getLiteralText();
-  }
-
+  // `signup`
   if (
-    node.getKind() ===
+    expr.getKind() ===
     SyntaxKind.NoSubstitutionTemplateLiteral
   ) {
-    return node
-      .getText()
-      .replace(/`/g, "");
+    return {
+      value: expr
+        .getText()
+        .replace(/`/g, ""),
+      dynamic: false
+    };
+  }
+
+  // template `${event}`
+  if (
+    Node.isTemplateExpression(expr)
+  ) {
+    return {
+      value: expr.getText(),
+      dynamic: true
+    };
+  }
+
+  // ROUTES.APP
+  if (
+    Node.isPropertyAccessExpression(expr)
+  ) {
+    return {
+      value: expr.getText(),
+      dynamic: true
+    };
+  }
+
+  // EVENT
+  if (
+    Node.isIdentifier(expr)
+  ) {
+    return {
+      value: expr.getText(),
+      dynamic: true
+    };
+  }
+
+  // getEvent()
+  if (
+    Node.isCallExpression(expr)
+  ) {
+    return {
+      value:
+        expr
+          .getExpression()
+          .getText(),
+      dynamic: true
+    };
+  }
+
+  // condition ? "a" : "b"
+  if (
+    Node.isConditionalExpression(expr)
+  ) {
+    return {
+      value: expr.getText(),
+      dynamic: true
+    };
+  }
+
+  // array[index]
+  if (
+    Node.isElementAccessExpression(expr)
+  ) {
+    return {
+      value: expr.getText(),
+      dynamic: true
+    };
   }
 
   return null;
-}
-
-function unwrap(node: Node): Node {
-  let current = node;
-
-  while (
-    Node.isParenthesizedExpression(
-      current
-    )
-    ) {
-    current = current.getExpression();
-  }
-
-  return current;
 }
