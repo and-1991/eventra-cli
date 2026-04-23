@@ -13,6 +13,7 @@ export function normalizeConfig(
     wrappers: config.wrappers ?? [],
     functionWrappers:
       config.functionWrappers ?? [],
+    aliases: config.aliases ?? {},
     sync: config.sync ?? {
       include: [
         "**/*.{ts,tsx,js,jsx,vue,svelte,astro}"
