@@ -10,6 +10,7 @@ export type FunctionWrapper = {
 
 export type EventraConfig = {
   apiKey?: string;
+  endpoint?: string;
   events: string[];
   wrappers: ComponentWrapper[];
   functionWrappers: FunctionWrapper[];

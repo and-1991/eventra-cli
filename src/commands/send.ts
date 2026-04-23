@@ -7,13 +7,14 @@ import {
 
 import pkg from "../../package.json";
 
-const EVENTRA_ENDPOINT =
-  process.env.EVENTRA_ENDPOINT ?? "";
-
 const CLI_VERSION = pkg.version;
 
 export async function send() {
   const config = await loadConfig();
+
+  const endpoint =
+    config?.endpoint ||
+    process.env.EVENTRA_ENDPOINT;
 
   if (!config) {
     console.log(
@@ -66,11 +67,9 @@ export async function send() {
     return;
   }
 
-  if (!EVENTRA_ENDPOINT) {
+  if (!endpoint) {
     console.log(
-      chalk.red(
-        "EVENTRA_ENDPOINT not configured"
-      )
+      chalk.red("Endpoint not configured")
     );
     return;
   }
@@ -84,7 +83,7 @@ export async function send() {
 
   try {
     const res = await fetch(
-      EVENTRA_ENDPOINT,
+      endpoint,
       {
         method: "POST",
         headers: {

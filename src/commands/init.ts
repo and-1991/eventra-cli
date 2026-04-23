@@ -9,14 +9,20 @@ export async function init() {
     chalk.blue("Initializing Eventra...")
   );
 
-  // API KEY
-  const { apiKey } =
+  // API KEY ENDPOINT
+  const { apiKey, endpoint } =
     await inquirer.prompt([
       {
         type: "input",
         name: "apiKey",
         message:
           "API Key (optional):"
+      },
+      {
+        type: "input",
+        name: "endpoint",
+        message: "Custom endpoint (optional):",
+        default: "https://api.eventra.dev/events"
       }
     ]);
 
@@ -135,6 +141,7 @@ export async function init() {
 
   const config = {
     apiKey,
+    endpoint,
     events: [],
     wrappers,
     functionWrappers,
