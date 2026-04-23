@@ -37,10 +37,8 @@ export async function sync() {
   const project = new Project();
   const events = new Set<string>();
 
-  const aliases =
-    config.aliases ?? {};
-
-  const asked = new Set<string>()
+  const aliases = config.aliases ?? {};
+  const asked = new Set<string>();
 
   const files = await fg(
     config.sync.include,
@@ -50,14 +48,12 @@ export async function sync() {
   );
 
   for (const file of files) {
-    const parser =
-      detectParser(file);
+    const parser = detectParser(file);
 
-    let content =
-      await fs.readFile(
-        file,
-        "utf-8"
-      );
+    let content = await fs.readFile(
+      file,
+      "utf-8"
+    );
 
     if (parser === "vue")
       content = parseVue(content);
@@ -73,12 +69,11 @@ export async function sync() {
         ? file
         : file + ".tsx";
 
-    const source =
-      project.createSourceFile(
-        virtualFile,
-        content,
-        { overwrite: true }
-      );
+    const source = project.createSourceFile(
+      virtualFile,
+      content,
+      { overwrite: true }
+    );
 
     const found: ExtractedEvent[] = [
       ...scanTrack(source, config),
@@ -95,58 +90,61 @@ export async function sync() {
     for (const event of found) {
       const { value, dynamic } = event;
 
-      // alias exists
+      if (!value) continue;
+
+      // alias
       if (aliases[value]) {
-        events.add(
-          aliases[value]
+        console.log(
+          chalk.gray(`alias: ${value} → ${aliases[value]}`)
         );
+        events.add(aliases[value]);
         continue;
       }
 
-      // dynamic event
-      if (dynamic && !asked.has(value)) {
-        console.log(
-          chalk.yellow(
-            "\nDynamic event detected:"
-          )
-        );
+      // static
+      if (!dynamic) {
+        events.add(value);
+        continue;
+      }
 
-        console.log(
-          chalk.gray(value)
-        );
+      // already asked
+      if (asked.has(value)) {
+        continue;
+      }
 
-        const { name } =
-          await inquirer.prompt([
-            {
-              type: "input",
-              name: "name",
-              message:
-                "Enter event name (or type 'skip'):"
-            }
-          ]);
+      // ask user
+      console.log(
+        chalk.yellow("\nDynamic event detected:")
+      );
+      console.log(chalk.gray(value));
 
-        asked.add(value);
-
-        if (!name || name === "skip") {
-          continue;
+      const { name } = await inquirer.prompt([
+        {
+          type: "input",
+          name: "name",
+          message:
+            "Enter event name (or type 'skip'):"
         }
+      ]);
 
-        aliases[value] = name;
+      const normalized = name?.trim();
 
-        events.add(name);
+      asked.add(value);
 
+      if (!normalized || normalized === "skip") {
         continue;
       }
 
-      events.add(value);
+      // save alias
+      aliases[value] = normalized;
+
+      events.add(normalized);
     }
   }
 
   config.aliases = aliases;
 
-  const list =
-    [...events].sort();
-
+  const list = [...events].sort();
   config.events = list;
 
   await saveConfig(config);
