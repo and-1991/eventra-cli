@@ -15,8 +15,7 @@ export function scanComponentWrappers(
   source: SourceFile,
   wrappers: ComponentWrapper[]
 ) {
-  const events =
-    new Set<ExtractedEvent>();
+  const events = new Set<ExtractedEvent>();
 
   const elements = [
     ...source.getDescendantsOfKind(
@@ -34,20 +33,20 @@ export function scanComponentWrappers(
       .toLowerCase();
 
     for (const wrapper of wrappers) {
-      if (
-        name !==
-        wrapper.name.toLowerCase()
-      )
+      if (name !== wrapper.name.toLowerCase())
         continue;
 
-      const attrs =
-        el.getAttributes();
+      const attrs = el.getAttributes();
 
       for (const attr of attrs) {
+
+        // ❗ NO spread props
+        if (Node.isJsxSpreadAttribute(attr)) {
+          continue;
+        }
+
         const attrNode =
-          attr.asKind(
-            SyntaxKind.JsxAttribute
-          );
+          attr.asKind(SyntaxKind.JsxAttribute);
 
         if (!attrNode) continue;
 
@@ -57,34 +56,32 @@ export function scanComponentWrappers(
             .getText()
             .toLowerCase();
 
-        if (
-          key !==
-          wrapper.prop.toLowerCase()
-        )
+        if (key !== wrapper.prop.toLowerCase())
           continue;
 
-        const init =
-          attrNode.getInitializer();
+        const init = attrNode.getInitializer();
 
-        if (!init) continue;
-
-        // string
-        if (
-          Node.isStringLiteral(init)
-        ) {
+        // <Button event />
+        if (!init) {
           events.add({
-            value:
-              init.getLiteralText(),
-            dynamic: false
+            value: key,
+            dynamic: true
           });
+          continue;
         }
 
-        // jsx expression
-        if (
-          Node.isJsxExpression(init)
-        ) {
-          const expr =
-            init.getExpression();
+        // string: <Button event="click" />
+        if (Node.isStringLiteral(init)) {
+          events.add({
+            value: init.getLiteralText(),
+            dynamic: false
+          });
+          continue;
+        }
+
+        // jsx expression: <Button event={"click"} />
+        if (Node.isJsxExpression(init)) {
+          const expr = init.getExpression();
 
           if (!expr) continue;
 
@@ -93,14 +90,14 @@ export function scanComponentWrappers(
 
           if (!result) continue;
 
-          result.values.forEach(
-            (value) =>
-              events.add({
-                value,
-                dynamic:
-                result.dynamic
-              })
+          result.values.forEach((value) =>
+            events.add({
+              value,
+              dynamic: result.dynamic
+            })
           );
+
+          continue;
         }
       }
     }
