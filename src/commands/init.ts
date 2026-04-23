@@ -22,7 +22,7 @@ export async function init() {
         type: "input",
         name: "endpoint",
         message: "Custom endpoint (optional):",
-        default: "https://api.eventra.dev/events"
+        default: "https://api.eventra.dev/api/v1/cli/events"
       }
     ]);
 
