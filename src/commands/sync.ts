@@ -81,7 +81,7 @@ export async function sync() {
       );
 
     const found: ExtractedEvent[] = [
-      ...scanTrack(source),
+      ...scanTrack(source, config),
       ...scanFunctionWrappers(
         source,
         config.functionWrappers ?? []
