@@ -6,6 +6,8 @@ export type ComponentWrapper = {
 export type FunctionWrapper = {
   name: string;
   event?: string;
+  file?: string;
+  line?: number;
 };
 
 export type EventraConfig = {
@@ -24,4 +26,6 @@ export type EventraConfig = {
 export type ExtractedEvent = {
   value: string;
   dynamic: boolean;
+  file?: string;
+  line?: number;
 };

@@ -13,9 +13,10 @@ import { extractExpression } from "../extract";
 
 export function scanComponentWrappers(
   source: SourceFile,
-  wrappers: ComponentWrapper[]
+  wrappers: ComponentWrapper[],
+  aliases: Record<string, string>
 ) {
-  const events = new Set<ExtractedEvent>();
+  const events = new Map<string, ExtractedEvent>();
 
   const elements = [
     ...source.getDescendantsOfKind(
@@ -36,14 +37,10 @@ export function scanComponentWrappers(
       if (name !== wrapper.name.toLowerCase())
         continue;
 
-      const attrs = el.getAttributes();
+      for (const attr of el.getAttributes()) {
 
-      for (const attr of attrs) {
-
-        // ❗ NO spread props
-        if (Node.isJsxSpreadAttribute(attr)) {
+        if (Node.isJsxSpreadAttribute(attr))
           continue;
-        }
 
         const attrNode =
           attr.asKind(SyntaxKind.JsxAttribute);
@@ -63,45 +60,50 @@ export function scanComponentWrappers(
 
         // <Button event />
         if (!init) {
-          events.add({
-            value: key,
+          const value = key;
+          const k = `${value}:true`;
+
+          events.set(k, {
+            value,
             dynamic: true
           });
+
           continue;
         }
 
-        // string: <Button event="click" />
+        // <Button event="click" />
         if (Node.isStringLiteral(init)) {
-          events.add({
-            value: init.getLiteralText(),
+          const value = init.getLiteralText();
+          const k = `${value}:false`;
+
+          events.set(k, {
+            value,
             dynamic: false
           });
+
           continue;
         }
 
-        // jsx expression: <Button event={"click"} />
+        // <Button event={...} />
         if (Node.isJsxExpression(init)) {
           const expr = init.getExpression();
-
           if (!expr) continue;
 
-          const result =
-            extractExpression(expr);
-
+          const result = extractExpression(expr, aliases);
           if (!result) continue;
 
-          result.values.forEach((value) =>
-            events.add({
+          for (const value of result.values) {
+            const k = `${value}:${result.dynamic}`;
+
+            events.set(k, {
               value,
               dynamic: result.dynamic
-            })
-          );
-
-          continue;
+            });
+          }
         }
       }
     }
   }
 
-  return events;
+  return [...events.values()];
 }

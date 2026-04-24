@@ -11,7 +11,6 @@ program
 
 program
   .command("init")
-  .description("Initialize Eventra")
   .action(async () => {
     const { init } = await import("./commands/init");
     await init();
@@ -19,7 +18,6 @@ program
 
 program
   .command("sync")
-  .description("Sync events")
   .action(async () => {
     const { sync } = await import("./commands/sync");
     await sync();
@@ -27,15 +25,22 @@ program
 
 program
   .command("check")
-  .description("Validate events (CI mode)")
-  .action(async () => {
+  .option("--fix", "auto fix issues")
+  .action(async (opts) => {
     const { check } = await import("./commands/check");
-    await check();
+    await check({ fix: opts.fix });
+  });
+
+program
+  .command("watch")
+  .description("Watch files and detect events in real-time")
+  .action(async () => {
+    const { watch } = await import("./commands/watch");
+    await watch();
   });
 
 program
   .command("send")
-  .description("Send events")
   .action(async () => {
     const { send } = await import("./commands/send");
     await send();

@@ -15,10 +15,10 @@ import { extractExpression } from "../extract";
 
 export function scanFunctionWrappers(
   source: SourceFile,
-  wrappers: FunctionWrapper[]
+  wrappers: FunctionWrapper[],
+  aliases: Record<string, string>
 ) {
-  const events =
-    new Set<ExtractedEvent>();
+  const events = new Map<string, ExtractedEvent>();
 
   const calls =
     source.getDescendantsOfKind(
@@ -26,55 +26,42 @@ export function scanFunctionWrappers(
     );
 
   for (const call of calls) {
-    const name =
-      getFunctionName(call);
-
+    const name = getFunctionName(call);
     if (!name) continue;
 
     for (const wrapper of wrappers) {
-      if (wrapper.name !== name)
-        continue;
+      if (wrapper.name !== name) continue;
 
-      const results =
-        extractEventFromArgs(
-          call,
-          wrapper.event
-        );
+      const results = extractEventFromArgs(
+        call,
+        wrapper.event,
+        aliases
+      );
 
       if (!results) continue;
 
-      results.forEach(
-        (r) => events.add(r)
-      );
+      for (const r of results) {
+        const key = `${r.value}:${r.dynamic}`;
+        events.set(key, r);
+      }
     }
   }
 
-  return events;
+  return [...events.values()];
 }
 
 function getFunctionName(
   call: CallExpression
 ): string | null {
 
-  const expression =
-    call.getExpression();
+  const expression = call.getExpression();
 
-  if (
-    Node.isIdentifier(
-      expression
-    )
-  ) {
+  if (Node.isIdentifier(expression)) {
     return expression.getText();
   }
 
-  if (
-    Node.isPropertyAccessExpression(
-      expression
-    )
-  ) {
-    return getDeepName(
-      expression
-    );
+  if (Node.isPropertyAccessExpression(expression)) {
+    return getDeepName(expression);
   }
 
   return null;
@@ -84,22 +71,12 @@ function getDeepName(
   node: PropertyAccessExpression
 ): string {
 
-  let current:
-    | Node
-    | undefined = node;
-
+  let current: Node | undefined = node;
   let name = "";
 
-  while (
-    Node.isPropertyAccessExpression(
-      current
-    )
-    ) {
-    name =
-      current.getName();
-
-    current =
-      current.getExpression();
+  while (Node.isPropertyAccessExpression(current)) {
+    name = current.getName();
+    current = current.getExpression();
   }
 
   return name;
@@ -107,74 +84,54 @@ function getDeepName(
 
 function extractEventFromArgs(
   call: CallExpression,
-  event?: string
+  event: string | undefined,
+  aliases: Record<string, string>
 ): ExtractedEvent[] | null {
 
-  const args =
-    call.getArguments();
-
+  const args = call.getArguments();
   const events: ExtractedEvent[] = [];
 
-  for (let i = 0; i < args.length; i++) {
-    const arg = args[i];
+  for (const arg of args) {
 
     // track("event")
     if (!event) {
-      const result =
-        extractExpression(arg);
-
+      const result = extractExpression(arg, aliases);
       if (!result) continue;
 
-      result.values.forEach(
-        (value) =>
-          events.push({
-            value,
-            dynamic:
-            result.dynamic
-          })
+      result.values.forEach((value) =>
+        events.push({
+          value,
+          dynamic: result.dynamic
+        })
       );
     }
 
-    // track({event})
+    // track({ event })
     if (event) {
-      const obj =
-        arg.asKind(
-          SyntaxKind.ObjectLiteralExpression
-        );
-
+      const obj = arg.asKind(
+        SyntaxKind.ObjectLiteralExpression
+      );
       if (!obj) continue;
 
-      const prop =
-        obj.getProperty(event);
-
+      const prop = obj.getProperty(event);
       if (!prop) continue;
 
-      if (
-        Node.isPropertyAssignment(prop)
-      ) {
-        const init =
-          prop.getInitializer();
-
+      if (Node.isPropertyAssignment(prop)) {
+        const init = prop.getInitializer();
         if (!init) continue;
 
-        const result =
-          extractExpression(init);
-
+        const result = extractExpression(init, aliases);
         if (!result) continue;
 
-        result.values.forEach(
-          (value) =>
-            events.push({
-              value,
-              dynamic:
-              result.dynamic
-            })
+        result.values.forEach((value) =>
+          events.push({
+            value,
+            dynamic: result.dynamic
+          })
         );
       }
     }
   }
 
-  return events.length
-    ? events
-    : null;
+  return events.length ? events : null;
 }

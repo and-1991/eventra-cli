@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "description": "Eventra CLI",
   "type": "commonjs",
   "bin": {
@@ -20,6 +20,7 @@
   },
   "dependencies": {
     "chalk": "^4.1.2",
+    "chokidar": "^5.0.0",
     "commander": "^11.0.0",
     "fast-glob": "^3.3.3",
     "fs-extra": "^11.2.0",

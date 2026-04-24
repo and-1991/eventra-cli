@@ -1,3 +1,4 @@
+
 <p align="center">
 <img src="./assets/eventra-icon-animated.svg" width="120">
 </p>
@@ -7,54 +8,20 @@
 [![npm version](https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
 [![npm downloads](https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
 [![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
-[![Tests](https://github.com/and-1991/eventra-cli/actions/workflows/release.yml/badge.svg)]()
 [![License](https://img.shields.io/npm/l/@eventra_dev/eventra-cli)]()
 
 Eventra CLI automatically discovers feature usage events in your codebase and syncs them with Eventra.
-
-Eventra CLI helps you:
-
-- Discover feature usage automatically
-- Detect wrapper components
-- Detect wrapper functions
-- Keep events in sync
-- Register features in Eventra
-- Maintain consistent event naming
-
-It is designed to be:
-
-- framework-agnostic
-- static analysis based
-- zero runtime overhead
-- production-safe
-- backend + frontend compatible
 
 ---
 
 # Installation
 
-### npm
-
 ```bash
 npm install -D @eventra_dev/eventra-cli
 ```
 
-### pnpm
-
 ```bash
 pnpm add -D @eventra_dev/eventra-cli
-```
-
-### yarn
-
-```bash
-yarn add -D @eventra_dev/eventra-cli
-```
-
-### npx
-
-```bash
-npx eventra init
 ```
 
 ---
@@ -76,163 +43,93 @@ eventra send
 
 Creates `eventra.json` configuration file.
 
-```bash
-eventra init
-```
-
 ---
 
 ## eventra sync
 
 Scans your project and discovers events automatically.
 
-### track() detection
+Supports:
 
-```ts
-tracker.track("feature_created")
-```
-
-```ts
-track("user_signup")
-```
-
----
-
-### Component wrappers
-
-```tsx
-<TrackedButton event="feature_created" />
-```
-
-```tsx
-<MyComponent event="user_signup" />
-```
-
----
-
-### Function wrappers
-
-```ts
-trackFeature("feature_created")
-```
-
-```ts
-analytics.trackFeature("user_signup")
-```
+- track("event")
+- analytics.track("event")
+- function wrappers
+- component wrappers
+- aliases
 
 ---
 
 ## eventra check
 
-Validate events in your codebase without modifying `eventra.json`.
+Validate events without modifying config.
 
-This command is designed for CI/CD pipelines and ensures:
-
--   No new events are introduced unintentionally
--   All dynamic events are resolved via aliases
--   Event naming stays consistent
-
-``` bash
+```bash
 eventra check
 ```
 
-------------------------------------------------------------------------
+### Detects:
 
-### What it checks
+- New events
+- Unresolved dynamic events
 
-#### 1. New events
+### Output example:
 
-If your code contains events not listed in `eventra.json`:
+```
+New events:
++ user_click (src/Button.tsx:42)
 
-``` ts
-trackFeature("new_event")
+Dynamic:
+- eventName (src/App.tsx:10)
 ```
 
-CLI output:
+---
 
-    New events detected:
-    + new_event
-    ❌ Event check failed
+## eventra check --fix
 
-------------------------------------------------------------------------
+Interactive auto-fix mode.
 
-#### 2. Unresolved dynamic events
-
-If your code contains dynamic values without alias:
-
-``` ts
-trackFeature(eventName)
+```bash
+eventra check --fix
 ```
 
-CLI output:
+### What it does:
 
-    Unresolved dynamic events:
-    - eventName
-    ❌ Event check failed
+- Adds new events to config
+- Resolves dynamic events via alias
+- Allows skipping dynamic values
 
-------------------------------------------------------------------------
+---
 
-### CI usage
+## eventra watch
 
-``` bash
-pnpm eventra check
+Real-time event detection.
+
+```bash
+eventra watch
 ```
 
-#### GitHub Actions example
+### Features:
 
-``` yaml
-- run: pnpm eventra check
-```
-
-------------------------------------------------------------------------
-
-### Skipping dynamic events
-
-You can explicitly ignore dynamic variables using aliases:
-
-``` json
-{
-  "aliases": {
-    "eventName": "__skip__"
-  }
-}
-```
-
-------------------------------------------------------------------------
-
-### When to use
-
-Use `eventra check` to:
-
--   enforce event consistency\
--   prevent accidental event creation\
--   validate analytics in pull requests
+- Detects new events instantly
+- Debounced updates
+- No duplicates
+- Ignores temp files
 
 ---
 
 ## eventra send
 
-Send events to Eventra backend.
+Send events to backend.
 
 ```bash
 eventra send
 ```
 
-New events are queued for processing and will appear in dashboard shortly.
-
-Processing typically takes:
-
-~1-2 minutes
-
-This delay ensures reliable event ingestion and aggregation.
-
 ---
 
 # Configuration
 
-Eventra CLI creates `eventra.json`
-
-Example:
+Example `eventra.json`:
 
 ```json
 {
@@ -240,16 +137,48 @@ Example:
   "events": [],
   "wrappers": [],
   "functionWrappers": [],
+  "aliases": {},
   "sync": {
-    "include": ["**/*.{ts,tsx,js,jsx}"],
-    "exclude": [
-      "node_modules",
-      "dist",
-      ".next",
-      ".git"
-    ]
+    "include": ["**/*.{ts,tsx,js,jsx,vue,svelte,astro}"],
+    "exclude": ["node_modules", "dist", ".next", ".git"]
   }
 }
+```
+
+---
+
+# Key Concepts
+
+### Aliases
+
+```ts
+const EVENT = "user_click";
+track(EVENT);
+```
+
+Auto-resolved → `user_click`
+
+---
+
+### Dynamic events
+
+```ts
+track(eventName);
+```
+
+Must be:
+
+- aliased
+- or skipped (`__skip__`)
+
+---
+
+### File tracking
+
+All events include:
+
+```
+event_name (file:line)
 ```
 
 ---
@@ -259,9 +188,7 @@ Example:
 Frontend:
 
 - React
-- Next.js
 - Vue
-- Nuxt
 - Svelte
 - Astro
 
@@ -271,31 +198,12 @@ Backend:
 - Express
 - NestJS
 - Fastify
-- Hono
-- Bun
-- Deno
-
----
-
-# How It Works
-
-Eventra CLI:
-
-1. Scans your codebase
-2. Detects tracking calls
-3. Detects wrapper components
-4. Detects wrapper functions
-5. Syncs discovered events
-6. Registers events in Eventra
-
-No runtime SDK required.
 
 ---
 
 # Requirements
 
 - Node.js 18+
-- JavaScript / TypeScript project
 
 ---
 

@@ -4,14 +4,17 @@ import {
   Node,
 } from "ts-morph";
 
+import path from "path";
+
 import { ExtractedEvent, EventraConfig } from "../../types";
 import { extractExpression } from "../extract";
 
 export function scanTrack(
   source: SourceFile,
-  config: EventraConfig
+  config: EventraConfig,
+  aliases: Record<string, string>
 ) {
-  const events = new Set<ExtractedEvent>();
+  const events = new Map<string, ExtractedEvent>();
 
   const calls = source.getDescendantsOfKind(
     SyntaxKind.CallExpression
@@ -34,6 +37,7 @@ export function scanTrack(
 
     if (!isTrack) continue;
 
+    // ❗ skip wrapper functions
     const func =
       call.getFirstAncestorByKind(SyntaxKind.FunctionDeclaration) ||
       call.getFirstAncestorByKind(SyntaxKind.ArrowFunction) ||
@@ -69,16 +73,27 @@ export function scanTrack(
     const arg = call.getArguments()[0];
     if (!arg) continue;
 
-    const result = extractExpression(arg);
+    const result = extractExpression(arg, aliases);
     if (!result) continue;
 
-    result.values.forEach((value) =>
-      events.add({
+    const line = call.getStartLineNumber();
+
+    const file = path.relative(
+      process.cwd(),
+      source.getFilePath()
+    );
+
+    for (const value of result.values) {
+      const key = `${value}:${file}:${line}`;
+
+      events.set(key, {
         value,
         dynamic: result.dynamic,
-      })
-    );
+        file,
+        line
+      });
+    }
   }
 
-  return events;
+  return [...events.values()];
 }
