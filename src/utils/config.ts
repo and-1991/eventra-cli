@@ -10,6 +10,7 @@ export function normalizeConfig(
   return {
     apiKey: config.apiKey ?? "",
     events: config.events ?? [],
+    endpoint: config.endpoint ?? "",
     wrappers: config.wrappers ?? [],
     functionWrappers:
       config.functionWrappers ?? [],
