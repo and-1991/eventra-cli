@@ -18,7 +18,7 @@ const fixtures = [
   "wrappers/function"
 ];
 
-function runCLI(args: string[], cwd: string) {
+function runCLI(args: string[], cwd: string): string {
   const result = spawnSync(
     process.execPath,
     [CLI, ...args],
@@ -35,23 +35,12 @@ function runCLI(args: string[], cwd: string) {
 function ensureTestConfig(dir: string) {
   const configPath = path.join(dir, "eventra.json");
 
-  if (fs.existsSync(configPath)) return;
-
   const config = {
     apiKey: "",
     events: [],
-    wrappers: [
-      {
-        name: "Button",
-        prop: "event"
-      }
-    ],
-    functionWrappers: [
-      {
-        name: "trackFeature",
-        path: "0"
-      }
-    ],
+    wrappers: [],
+    functionWrappers: [],
+    aliases: {},
     sync: {
       include: [
         "**/*.{ts,tsx,js,jsx,vue,svelte,astro}"
@@ -89,8 +78,6 @@ function runFixture(name: string) {
   console.log(`\nRunning: ${name}`);
 
   ensureTestConfig(dir);
-
-  runCLI(["init"], dir);
 
   const output = runCLI(["sync"], dir);
 

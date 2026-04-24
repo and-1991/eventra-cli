@@ -13,66 +13,221 @@ const express = (...args: any[]) => ({
 
 const app = express();
 
-// ===== direct =====
+// =========================
+// BASIC
+// =========================
+
 track("express_event");
 
-// ===== middleware =====
+// =========================
+// VARIABLES
+// =========================
+
+const eventName = "variable_event";
+track(eventName);
+
+let anotherEvent;
+anotherEvent = "assigned_event";
+track(anotherEvent);
+
+// =========================
+// TEMPLATE
+// =========================
+
+track(`template_event`);
+
+const id = "123";
+track(`template_${id}`); // dynamic
+
+// =========================
+// MIDDLEWARE
+// =========================
+
 app.use(() => {
   track("middleware_event");
 });
 
-// ===== get =====
+// =========================
+// ROUTES
+// =========================
+
 app.get("/", () => {
   track("get_event");
 });
 
-// ===== post =====
 app.post("/users", () => {
   track("post_event");
 });
 
-// ===== put =====
 app.put("/users", () => {
   track("put_event");
 });
 
-// ===== delete =====
 app.delete("/users", () => {
   track("delete_event");
 });
 
-// ===== nested =====
+// =========================
+// NESTED
+// =========================
+
 app.get("/nested", () => {
   if (true) {
     track("nested_event");
   }
 });
 
-// ===== async =====
+// =========================
+// ASYNC
+// =========================
+
 app.get("/async", async () => {
   track("async_event");
 });
 
-// ===== arrow =====
+// =========================
+// ARROW HANDLER
+// =========================
+
 const handler = () => {
   track("arrow_event");
 };
 
 app.get("/arrow", handler);
 
-// ===== function =====
+// =========================
+// FUNCTION DECLARATION
+// =========================
+
 function service() {
   track("function_event");
 }
 
-// ===== class =====
+// =========================
+// CLASS
+// =========================
+
 class Service {
   run() {
     track("class_event");
   }
 }
 
-// ===== listen =====
+// =========================
+// LISTEN
+// =========================
+
 app.listen(3000, () => {
   track("listen_event");
 });
+
+// =========================
+// OBJECT WRAPPER
+// =========================
+
+const analytics = {
+  track
+};
+
+analytics.track("object_event");
+
+// nested object
+const analyticsDeep = {
+  events: {
+    track
+  }
+};
+
+analyticsDeep.events.track("nested_object_event");
+
+// =========================
+// CONDITIONALS
+// =========================
+
+if (true) {
+  track("if_event");
+} else {
+  track("else_event");
+}
+
+// ternary
+true
+  ? track("ternary_true")
+  : track("ternary_false");
+
+// =========================
+// ARRAYS
+// =========================
+
+[
+  () => track("array_1"),
+  () => track("array_2")
+];
+
+// =========================
+// LOOP
+// =========================
+
+for (let i = 0; i < 1; i++) {
+  track("loop_event");
+}
+
+// =========================
+// TRY / CATCH
+// =========================
+
+try {
+  track("try_event");
+} catch {
+  track("catch_event");
+}
+
+// =========================
+// RETURN
+// =========================
+
+function returnTest() {
+  return track("return_event");
+}
+
+// =========================
+// PARAM DEFAULT
+// =========================
+
+function withDefault(e = "default_event") {
+  track(e);
+}
+
+// =========================
+// INLINE OBJECT
+// =========================
+
+track({
+  name: "object_payload_event"
+} as any);
+
+// =========================
+// OPTIONAL CHAINING
+// =========================
+
+analytics?.track?.("optional_chain_event");
+
+// =========================
+// EDGE CASES
+// =========================
+
+// not first argument (should be ignored usually)
+// @ts-ignore
+track("real_event", "extra");
+
+// no args
+// @ts-ignore
+track();
+
+// dynamic identifier (should be dynamic)
+const dynamicEvent = Math.random() > 0.5 ? "a" : "b";
+track(dynamicEvent);
+
+// =========================
+// END
+// =========================

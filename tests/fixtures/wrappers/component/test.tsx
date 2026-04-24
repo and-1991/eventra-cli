@@ -43,7 +43,7 @@ export default function WrapperTest() {
       ]}
 
       {/* wrapper components */}
-      <TrackedButton event="tracked_button" />
+      <TrackedButton event={eventName} />
       <MyButton event="my_button" />
 
       {/* multiline */}

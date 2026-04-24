@@ -1,3 +1,5 @@
+export type ScanMode = "strict" | "hybrid" | "discovery";
+
 export type ComponentWrapper = {
   name: string;
   prop: string;
@@ -6,14 +8,13 @@ export type ComponentWrapper = {
 export type FunctionWrapper = {
   name: string;
   event?: string;
-  file?: string;
-  line?: number;
 };
 
 export type EventraConfig = {
   apiKey?: string;
   endpoint?: string;
   events: string[];
+  mode?: ScanMode;
   wrappers: ComponentWrapper[];
   functionWrappers: FunctionWrapper[];
   aliases?: Record<string, string>;
@@ -21,11 +22,4 @@ export type EventraConfig = {
     include: string[];
     exclude: string[];
   };
-};
-
-export type ExtractedEvent = {
-  value: string;
-  dynamic: boolean;
-  file?: string;
-  line?: number;
 };
