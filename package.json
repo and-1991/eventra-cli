@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "0.0.17",
+  "version": "0.0.18",
   "description": "Eventra CLI",
   "type": "commonjs",
   "bin": {

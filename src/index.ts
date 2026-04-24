@@ -26,6 +26,14 @@ program
   });
 
 program
+  .command("check")
+  .description("Validate events (CI mode)")
+  .action(async () => {
+    const { check } = await import("./commands/check");
+    await check();
+  });
+
+program
   .command("send")
   .description("Send events")
   .action(async () => {

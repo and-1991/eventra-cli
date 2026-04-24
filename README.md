@@ -64,6 +64,7 @@ npx eventra init
 ```bash
 eventra init
 eventra sync
+eventra check
 eventra send
 ```
 
@@ -118,6 +119,94 @@ trackFeature("feature_created")
 ```ts
 analytics.trackFeature("user_signup")
 ```
+
+---
+
+## eventra check
+
+Validate events in your codebase without modifying `eventra.json`.
+
+This command is designed for CI/CD pipelines and ensures:
+
+-   No new events are introduced unintentionally
+-   All dynamic events are resolved via aliases
+-   Event naming stays consistent
+
+``` bash
+eventra check
+```
+
+------------------------------------------------------------------------
+
+### What it checks
+
+#### 1. New events
+
+If your code contains events not listed in `eventra.json`:
+
+``` ts
+trackFeature("new_event")
+```
+
+CLI output:
+
+    New events detected:
+    + new_event
+    ❌ Event check failed
+
+------------------------------------------------------------------------
+
+#### 2. Unresolved dynamic events
+
+If your code contains dynamic values without alias:
+
+``` ts
+trackFeature(eventName)
+```
+
+CLI output:
+
+    Unresolved dynamic events:
+    - eventName
+    ❌ Event check failed
+
+------------------------------------------------------------------------
+
+### CI usage
+
+``` bash
+pnpm eventra check
+```
+
+#### GitHub Actions example
+
+``` yaml
+- run: pnpm eventra check
+```
+
+------------------------------------------------------------------------
+
+### Skipping dynamic events
+
+You can explicitly ignore dynamic variables using aliases:
+
+``` json
+{
+  "aliases": {
+    "eventName": "__skip__"
+  }
+}
+```
+
+------------------------------------------------------------------------
+
+### When to use
+
+Use `eventra check` to:
+
+-   enforce event consistency\
+-   prevent accidental event creation\
+-   validate analytics in pull requests
 
 ---
 
