@@ -1,19 +1,19 @@
-import { SourceFile } from "ts-morph";
+import ts from "typescript";
 
 export class DependencyGraph {
   private reverse = new Map<string, Set<string>>();
 
-  update(file: string, source: SourceFile) {
-    const imports = source
-      .getImportDeclarations()
-      .map(i => i.getModuleSpecifierSourceFile()?.getFilePath())
-      .filter(Boolean) as string[];
+  update(file: string, source: ts.SourceFile) {
+    for (const stmt of source.statements) {
+      if (!ts.isImportDeclaration(stmt)) continue;
 
-    for (const dep of imports) {
-      if (!this.reverse.has(dep)) {
-        this.reverse.set(dep, new Set());
+      const module = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
+
+      if (!this.reverse.has(module)) {
+        this.reverse.set(module, new Set());
       }
-      this.reverse.get(dep)!.add(file);
+
+      this.reverse.get(module)!.add(file);
     }
   }
 

@@ -1,4 +1,4 @@
-import { Node, ts } from "ts-morph";
+import ts from "typescript";
 
 export type ResolveResult = {
   values: string[];
@@ -6,45 +6,78 @@ export type ResolveResult = {
 };
 
 export function resolveNodeValue(
-  node: Node,
+  node: ts.Node,
   checker: ts.TypeChecker
 ): ResolveResult | null {
-  if (!Node.isIdentifier(node)) return null;
 
-  const symbol = checker.getSymbolAtLocation(node.compilerNode);
-  if (!symbol) return null;
+  if (ts.isStringLiteral(node)) {
+    return { values: [node.text], dynamic: false };
+  }
 
-  const decls = symbol.getDeclarations() ?? [];
+  if (ts.isTemplateExpression(node)) {
+    let result = node.head.text;
 
-  for (const d of decls) {
-    if (ts.isVariableDeclaration(d) && d.initializer) {
-      const init = d.initializer;
-
-      if (ts.isStringLiteral(init)) {
-        return { values: [init.text], dynamic: false };
-      }
-
-      if (ts.isNoSubstitutionTemplateLiteral(init)) {
-        return { values: [init.text], dynamic: false };
-      }
-
-      if (ts.isTemplateExpression(init)) {
-        let result = init.head.text;
-
-        for (const span of init.templateSpans) {
-          result += "*";
-          result += span.literal.text;
-        }
-
-        return { values: [result], dynamic: true };
-      }
+    for (const span of node.templateSpans) {
+      result += "*";
+      result += span.literal.text;
     }
 
-    if (ts.isParameter(d) && d.initializer) {
-      const init = d.initializer;
+    return { values: [result], dynamic: true };
+  }
 
-      if (ts.isStringLiteral(init)) {
-        return { values: [init.text], dynamic: false };
+  if (ts.isConditionalExpression(node)) {
+    const a = resolveNodeValue(node.whenTrue, checker);
+    const b = resolveNodeValue(node.whenFalse, checker);
+
+    return {
+      values: [...new Set([...(a?.values ?? []), ...(b?.values ?? [])])],
+      dynamic: true,
+    };
+  }
+
+  if (ts.isIdentifier(node)) {
+    let symbol = checker.getSymbolAtLocation(node);
+    if (!symbol) return null;
+
+    if (symbol.flags & ts.SymbolFlags.Alias) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+
+    for (const decl of symbol.getDeclarations() ?? []) {
+      if (ts.isVariableDeclaration(decl) && decl.initializer) {
+        return resolveNodeValue(decl.initializer, checker);
+      }
+
+      if (ts.isEnumMember(decl) && decl.initializer) {
+        if (ts.isStringLiteral(decl.initializer)) {
+          return {
+            values: [decl.initializer.text],
+            dynamic: false,
+          };
+        }
+      }
+    }
+  }
+
+  if (ts.isPropertyAccessExpression(node)) {
+    const symbol = checker.getSymbolAtLocation(node);
+
+    if (symbol) {
+      let s = symbol;
+
+      if (s.flags & ts.SymbolFlags.Alias) {
+        s = checker.getAliasedSymbol(s);
+      }
+
+      for (const decl of s.getDeclarations() ?? []) {
+        if (ts.isEnumMember(decl) && decl.initializer) {
+          if (ts.isStringLiteral(decl.initializer)) {
+            return {
+              values: [decl.initializer.text],
+              dynamic: false,
+            };
+          }
+        }
       }
     }
   }

@@ -1,35 +1,41 @@
-import { Node } from "ts-morph";
+import ts from "typescript";
 
-export function resolveFunctionFromCall(expr: Node) {
-  let symbol = expr.getSymbol();
+export function resolveFunctionFromCall(
+  expr: ts.Expression,
+  checker: ts.TypeChecker
+): ts.FunctionLikeDeclaration | null {
 
-  if (!symbol && Node.isPropertyAccessExpression(expr)) {
-    symbol = expr.getNameNode().getSymbol();
+  let symbol = checker.getSymbolAtLocation(expr);
+
+  if (!symbol && ts.isPropertyAccessExpression(expr)) {
+    symbol = checker.getSymbolAtLocation(expr.name);
   }
 
   if (!symbol) return null;
 
-  const decls = symbol.getDeclarations() ?? [];
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    symbol = checker.getAliasedSymbol(symbol);
+  }
 
-  for (const d of decls) {
-    if (Node.isFunctionDeclaration(d)) return d;
+  for (const decl of symbol.getDeclarations() ?? []) {
+    if (
+      ts.isFunctionDeclaration(decl) ||
+      ts.isMethodDeclaration(decl) ||
+      ts.isFunctionExpression(decl) ||
+      ts.isArrowFunction(decl)
+    ) {
+      return decl;
+    }
 
-    if (Node.isVariableDeclaration(d)) {
-      const init = d.getInitializer();
+    if (ts.isVariableDeclaration(decl) && decl.initializer) {
+      const init = decl.initializer;
 
       if (
-        init &&
-        (Node.isArrowFunction(init) ||
-          Node.isFunctionExpression(init))
+        ts.isArrowFunction(init) ||
+        ts.isFunctionExpression(init)
       ) {
         return init;
       }
-    }
-
-    if (Node.isMethodDeclaration(d)) return d;
-
-    if (Node.isFunctionExpression(d) || Node.isArrowFunction(d)) {
-      return d;
     }
   }
 

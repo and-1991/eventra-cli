@@ -1,90 +1,61 @@
-import { SourceFile, SyntaxKind, Node, ts } from "ts-morph";
-import { extractEventsFromArgs } from "./extract";
+import ts from "typescript";
+import { resolveNodeValue } from "./resolver";
 import { resolveFunctionFromCall } from "./callResolver";
-import { getForwardedParamIndex } from "./flow";
-
-function getCallName(expr: Node): string {
-  if (Node.isIdentifier(expr)) return expr.getText();
-  if (Node.isPropertyAccessExpression(expr)) return expr.getName();
-  return expr.getText();
-}
-
-function isTrackLike(name: string) {
-  return /(track|trackFeature)/i.test(name);
-}
-
-function pickArg(args: Node[]) {
-  return (
-    args.find(Node.isStringLiteral) ??
-    args.find(Node.isTemplateExpression) ??
-    args.find(Node.isObjectLiteralExpression) ??
-    args[0]
-  );
-}
 
 export function scanSource(
-  source: SourceFile,
-  checker: ts.TypeChecker
+  source: ts.SourceFile,
+  checker: ts.TypeChecker,
+  visited = new Set<string>()
 ) {
   const events = new Set<string>();
 
-  // CALLS
-  for (const call of source.getDescendantsOfKind(SyntaxKind.CallExpression)) {
-    const expr = call.getExpression();
-    const name = getCallName(expr);
+  if (visited.has(source.fileName)) return events;
+  visited.add(source.fileName);
 
-    if (!isTrackLike(name)) continue;
+  function visit(node: ts.Node) {
+    if (ts.isCallExpression(node)) {
+      const name = getCallName(node.expression);
 
-    const args = call.getArguments();
-    if (!args.length) continue;
+      if (/(track|event|capture|send)/i.test(name)) {
+        let target = node.arguments[0];
 
-    let target = pickArg(args);
+        const fn = resolveFunctionFromCall(node.expression, checker);
 
-    const fn = resolveFunctionFromCall(expr);
+        // 🔥 cross-file
+        if (fn) {
+          const sf = fn.getSourceFile();
 
-    if (fn) {
-      const index = getForwardedParamIndex(fn);
-      if (index !== null && args[index]) {
-        target = args[index];
+          if (!visited.has(sf.fileName)) {
+            scanSource(sf, checker, visited).forEach(e => events.add(e));
+          }
+        }
+
+        if (target) {
+          const res = resolveNodeValue(target, checker);
+
+          res?.values.forEach(v => {
+            if (v && v.length > 1 && !v.includes(" ")) {
+              events.add(v);
+            }
+          });
+        }
       }
     }
 
-    extractEventsFromArgs([target], checker).forEach(({ value }) => {
-      if (isValid(value)) events.add(value);
-    });
+    ts.forEachChild(node, visit);
   }
 
-  // JSX
-  const jsx = [
-    ...source.getDescendantsOfKind(SyntaxKind.JsxOpeningElement),
-    ...source.getDescendantsOfKind(SyntaxKind.JsxSelfClosingElement),
-  ];
-
-  for (const el of jsx) {
-    for (const attr of el.getAttributes()) {
-      if (!Node.isJsxAttribute(attr)) continue;
-
-      const name = attr.getNameNode().getText();
-      if (!/(event|name|action)/i.test(name)) continue;
-
-      const init = attr.getInitializer();
-      if (!init) continue;
-
-      const expr = Node.isJsxExpression(init)
-        ? init.getExpression()
-        : init;
-
-      if (!expr) continue;
-
-      extractEventsFromArgs([expr], checker).forEach(({ value }) => {
-        if (isValid(value)) events.add(value);
-      });
-    }
-  }
+  visit(source);
 
   return events;
 }
 
-function isValid(v: string) {
-  return !!v && v.length > 1 && !v.includes(" ");
+function getCallName(expr: ts.Expression): string {
+  if (ts.isIdentifier(expr)) return expr.text;
+
+  if (ts.isPropertyAccessExpression(expr)) {
+    return expr.name.text;
+  }
+
+  return "";
 }

@@ -23,3 +23,8 @@ export type EventraConfig = {
     exclude: string[];
   };
 };
+
+export type ResolveResult = {
+  values: string[];
+  dynamic: boolean;
+};
