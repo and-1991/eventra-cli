@@ -52,7 +52,11 @@ export class TSService {
     this.compilerOptions = compilerOptions;
 
     const host: ts.LanguageServiceHost = {
-      getScriptFileNames: () => [...this.fileNames],
+      getScriptFileNames: () => {
+        return [...new Set(this.fileNames)].sort((a, b) =>
+          a.localeCompare(b)
+        );
+      },
 
       getScriptVersion: (file) =>
         this.files.get(file)?.version.toString() ?? "0",

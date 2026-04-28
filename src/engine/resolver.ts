@@ -1,4 +1,5 @@
 import ts from "typescript";
+import {resolveExportedSymbol} from "./exportResolver";
 
 export type ResolveResult = {
   values: string[];
@@ -52,6 +53,8 @@ export function resolveNodeValue(
   if (ts.isIdentifier(node)) {
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return null;
+
+    symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 
     if (symbol.flags & ts.SymbolFlags.Alias) {
       symbol = checker.getAliasedSymbol(symbol);
