@@ -1,6 +1,43 @@
 import ts from "typescript";
 import { resolveNodeValue } from "./resolver";
 import { resolveFunctionFromCall } from "./callResolver";
+import { findTrackParamIndex } from "./functionAnalyzer";
+
+function getCallName(expr: ts.Expression): string {
+  if (ts.isIdentifier(expr)) return expr.text;
+
+  if (ts.isPropertyAccessExpression(expr)) {
+    return expr.name.text;
+  }
+
+  return "";
+}
+
+function pickBestArg(
+  args: readonly ts.Expression[],
+  checker: ts.TypeChecker,
+  paramMap: Map<string, ts.Expression>
+) {
+  let best: { score: number; node: ts.Expression } | null = null;
+
+  for (const arg of args) {
+    const res = resolveNodeValue(arg, checker, paramMap);
+
+    if (!res?.values?.length) continue;
+
+    let score = 0;
+
+    if (!res.dynamic) score += 3;
+    if (res.values.every(v => v.length < 50)) score += 2;
+    if (res.values.some(v => v.includes("*"))) score -= 2;
+
+    if (!best || score > best.score) {
+      best = { score, node: arg };
+    }
+  }
+
+  return best?.node;
+}
 
 export function scanSource(
   source: ts.SourceFile,
@@ -9,6 +46,7 @@ export function scanSource(
   depth = 0
 ): Set<string> {
   if (depth > 5) return new Set();
+
   const events = new Set<string>();
 
   if (visited.has(source.fileName)) return events;
@@ -19,11 +57,9 @@ export function scanSource(
       const name = getCallName(node.expression);
 
       if (/(track|event|capture|send)/i.test(name)) {
-
         const fn = resolveFunctionFromCall(node.expression, checker);
 
-        // param mapping
-        let paramMap = new Map<string, ts.Expression>();
+        const paramMap = new Map<string, ts.Expression>();
 
         if (fn && ts.isFunctionLike(fn)) {
           fn.parameters.forEach((param, index) => {
@@ -36,18 +72,37 @@ export function scanSource(
           });
         }
 
-        // cross-file traversal
-        if (fn) {
-          const sf = fn.getSourceFile();
+        if (fn && ts.isFunctionLike(fn)) {
+          const idx = findTrackParamIndex(fn);
 
-          if (!visited.has(sf.fileName)) {
-            scanSource(sf, checker, visited, depth + 1)
-              .forEach(e => events.add(e));
+          if (idx !== null) {
+            const realArg = node.arguments[idx];
+
+            if (realArg) {
+              const res = resolveNodeValue(realArg, checker, paramMap);
+
+              res?.values.forEach(v => {
+                if (
+                  v &&
+                  v.length > 1 &&
+                  v.length < 100 &&
+                  !v.includes(" ") &&
+                  /^[a-zA-Z0-9._:-]+$/.test(v)
+                ) {
+                  events.add(v);
+                }
+              });
+
+              return;
+            }
           }
         }
 
-        for (const arg of node.arguments) {
-          const res = resolveNodeValue(arg, checker, paramMap);
+        // fallback (heuristic)
+        const target = pickBestArg(node.arguments, checker, paramMap);
+
+        if (target) {
+          const res = resolveNodeValue(target, checker, paramMap);
 
           res?.values.forEach(v => {
             if (
@@ -70,14 +125,4 @@ export function scanSource(
   visit(source);
 
   return events;
-}
-
-function getCallName(expr: ts.Expression): string {
-  if (ts.isIdentifier(expr)) return expr.text;
-
-  if (ts.isPropertyAccessExpression(expr)) {
-    return expr.name.text;
-  }
-
-  return "";
 }

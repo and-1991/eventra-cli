@@ -3,6 +3,7 @@ import fs from "fs";
 
 export class TSService {
   private files = new Map<string, { version: number; content: string }>();
+  private fileNames = new Set<string>();
   private service: ts.LanguageService;
 
   constructor(private root: string) {
@@ -40,14 +41,8 @@ export class TSService {
     }
 
     const host: ts.LanguageServiceHost = {
-      getScriptFileNames: () => [
-        ...this.files.keys(),
-        ...ts.sys.readDirectory(
-          this.root,
-          [".ts", ".tsx"],
-          ["node_modules", "dist", ".git"]
-        )
-      ],
+      getScriptFileNames: () => [...this.fileNames],
+
       getScriptVersion: (file) =>
         this.files.get(file)?.version.toString() ?? "0",
 
@@ -87,6 +82,8 @@ export class TSService {
       content,
       version: prev ? prev.version + 1 : 1,
     });
+
+    this.fileNames.add(file);
   }
 
   getProgram() {
