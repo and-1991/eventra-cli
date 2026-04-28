@@ -25,7 +25,7 @@ export async function watch() {
 
       const { content, virtualFile } = processFile(file, raw);
 
-      engine.scanFile(virtualFile, content);
+      engine.scanFile(virtualFile, content, config);
 
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
@@ -56,7 +56,7 @@ export async function watch() {
 
         const { content, virtualFile } = processFile(file, raw);
 
-        engine.updateFile(virtualFile, content);
+        engine.updateFile(virtualFile, content, config);
 
       } catch {
         console.log(chalk.gray(`skip: ${file}`));

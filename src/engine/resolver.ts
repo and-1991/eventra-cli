@@ -53,6 +53,16 @@ export function resolveNodeValue(
   if (ts.isIdentifier(node)) {
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return null;
+    for (const decl of symbol.getDeclarations() ?? []) {
+      if (ts.isVariableDeclaration(decl) && decl.initializer) {
+        return resolveNodeValue(
+          decl.initializer,
+          checker,
+          paramMap,
+          seen
+        );
+      }
+    }
 
     symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 

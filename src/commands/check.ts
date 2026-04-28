@@ -28,7 +28,7 @@ export async function check({ fix = false }: { fix?: boolean }) {
 
       const { content, virtualFile } = processFile(file, raw);
 
-      engine.scanFile(virtualFile, content);
+      engine.scanFile(virtualFile, content, config);
 
     } catch (err) {
       console.log(chalk.yellow(`Skipped: ${file}`));
