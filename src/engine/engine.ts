@@ -5,23 +5,28 @@ import { hash } from "./hash";
 
 export class EventraEngine {
   private ts: TSService;
-  private graph = new DependencyGraph();
+  private graph: DependencyGraph;
 
   private fileEvents = new Map<string, Set<string>>();
   private fileHash = new Map<string, string>();
 
   constructor(root: string) {
     this.ts = new TSService(root);
+
+    const { baseUrl, paths } = this.ts.getModuleResolutionConfig();
+    this.graph = new DependencyGraph(baseUrl, paths);
   }
 
   scanFile(file: string, content: string) {
     const h = hash(content);
 
+    // cache
     if (this.fileHash.get(file) === h) {
       return this.fileEvents.get(file) ?? new Set();
     }
 
     this.fileHash.set(file, h);
+
     this.ts.updateFile(file, content);
 
     const source = this.ts.getSourceFile(file);
@@ -29,7 +34,9 @@ export class EventraEngine {
 
     if (!source || !checker) return new Set();
 
+    // обновляем graph
     this.graph.update(file, source);
+
     const events = scanSource(source, checker);
 
     this.fileEvents.set(file, events);
@@ -39,6 +46,7 @@ export class EventraEngine {
 
   updateFile(file: string, content: string) {
     const events = this.scanFile(file, content);
+
     const dependents = this.graph.getDependents(file);
 
     for (const dep of dependents) {
@@ -48,6 +56,7 @@ export class EventraEngine {
       if (!source || !checker) continue;
 
       const ev = scanSource(source, checker);
+
       this.fileEvents.set(dep, ev);
     }
 

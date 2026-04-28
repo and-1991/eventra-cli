@@ -6,15 +6,51 @@ export class DependencyGraph {
   private reverse = new Map<string, Set<string>>();
   private exports = new Map<string, Set<string>>();
 
+  constructor(
+    private baseUrl: string,
+    private paths: Record<string, string[]>
+  ) {}
+
   private normalize(file: string) {
     return path.resolve(file);
   }
 
-  private resolveImport(from: string, module: string): string | null {
-    if (!module.startsWith(".")) return null;
+  // TS-like resolver
+  private resolveModule(module: string, from: string): string | null {
+    // relative
+    if (module.startsWith(".")) {
+      const abs = path.resolve(path.dirname(from), module);
+      return this.resolveFile(abs);
+    }
 
-    const base = path.resolve(path.dirname(from), module);
+    // paths mapping
+    for (const key in this.paths) {
+      const pattern = key.replace("*", "(.*)");
+      const regex = new RegExp("^" + pattern + "$");
+      const match = module.match(regex);
 
+      if (!match) continue;
+
+      const wildcard = match[1] || "";
+
+      for (const target of this.paths[key]) {
+        const replaced = target.replace("*", wildcard);
+        const abs = path.resolve(this.baseUrl, replaced);
+
+        const resolved = this.resolveFile(abs);
+        if (resolved) return resolved;
+      }
+    }
+
+    // baseUrl fallback
+    const abs = path.resolve(this.baseUrl, module);
+    const resolved = this.resolveFile(abs);
+    if (resolved) return resolved;
+
+    return null;
+  }
+
+  private resolveFile(base: string): string | null {
     const tryFiles = [
       base,
       base + ".ts",
@@ -32,7 +68,7 @@ export class DependencyGraph {
       }
     }
 
-    return this.normalize(base);
+    return null;
   }
 
   update(file: string, source: ts.SourceFile) {
@@ -44,8 +80,8 @@ export class DependencyGraph {
       // IMPORT
       if (ts.isImportDeclaration(stmt)) {
         const module = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
-        const resolved = this.resolveImport(normalizedFile, module);
 
+        const resolved = this.resolveModule(module, normalizedFile);
         if (!resolved) continue;
 
         if (!this.reverse.has(resolved)) {
@@ -55,11 +91,11 @@ export class DependencyGraph {
         this.reverse.get(resolved)!.add(normalizedFile);
       }
 
-      // EXPORT
+      // EXPORT *
       if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier) {
         const module = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
-        const resolved = this.resolveImport(normalizedFile, module);
 
+        const resolved = this.resolveModule(module, normalizedFile);
         if (!resolved) continue;
 
         if (!this.exports.has(normalizedFile)) {
@@ -75,23 +111,6 @@ export class DependencyGraph {
         this.reverse.get(resolved)!.add(normalizedFile);
       }
     }
-  }
-
-  getAllRelated(file: string, visited = new Set<string>()): Set<string> {
-    const normalized = this.normalize(file);
-
-    if (visited.has(normalized)) return visited;
-    visited.add(normalized);
-
-    const deps = this.exports.get(normalized);
-
-    if (!deps) return visited;
-
-    for (const dep of deps) {
-      this.getAllRelated(dep, visited);
-    }
-
-    return visited;
   }
 
   getDependents(file: string) {

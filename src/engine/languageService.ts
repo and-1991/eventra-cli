@@ -1,10 +1,15 @@
 import ts from "typescript";
 import fs from "fs";
+import path from "path";
 
 export class TSService {
   private files = new Map<string, { version: number; content: string }>();
   private fileNames = new Set<string>();
   private service: ts.LanguageService;
+
+  private readonly compilerOptions: ts.CompilerOptions = {};
+  private readonly baseUrl: string = "";
+  private readonly paths: Record<string, string[]> = {};
 
   constructor(private root: string) {
     const configPath = ts.findConfigFile(
@@ -23,10 +28,7 @@ export class TSService {
     };
 
     if (configPath) {
-      const configFile = ts.readConfigFile(
-        configPath,
-        ts.sys.readFile
-      );
+      const configFile = ts.readConfigFile(configPath, ts.sys.readFile);
 
       const parsed = ts.parseJsonConfigFileContent(
         configFile.config,
@@ -38,7 +40,16 @@ export class TSService {
         ...compilerOptions,
         ...parsed.options,
       };
+
+      this.paths = parsed.options.paths || {};
+      this.baseUrl = parsed.options.baseUrl
+        ? path.resolve(root, parsed.options.baseUrl)
+        : root;
+    } else {
+      this.baseUrl = root;
     }
+
+    this.compilerOptions = compilerOptions;
 
     const host: ts.LanguageServiceHost = {
       getScriptFileNames: () => [...this.fileNames],
@@ -63,7 +74,7 @@ export class TSService {
       },
 
       getCurrentDirectory: () => this.root,
-      getCompilationSettings: () => compilerOptions,
+      getCompilationSettings: () => this.compilerOptions,
       getDefaultLibFileName: (opts) =>
         ts.getDefaultLibFilePath(opts),
 
@@ -96,5 +107,12 @@ export class TSService {
 
   getSourceFile(file: string) {
     return this.getProgram()?.getSourceFile(file);
+  }
+
+  getModuleResolutionConfig() {
+    return {
+      baseUrl: this.baseUrl,
+      paths: this.paths,
+    };
   }
 }
