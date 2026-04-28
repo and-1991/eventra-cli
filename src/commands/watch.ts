@@ -5,31 +5,8 @@ import fg from "fast-glob";
 
 import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
+import { processFile } from "../utils/processFile";
 
-import { detectParser } from "../utils/parsers/router";
-import { parseVue } from "../utils/parsers/vue";
-import { parseSvelte } from "../utils/parsers/svelte";
-import { parseAstro } from "../utils/parsers/astro";
-
-// PREPROCESS (CONTENT)
-function preprocess(file: string, content: string) {
-  const parser = detectParser(file);
-
-  if (parser === "vue") return parseVue(content);
-  if (parser === "svelte") return parseSvelte(content);
-  if (parser === "astro") return parseAstro(content);
-
-  return content;
-}
-
-// VIRTUAL FILE (PATH)
-function toVirtualFile(file: string) {
-  return file.endsWith(".vue")
-    ? file + ".tsx"
-    : file;
-}
-
-// WATCH
 export async function watch() {
   const config = await loadConfig();
   if (!config) return;
@@ -40,20 +17,13 @@ export async function watch() {
     ignore: config.sync.exclude,
   });
 
-  if (!files.length) {
-    console.log(chalk.yellow("No files found"));
-    return;
-  }
-
   const engine = new EventraEngine(process.cwd());
 
-  // INITIAL SCAN
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
 
-      const content = preprocess(file, raw);
-      const virtualFile = toVirtualFile(file);
+      const { content, virtualFile } = processFile(file, raw);
 
       engine.scanFile(virtualFile, content);
 
@@ -69,9 +39,9 @@ export async function watch() {
     chalk.gray(`Initial: ${config.events.length} events\n`)
   );
 
-  // STATE
   let locked = false;
   let queued = new Set<string>();
+  let timer: NodeJS.Timeout | null = null;
 
   const run = async () => {
     if (locked) return;
@@ -84,8 +54,7 @@ export async function watch() {
       try {
         const raw = await fs.readFile(file, "utf-8");
 
-        const content = preprocess(file, raw);
-        const virtualFile = toVirtualFile(file);
+        const { content, virtualFile } = processFile(file, raw);
 
         engine.updateFile(virtualFile, content);
 
@@ -116,48 +85,33 @@ export async function watch() {
 
   const schedule = (file: string) => {
     queued.add(file);
-    setTimeout(run, 50);
+
+    if (timer) clearTimeout(timer);
+
+    timer = setTimeout(run, 100);
   };
 
-  // WATCHER
   const watcher = chokidar.watch(config.sync.include, {
     ignored: config.sync.exclude,
     ignoreInitial: true,
-    awaitWriteFinish: {
-      stabilityThreshold: 50,
-      pollInterval: 10,
-    },
   });
 
   watcher
-    .on("add", (file) => {
-      console.log(chalk.gray(`add: ${file}`));
-      schedule(file);
-    })
-    .on("change", (file) => {
-      console.log(chalk.gray(`change: ${file}`));
-      schedule(file);
-    })
+    .on("add", schedule)
+    .on("change", schedule)
     .on("unlink", async (file) => {
       console.log(chalk.gray(`remove: ${file}`));
 
-      const virtualFile = toVirtualFile(file);
+      const { virtualFile } = processFile(file, "");
 
-      engine.removeFile?.(virtualFile);
+      engine.removeFile(virtualFile);
 
       const next = engine.getAllEvents();
 
-      const removed = config.events.filter(e => !next.includes(e));
-
-      if (removed.length) {
-        removed.forEach(e => console.log(chalk.red(`- ${e}`)));
-
-        config.events = next.sort();
-        await saveConfig(config);
-      }
+      config.events = next.sort();
+      await saveConfig(config);
     });
 
-  // EXIT
   process.on("SIGINT", async () => {
     console.log(chalk.yellow("\nStopping watcher..."));
     await watcher.close();

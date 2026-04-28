@@ -12,8 +12,7 @@ export function normalizeConfig(
     events: config.events ?? [],
     endpoint: config.endpoint ?? "",
     wrappers: config.wrappers ?? [],
-    functionWrappers:
-      config.functionWrappers ?? [],
+    functionWrappers: config.functionWrappers ?? [],
     aliases: config.aliases ?? {},
     sync: config.sync ?? {
       include: [
@@ -30,43 +29,26 @@ export function normalizeConfig(
 }
 
 export async function loadConfig(): Promise<EventraConfig | null> {
-  const configPath = path.join(
-    process.cwd(),
-    CONFIG_NAME
-  );
+  const configPath = path.join(process.cwd(), CONFIG_NAME);
 
-  if (
-    !(await fs.pathExists(
-      configPath
-    ))
-  ) {
+  if (!(await fs.pathExists(configPath))) {
     return null;
   }
 
-  const config =
-    await fs.readJSON(
-      configPath
-    );
-
-  return normalizeConfig(config);
+  try {
+    const config = await fs.readJSON(configPath);
+    return normalizeConfig(config);
+  } catch {
+    return null;
+  }
 }
 
-export async function saveConfig(
-  config: EventraConfig
-) {
-  const configPath = path.join(
-    process.cwd(),
-    CONFIG_NAME
-  );
+export async function saveConfig(config: EventraConfig) {
+  const configPath = path.join(process.cwd(), CONFIG_NAME);
 
-  const normalized =
-    normalizeConfig(config);
+  const normalized = normalizeConfig(config);
 
-  await fs.writeJSON(
-    configPath,
-    normalized,
-    {
-      spaces: 2
-    }
-  );
+  await fs.writeJSON(configPath, normalized, {
+    spaces: 2
+  });
 }

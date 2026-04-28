@@ -22,7 +22,6 @@ export class EventraEngine {
     }
 
     this.fileHash.set(file, h);
-
     this.ts.updateFile(file, content);
 
     const source = this.ts.getSourceFile(file);
@@ -31,7 +30,6 @@ export class EventraEngine {
     if (!source || !checker) return new Set();
 
     this.graph.update(file, source);
-
     const events = scanSource(source, checker);
 
     this.fileEvents.set(file, events);
@@ -40,7 +38,20 @@ export class EventraEngine {
   }
 
   updateFile(file: string, content: string) {
-    return this.scanFile(file, content);
+    const events = this.scanFile(file, content);
+    const dependents = this.graph.getDependents(file);
+
+    for (const dep of dependents) {
+      const source = this.ts.getSourceFile(dep);
+      const checker = this.ts.getChecker();
+
+      if (!source || !checker) continue;
+
+      const ev = scanSource(source, checker);
+      this.fileEvents.set(dep, ev);
+    }
+
+    return events;
   }
 
   getAllEvents() {
@@ -56,5 +67,6 @@ export class EventraEngine {
   removeFile(file: string) {
     this.fileEvents.delete(file);
     this.fileHash.delete(file);
+    this.graph.remove(file);
   }
 }

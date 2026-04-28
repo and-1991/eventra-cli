@@ -10,9 +10,12 @@ export function processFile(file: string, content: string) {
   if (parser === "svelte") content = parseSvelte(content);
   if (parser === "astro") content = parseAstro(content);
 
-  const virtualFile = file.endsWith(".vue")
-    ? file + ".tsx"
-    : file;
+  const virtualFile =
+    file.endsWith(".vue") ||
+    file.endsWith(".svelte") ||
+    file.endsWith(".astro")
+      ? file + ".tsx"
+      : file;
 
   return { content, virtualFile };
 }

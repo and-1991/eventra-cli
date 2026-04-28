@@ -81,6 +81,9 @@ export async function send() {
     )
   );
 
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 10000);
+
   try {
     const res = await fetch(
       endpoint,
@@ -99,8 +102,9 @@ export async function send() {
             version: CLI_VERSION,
             runtime: "node"
           }
-        })
-      }
+        }),
+        signal: controller.signal
+      },
     );
 
     if (!res.ok) {
@@ -203,5 +207,7 @@ export async function send() {
         )
       );
     }
+  } finally {
+    clearTimeout(timeout);
   }
 }

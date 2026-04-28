@@ -5,37 +5,20 @@ export function resolveFunctionFromCall(
   checker: ts.TypeChecker
 ): ts.FunctionLikeDeclaration | null {
 
-  let symbol = checker.getSymbolAtLocation(expr);
+  const type = checker.getTypeAtLocation(expr);
+  const signatures = type.getCallSignatures();
 
-  if (!symbol && ts.isPropertyAccessExpression(expr)) {
-    symbol = checker.getSymbolAtLocation(expr.name);
-  }
+  for (const sig of signatures) {
+    const decl = sig.getDeclaration();
 
-  if (!symbol) return null;
-
-  if (symbol.flags & ts.SymbolFlags.Alias) {
-    symbol = checker.getAliasedSymbol(symbol);
-  }
-
-  for (const decl of symbol.getDeclarations() ?? []) {
     if (
-      ts.isFunctionDeclaration(decl) ||
-      ts.isMethodDeclaration(decl) ||
-      ts.isFunctionExpression(decl) ||
-      ts.isArrowFunction(decl)
+      decl &&
+      (ts.isFunctionDeclaration(decl) ||
+        ts.isMethodDeclaration(decl) ||
+        ts.isFunctionExpression(decl) ||
+        ts.isArrowFunction(decl))
     ) {
       return decl;
-    }
-
-    if (ts.isVariableDeclaration(decl) && decl.initializer) {
-      const init = decl.initializer;
-
-      if (
-        ts.isArrowFunction(init) ||
-        ts.isFunctionExpression(init)
-      ) {
-        return init;
-      }
     }
   }
 

@@ -30,8 +30,12 @@ export async function check({ fix = false }: { fix?: boolean }) {
 
       engine.scanFile(virtualFile, content);
 
-    } catch {
-      console.log(chalk.gray(`Skipped: ${file}`));
+    } catch (err) {
+      console.log(chalk.yellow(`Skipped: ${file}`));
+
+      if (err instanceof Error) {
+        console.log(chalk.gray(err.message));
+      }
     }
   }
 
@@ -39,14 +43,17 @@ export async function check({ fix = false }: { fix?: boolean }) {
   const known = new Set(config.events ?? []);
 
   const newEvents = [...found].filter(e => !known.has(e));
+  const removed = [...known].filter(e => !found.has(e));
 
   if (fix) {
+    const merged = new Set(config.events ?? []);
+
     newEvents.forEach(e => {
-      config.events.push(e);
+      merged.add(e);
       console.log(chalk.green(`+ ${e}`));
     });
 
-    config.events = [...new Set(config.events)].sort();
+    config.events = [...merged].sort();
 
     await saveConfig(config);
 
@@ -54,9 +61,16 @@ export async function check({ fix = false }: { fix?: boolean }) {
     return;
   }
 
-  if (newEvents.length) {
-    console.log(chalk.red("\nNew events:"));
-    newEvents.forEach(e => console.log(chalk.red(`+ ${e}`)));
+  if (newEvents.length || removed.length) {
+    if (newEvents.length) {
+      console.log(chalk.red("\nNew events:"));
+      newEvents.forEach(e => console.log(chalk.red(`+ ${e}`)));
+    }
+
+    if (removed.length) {
+      console.log(chalk.yellow("\nRemoved events:"));
+      removed.forEach(e => console.log(chalk.yellow(`- ${e}`)));
+    }
 
     process.exit(1);
   }

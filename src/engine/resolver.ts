@@ -7,8 +7,22 @@ export type ResolveResult = {
 
 export function resolveNodeValue(
   node: ts.Node,
-  checker: ts.TypeChecker
+  checker: ts.TypeChecker,
+  paramMap?: Map<string, ts.Expression>,
+  seen = new Set<ts.Node>()
 ): ResolveResult | null {
+
+  if (seen.has(node)) return null;
+  seen.add(node);
+
+  // param mapping
+  if (ts.isIdentifier(node) && paramMap?.has(node.text)) {
+    return resolveNodeValue(
+      paramMap.get(node.text)!,
+      checker,
+      paramMap
+    );
+  }
 
   if (ts.isStringLiteral(node)) {
     return { values: [node.text], dynamic: false };
@@ -26,8 +40,8 @@ export function resolveNodeValue(
   }
 
   if (ts.isConditionalExpression(node)) {
-    const a = resolveNodeValue(node.whenTrue, checker);
-    const b = resolveNodeValue(node.whenFalse, checker);
+    const a = resolveNodeValue(node.whenTrue, checker, paramMap, seen);
+    const b = resolveNodeValue(node.whenFalse, checker, paramMap, seen);
 
     return {
       values: [...new Set([...(a?.values ?? []), ...(b?.values ?? [])])],
@@ -45,7 +59,7 @@ export function resolveNodeValue(
 
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
-        return resolveNodeValue(decl.initializer, checker);
+        return resolveNodeValue(decl.initializer, checker, paramMap, seen);
       }
 
       if (ts.isEnumMember(decl) && decl.initializer) {
@@ -78,6 +92,39 @@ export function resolveNodeValue(
             };
           }
         }
+      }
+    }
+  }
+
+  if (ts.isObjectLiteralExpression(node)) {
+    const values: string[] = [];
+
+    for (const prop of node.properties) {
+      if (!ts.isPropertyAssignment(prop)) continue;
+
+      const name = prop.name.getText();
+
+      if (name === "event") {
+        const res = resolveNodeValue(prop.initializer, checker, paramMap, seen);
+        if (res) values.push(...res.values);
+      }
+    }
+
+    return { values, dynamic: true };
+  }
+
+  if (ts.isBinaryExpression(node)) {
+    if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+      const left = resolveNodeValue(node.left, checker, paramMap, seen);
+      const right = resolveNodeValue(node.right, checker, paramMap, seen);
+
+      if (left && right) {
+        return {
+          values: left.values.flatMap(l =>
+            right.values.map(r => l + r)
+          ),
+          dynamic: true,
+        };
       }
     }
   }

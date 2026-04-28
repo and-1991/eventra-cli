@@ -1,4 +1,3 @@
-
 <p align="center">
 <img src="./assets/eventra-icon-animated.svg" width="120">
 </p>
@@ -49,13 +48,54 @@ Creates `eventra.json` configuration file.
 
 Scans your project and discovers events automatically.
 
-Supports:
+### Supports:
 
 - track("event")
 - analytics.track("event")
-- function wrappers
-- component wrappers
-- aliases
+
+- Variables
+```ts
+const EVENT = "click"
+track(EVENT)
+```
+
+- Enums
+```ts
+track(EVENTS.CLICK)
+```
+
+- Template strings
+```ts
+track(`click_${type}`)
+```
+
+- Conditionals
+```ts
+track(condition ? "a" : "b")
+```
+
+- Object format
+```ts
+track({ event: "click" })
+```
+
+- Function wrappers
+```ts
+const trackFeature = (name: string) => {
+  track(name)
+}
+
+trackFeature("click")
+```
+
+- Multi-argument wrappers
+```ts
+trackFeature("test", "click")
+```
+
+- Cross-file tracking
+
+- Vue / Svelte / Astro support
 
 ---
 
@@ -70,33 +110,18 @@ eventra check
 ### Detects:
 
 - New events
-- Unresolved dynamic events
-
-### Output example:
-
-```
-New events:
-+ user_click (src/Button.tsx:42)
-
-Dynamic:
-- eventName (src/App.tsx:10)
-```
+- Removed events
+- Dynamic values
 
 ---
 
 ## eventra check --fix
 
-Interactive auto-fix mode.
+Auto-fix mode.
 
 ```bash
 eventra check --fix
 ```
-
-### What it does:
-
-- Adds new events to config
-- Resolves dynamic events via alias
-- Allows skipping dynamic values
 
 ---
 
@@ -107,13 +132,6 @@ Real-time event detection.
 ```bash
 eventra watch
 ```
-
-### Features:
-
-- Detects new events instantly
-- Debounced updates
-- No duplicates
-- Ignores temp files
 
 ---
 
@@ -128,8 +146,6 @@ eventra send
 ---
 
 # Configuration
-
-Example `eventra.json`:
 
 ```json
 {
@@ -147,53 +163,12 @@ Example `eventra.json`:
 
 ---
 
-# Key Concepts
-
-### Aliases
-
-```ts
-const EVENT = "user_click";
-track(EVENT);
-```
-
-Auto-resolved → `user_click`
-
----
-
-### Dynamic events
-
-```ts
-track(eventName);
-```
-
-Must be:
-
-- aliased
-- or skipped (`__skip__`)
-
----
-
-### File tracking
-
-All events include:
-
-```
-event_name (file:line)
-```
-
----
-
 # Supported Frameworks
-
-Frontend:
 
 - React
 - Vue
 - Svelte
 - Astro
-
-Backend:
-
 - Node.js
 - Express
 - NestJS

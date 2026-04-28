@@ -31,9 +31,12 @@ export async function sync() {
 
       engine.scanFile(virtualFile, content);
 
-    } catch (e) {
-      console.log(chalk.red(`ERROR: ${file}`));
-      console.error(e);
+    } catch (err) {
+      console.log(chalk.yellow(`Skipped: ${file}`));
+
+      if (err instanceof Error) {
+        console.log(chalk.gray(err.message));
+      }
     }
   }
 
