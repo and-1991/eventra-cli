@@ -9,6 +9,8 @@ import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
 
 export async function watch() {
+  process.env.EVENTRA_WATCH = "1";
+
   const config = await loadConfig();
   if (!config) return;
 
@@ -50,12 +52,10 @@ export async function watch() {
     chalk.gray(`Initial: ${config.events.length} events\n`)
   );
 
-  // WATCH STATE
   let locked = false;
   let queued = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
 
-  // RUN BATCH
   const run = async () => {
     if (locked) return;
     locked = true;
@@ -65,9 +65,13 @@ export async function watch() {
 
     for (const file of batch) {
       try {
-        const raw = await fs.readFile(file, "utf-8");
-        const { content, virtualFile } = processFile(file, raw);
+        const abs = path.resolve(file);
 
+        const raw = await fs.readFile(abs, "utf-8");
+
+        const { content, virtualFile } = processFile(abs, raw);
+
+        engine["ts"].updateFile(virtualFile, content);
         engine.updateFile(virtualFile, content, config);
 
       } catch {
@@ -95,17 +99,14 @@ export async function watch() {
     locked = false;
   };
 
-  // SCHEDULER
   const schedule = (file: string) => {
     const abs = path.resolve(file);
-
     queued.add(abs);
 
     if (timer) clearTimeout(timer);
     timer = setTimeout(run, 100);
   };
 
-  // WATCHER
   const watcher = chokidar.watch(config.sync.include, {
     ignored: config.sync.exclude,
     ignoreInitial: true,

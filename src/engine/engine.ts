@@ -26,9 +26,10 @@ export class EventraEngine {
     config: EventraConfig
   ): ScanResult {
     const h = hash(content);
+    const isWatch = process.env.EVENTRA_WATCH === "1";
 
     // skip unchanged
-    if (this.fileHash.get(file) === h) {
+    if (this.fileHash.get(file) === h && !isWatch) {
       return (
         this.fileResults.get(file) ?? {
           events: new Set(),
@@ -85,9 +86,10 @@ export class EventraEngine {
       if (!depContent) continue;
 
       const h = hash(depContent);
+      const isWatch = process.env.EVENTRA_WATCH === "1";
 
       // skip unchanged dependents
-      if (this.fileHash.get(dep) === h) continue;
+      if (this.fileHash.get(dep) === h && !isWatch) continue;
 
       this.fileHash.set(dep, h);
 
@@ -131,9 +133,10 @@ export class EventraEngine {
       if (!content) continue;
 
       const h = hash(content);
+      const isWatch = process.env.EVENTRA_WATCH === "1";
 
       // skip unchanged
-      if (this.fileHash.get(dep) === h) continue;
+      if (this.fileHash.get(dep) === h && !isWatch) continue;
 
       this.fileHash.set(dep, h);
 
