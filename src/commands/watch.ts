@@ -2,6 +2,7 @@ import chokidar from "chokidar";
 import chalk from "chalk";
 import fs from "fs/promises";
 import fg from "fast-glob";
+import path from "path";
 
 import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
@@ -19,17 +20,27 @@ export async function watch() {
 
   const engine = new EventraEngine(process.cwd());
 
+  const fileCache: { file: string; content: string }[] = [];
+
+  // PRELOAD TS
   for (const file of files) {
     try {
-      const raw = await fs.readFile(file, "utf-8");
+      const abs = path.resolve(file);
+      const raw = await fs.readFile(abs, "utf-8");
 
-      const { content, virtualFile } = processFile(file, raw);
+      const { content, virtualFile } = processFile(abs, raw);
 
-      engine.scanFile(virtualFile, content, config);
+      fileCache.push({ file: virtualFile, content });
 
+      engine["ts"].updateFile(virtualFile, content);
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
     }
+  }
+
+  // INITIAL SCAN
+  for (const { file, content } of fileCache) {
+    engine.scanFile(file, content, config);
   }
 
   config.events = engine.getAllEvents().sort();
@@ -39,10 +50,12 @@ export async function watch() {
     chalk.gray(`Initial: ${config.events.length} events\n`)
   );
 
+  // WATCH STATE
   let locked = false;
   let queued = new Set<string>();
   let timer: NodeJS.Timeout | null = null;
 
+  // RUN BATCH
   const run = async () => {
     if (locked) return;
     locked = true;
@@ -53,7 +66,6 @@ export async function watch() {
     for (const file of batch) {
       try {
         const raw = await fs.readFile(file, "utf-8");
-
         const { content, virtualFile } = processFile(file, raw);
 
         engine.updateFile(virtualFile, content, config);
@@ -83,14 +95,17 @@ export async function watch() {
     locked = false;
   };
 
+  // SCHEDULER
   const schedule = (file: string) => {
-    queued.add(file);
+    const abs = path.resolve(file);
+
+    queued.add(abs);
 
     if (timer) clearTimeout(timer);
-
     timer = setTimeout(run, 100);
   };
 
+  // WATCHER
   const watcher = chokidar.watch(config.sync.include, {
     ignored: config.sync.exclude,
     ignoreInitial: true,
@@ -100,16 +115,22 @@ export async function watch() {
     .on("add", schedule)
     .on("change", schedule)
     .on("unlink", async (file) => {
+      const abs = path.resolve(file);
+
       console.log(chalk.gray(`remove: ${file}`));
 
-      const { virtualFile } = processFile(file, "");
+      const { virtualFile } = processFile(abs, "");
 
-      engine.removeFile(virtualFile);
+      engine.removeFile(virtualFile, config);
 
       const next = engine.getAllEvents();
 
       config.events = next.sort();
       await saveConfig(config);
+
+      console.log(
+        chalk.gray(`Total: ${config.events.length} events\n`)
+      );
     });
 
   process.on("SIGINT", async () => {
