@@ -107,6 +107,7 @@ export function resolveNodeValue(
         s = checker.getAliasedSymbol(s);
       }
 
+      // ENUM support
       for (const decl of s.getDeclarations() ?? []) {
         if (ts.isEnumMember(decl) && decl.initializer) {
           if (ts.isStringLiteral(decl.initializer)) {
@@ -114,6 +115,36 @@ export function resolveNodeValue(
               values: [decl.initializer.text],
               dynamic: false,
             };
+          }
+        }
+      }
+    }
+
+    // OBJECT support
+    if (ts.isIdentifier(node.expression)) {
+      const objSymbol = checker.getSymbolAtLocation(node.expression);
+
+      if (objSymbol) {
+        for (const decl of objSymbol.getDeclarations() ?? []) {
+          if (
+            ts.isVariableDeclaration(decl) &&
+            decl.initializer &&
+            ts.isObjectLiteralExpression(decl.initializer)
+          ) {
+            for (const prop of decl.initializer.properties) {
+              if (!ts.isPropertyAssignment(prop)) continue;
+
+              const name = prop.name.getText();
+
+              if (name === node.name.text) {
+                return resolveNodeValue(
+                  prop.initializer,
+                  checker,
+                  paramMap,
+                  seen
+                );
+              }
+            }
           }
         }
       }
