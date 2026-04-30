@@ -62,6 +62,10 @@ export class TSService {
         this.files.get(file)?.version.toString() ?? "0",
 
       getScriptSnapshot: (file) => {
+        if (!this.fileNames.has(file)) {
+          return undefined;
+        }
+
         const f = this.files.get(file);
 
         if (f) {
@@ -111,6 +115,15 @@ export class TSService {
 
   getSourceFile(file: string) {
     return this.getProgram()?.getSourceFile(file);
+  }
+
+  getFileContent(file: string) {
+    return this.files.get(file)?.content;
+  }
+
+  removeFile(file: string) {
+    this.files.delete(file);
+    this.fileNames.delete(file);
   }
 
   getModuleResolutionConfig() {

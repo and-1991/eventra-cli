@@ -15,15 +15,18 @@ function isFunctionLike(
 function resolveFromSymbol(
   symbol: ts.Symbol,
   checker: ts.TypeChecker,
-  visited = new Set<ts.Symbol>()
+  visited = new Set<ts.Symbol>(),
+  depth = 0
 ): ts.FunctionLikeDeclaration | null {
   if (visited.has(symbol)) return null;
+  if (depth > 5) return null;
+
   visited.add(symbol);
 
-  // alias unwrap
+  // unwrap alias
   if (symbol.flags & ts.SymbolFlags.Alias) {
     const aliased = checker.getAliasedSymbol(symbol);
-    return resolveFromSymbol(aliased, checker, visited);
+    return resolveFromSymbol(aliased, checker, visited, depth + 1);
   }
 
   const decls = symbol.getDeclarations() ?? [];
@@ -33,6 +36,7 @@ function resolveFromSymbol(
       return decl;
     }
 
+    // MethodSignature
     if (ts.isMethodSignature(decl)) {
       const parent = decl.parent;
 
@@ -45,16 +49,16 @@ function resolveFromSymbol(
         for (const prop of props) {
           if (prop.name !== name) continue;
 
-          const resolved = resolveFromSymbol(prop, checker, visited);
+          const resolved = resolveFromSymbol(prop, checker, visited, depth + 1);
           if (resolved) return resolved;
         }
       }
     }
 
-    // fallback
+    // SAFE fallback
     const s = checker.getSymbolAtLocation(decl);
-    if (s) {
-      const resolved = resolveFromSymbol(s, checker, visited);
+    if (s && s !== symbol) {
+      const resolved = resolveFromSymbol(s, checker, visited, depth + 1);
       if (resolved) return resolved;
     }
   }
@@ -71,14 +75,13 @@ export function resolveFunctionFromCall(
 
   for (const sig of signatures) {
     const decl = sig.getDeclaration();
-
     if (!decl) continue;
 
     if (isFunctionLike(decl)) {
       return decl;
     }
 
-    // MethodSignature case
+    // interface method
     if (ts.isMethodSignature(decl)) {
       const symbol = checker.getSymbolAtLocation(decl.name);
 

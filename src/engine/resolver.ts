@@ -1,5 +1,5 @@
 import ts from "typescript";
-import {resolveExportedSymbol} from "./exportResolver";
+import { resolveExportedSymbol } from "./exportResolver";
 
 export type ResolveResult = {
   values: string[];
@@ -21,7 +21,8 @@ export function resolveNodeValue(
     return resolveNodeValue(
       paramMap.get(node.text)!,
       checker,
-      paramMap
+      paramMap,
+      seen
     );
   }
 
@@ -53,6 +54,8 @@ export function resolveNodeValue(
   if (ts.isIdentifier(node)) {
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return null;
+
+    // variable inline resolve FIRST
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
         return resolveNodeValue(
@@ -64,15 +67,23 @@ export function resolveNodeValue(
       }
     }
 
+    const original = symbol;
+
     symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 
-    if (symbol.flags & ts.SymbolFlags.Alias) {
+    // avoid alias loop
+    if (symbol !== original && (symbol.flags & ts.SymbolFlags.Alias)) {
       symbol = checker.getAliasedSymbol(symbol);
     }
 
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
-        return resolveNodeValue(decl.initializer, checker, paramMap, seen);
+        return resolveNodeValue(
+          decl.initializer,
+          checker,
+          paramMap,
+          seen
+        );
       }
 
       if (ts.isEnumMember(decl) && decl.initializer) {

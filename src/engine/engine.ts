@@ -3,6 +3,7 @@ import { ScanResult, scanSource } from "./scanner";
 import { DependencyGraph } from "./graph";
 import { hash } from "./hash";
 import { EventraConfig } from "../types";
+import { isExternalFile } from "./boundary";
 
 export class EventraEngine {
   private ts: TSService;
@@ -18,9 +19,15 @@ export class EventraEngine {
     this.graph = new DependencyGraph(baseUrl, paths);
   }
 
-  scanFile(file: string, content: string, config: EventraConfig): ScanResult {
+  // SCAN FILE
+  scanFile(
+    file: string,
+    content: string,
+    config: EventraConfig
+  ): ScanResult {
     const h = hash(content);
 
+    // skip unchanged
     if (this.fileHash.get(file) === h) {
       return (
         this.fileResults.get(file) ?? {
@@ -45,6 +52,7 @@ export class EventraEngine {
       };
     }
 
+    // update dependency graph
     this.graph.update(file, source);
 
     const res = scanSource(source, checker, config);
@@ -54,16 +62,36 @@ export class EventraEngine {
     return res;
   }
 
-  updateFile(file: string, content: string, config: EventraConfig) {
+  // UPDATE FILE (incremental)
+  updateFile(
+    file: string,
+    content: string,
+    config: EventraConfig
+  ) {
     const res = this.scanFile(file, content, config);
 
     const dependents = this.graph.getAllDependentsDeep(file);
 
     for (const dep of dependents) {
+      // skip external files
+      if (isExternalFile(dep)) continue;
+
       const source = this.ts.getSourceFile(dep);
       const checker = this.ts.getChecker();
 
       if (!source || !checker) continue;
+
+      const depContent = this.ts.getFileContent(dep);
+      if (!depContent) continue;
+
+      const h = hash(depContent);
+
+      // skip unchanged dependents
+      if (this.fileHash.get(dep) === h) continue;
+
+      this.fileHash.set(dep, h);
+
+      this.graph.update(dep, source);
 
       const r = scanSource(source, checker, config);
       this.fileResults.set(dep, r);
@@ -72,6 +100,7 @@ export class EventraEngine {
     return res;
   }
 
+  // GET ALL EVENTS
   getAllEvents() {
     const all = new Set<string>();
 
@@ -82,9 +111,44 @@ export class EventraEngine {
     return [...all];
   }
 
-  removeFile(file: string) {
+  // REMOVE FILE
+  removeFile(file: string, config?: EventraConfig) {
+    this.ts.removeFile(file);
     this.fileResults.delete(file);
     this.fileHash.delete(file);
     this.graph.remove(file);
+    const dependents = this.graph.getAllDependentsDeep(file);
+
+    for (const dep of dependents) {
+      if (isExternalFile(dep)) continue;
+
+      const source = this.ts.getSourceFile(dep);
+      const checker = this.ts.getChecker();
+
+      if (!source || !checker) continue;
+
+      const content = this.ts.getFileContent(dep);
+      if (!content) continue;
+
+      const h = hash(content);
+
+      // skip unchanged
+      if (this.fileHash.get(dep) === h) continue;
+
+      this.fileHash.set(dep, h);
+
+      const r = scanSource(
+        source,
+        checker,
+        config ?? {
+          events: [],
+          wrappers: [],
+          functionWrappers: [],
+          sync: { include: [], exclude: [] },
+        }
+      );
+
+      this.fileResults.set(dep, r);
+    }
   }
 }

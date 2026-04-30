@@ -4,6 +4,7 @@ import { resolveFunctionFromCall } from "./callResolver";
 import { resolveExportedSymbol } from "./exportResolver";
 import { findTrackParamIndex } from "./functionAnalyzer";
 import { EventraConfig } from "../types";
+import { isExternalFile } from "./boundary";
 
 const TRACKING_NAMES = new Set(["track", "event", "capture", "send"]);
 
@@ -44,8 +45,7 @@ function isPropUsedInTracking(
       for (const arg of node.arguments) {
         if (
           (ts.isIdentifier(arg) && arg.text === prop) ||
-          (ts.isPropertyAccessExpression(arg) &&
-            arg.name.text === prop)
+          (ts.isPropertyAccessExpression(arg) && arg.name.text === prop)
         ) {
           found = true;
         }
@@ -99,16 +99,11 @@ export function scanSource(
       const isTracking =
         isKnownWrapper ||
         TRACKING_NAMES.has(name) ||
-        isAutoWrapper;
+        (isAutoWrapper && fn && !isExternalFile(fn.getSourceFile().fileName));
 
       if (!isTracking) return;
 
-      // AUTO DETECT WRAPPER
-      if (
-        !isKnownWrapper &&
-        fn &&
-        !TRACKING_NAMES.has(name)
-      ) {
+      if (!isKnownWrapper && isAutoWrapper && !TRACKING_NAMES.has(name)) {
         detectedFunctionWrappers.add(name);
       }
 
@@ -145,7 +140,6 @@ export function scanSource(
         }
       }
 
-      // fallback
       if (!handled) {
         for (const arg of node.arguments) {
           const res = resolveNodeValue(arg, checker, paramMap);
@@ -156,7 +150,6 @@ export function scanSource(
         }
       }
 
-      // cross-file traversal
       if (fn) {
         const sf = fn.getSourceFile();
 
@@ -174,7 +167,7 @@ export function scanSource(
       }
     }
 
-    // JSX COMPONENTS
+    // JSX
     if (
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxOpeningElement(node)
@@ -187,13 +180,11 @@ export function scanSource(
       let symbol = checker.getSymbolAtLocation(tagNode);
 
       if (symbol) {
-        const resolved = resolveExportedSymbol(symbol, checker);
-        if (resolved) symbol = resolved;
+        symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
       }
 
       if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
-        const aliased = checker.getAliasedSymbol(symbol);
-        if (aliased) symbol = aliased;
+        symbol = checker.getAliasedSymbol(symbol);
       }
 
       if (!symbol) return;
@@ -203,23 +194,14 @@ export function scanSource(
           ? node.tagName.name.getText()
           : node.tagName.getText();
 
-      const declarations = symbol.getDeclarations();
-      if (!declarations) return;
-
-      for (const decl of declarations) {
+      for (const decl of symbol.getDeclarations() ?? []) {
         let fn: ts.FunctionLikeDeclaration | null = null;
 
-        if (ts.isFunctionDeclaration(decl)) {
-          fn = decl;
-        }
+        if (ts.isFunctionDeclaration(decl)) fn = decl;
 
         if (ts.isVariableDeclaration(decl) && decl.initializer) {
           const init = decl.initializer;
-
-          if (
-            ts.isArrowFunction(init) ||
-            ts.isFunctionExpression(init)
-          ) {
+          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
             fn = init;
           }
         }
@@ -227,9 +209,7 @@ export function scanSource(
         if (!fn) continue;
 
         const param = fn.parameters[0];
-        if (!param) continue;
-
-        if (!ts.isObjectBindingPattern(param.name)) continue;
+        if (!param || !ts.isObjectBindingPattern(param.name)) continue;
 
         for (const el of param.name.elements) {
           const prop = el.name.getText();
