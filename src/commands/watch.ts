@@ -8,6 +8,12 @@ import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
 
+const toVirtual = async (file: string) => {
+  const abs = path.resolve(file);
+  const raw = await fs.readFile(abs, "utf-8");
+  return processFile(abs, raw);
+};
+
 export async function watch() {
   process.env.EVENTRA_WATCH = "1";
 
@@ -29,12 +35,9 @@ export async function watch() {
     try {
       const abs = path.resolve(file);
       const raw = await fs.readFile(abs, "utf-8");
-
       const { content, virtualFile } = processFile(abs, raw);
-
-      fileCache.push({ file: virtualFile, content });
-
       engine["ts"].updateFile(virtualFile, content);
+      fileCache.push({ file: virtualFile, content });
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
     }
@@ -65,25 +68,13 @@ export async function watch() {
 
     for (const file of batch) {
       try {
-        const abs = path.resolve(file);
-        const raw = await fs.readFile(abs, "utf-8");
+        const { content, virtualFile } = await toVirtual(file);
 
-        const { content, virtualFile } = processFile(abs, raw);
-
-        engine["ts"].updateFile(virtualFile, content);
+        engine.updateFile(virtualFile, content, config);
 
       } catch {
         console.log(chalk.gray(`skip: ${file}`));
       }
-    }
-
-    const allFiles = [...engine["ts"]["fileNames"]];
-
-    for (const file of allFiles) {
-      const content = engine["ts"].getFileContent(file);
-      if (!content) continue;
-
-      engine.scanFile(file, content, config);
     }
 
     const next = engine.getAllEvents();
@@ -107,11 +98,10 @@ export async function watch() {
   };
 
   const schedule = (file: string) => {
-    const abs = path.resolve(file);
-    queued.add(abs);
+    queued.add(path.resolve(file));
 
     if (timer) clearTimeout(timer);
-    timer = setTimeout(run, 100);
+    timer = setTimeout(run, 200);
   };
 
   const watcher = chokidar.watch(config.sync.include, {

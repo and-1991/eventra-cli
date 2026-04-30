@@ -26,10 +26,9 @@ export class EventraEngine {
     config: EventraConfig
   ): ScanResult {
     const h = hash(content);
-    const isWatch = process.env.EVENTRA_WATCH === "1";
 
     // skip unchanged
-    if (this.fileHash.get(file) === h && !isWatch) {
+    if (this.fileHash.get(file) === h) {
       return (
         this.fileResults.get(file) ?? {
           events: new Set(),
@@ -53,11 +52,9 @@ export class EventraEngine {
       };
     }
 
-    // update dependency graph
     this.graph.update(file, source);
 
     const res = scanSource(source, checker, config);
-
     this.fileResults.set(file, res);
 
     return res;
@@ -69,29 +66,28 @@ export class EventraEngine {
     content: string,
     config: EventraConfig
   ) {
+    // сначала обновляем текущий файл
     const res = this.scanFile(file, content, config);
 
     const dependents = this.graph.getAllDependentsDeep(file);
 
     for (const dep of dependents) {
-      // skip external files
       if (isExternalFile(dep)) continue;
-
-      const source = this.ts.getSourceFile(dep);
-      const checker = this.ts.getChecker();
-
-      if (!source || !checker) continue;
 
       const depContent = this.ts.getFileContent(dep);
       if (!depContent) continue;
 
       const h = hash(depContent);
-      const isWatch = process.env.EVENTRA_WATCH === "1";
 
-      // skip unchanged dependents
-      if (this.fileHash.get(dep) === h && !isWatch) continue;
+      if (this.fileHash.get(dep) === h) continue;
 
       this.fileHash.set(dep, h);
+      this.ts.updateFile(dep, depContent);
+
+      const source = this.ts.getSourceFile(dep);
+      const checker = this.ts.getChecker();
+
+      if (!source || !checker) continue;
 
       this.graph.update(dep, source);
 
@@ -119,26 +115,26 @@ export class EventraEngine {
     this.fileResults.delete(file);
     this.fileHash.delete(file);
     this.graph.remove(file);
+
     const dependents = this.graph.getAllDependentsDeep(file);
 
     for (const dep of dependents) {
       if (isExternalFile(dep)) continue;
 
-      const source = this.ts.getSourceFile(dep);
-      const checker = this.ts.getChecker();
-
-      if (!source || !checker) continue;
-
       const content = this.ts.getFileContent(dep);
       if (!content) continue;
 
       const h = hash(content);
-      const isWatch = process.env.EVENTRA_WATCH === "1";
 
-      // skip unchanged
-      if (this.fileHash.get(dep) === h && !isWatch) continue;
+      if (this.fileHash.get(dep) === h) continue;
 
       this.fileHash.set(dep, h);
+      this.ts.updateFile(dep, content);
+
+      const source = this.ts.getSourceFile(dep);
+      const checker = this.ts.getChecker();
+
+      if (!source || !checker) continue;
 
       const r = scanSource(
         source,

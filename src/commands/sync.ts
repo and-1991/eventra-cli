@@ -32,10 +32,8 @@ export async function sync() {
     try {
       const raw = await fs.readFile(file, "utf-8");
       const { content, virtualFile } = processFile(file, raw);
-
-      fileCache.push({ file: virtualFile, content });
-
       engine["ts"].updateFile(virtualFile, content);
+      fileCache.push({ file: virtualFile, content });
     } catch {
       // ignore
     }
