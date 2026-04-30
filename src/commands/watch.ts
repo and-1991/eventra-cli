@@ -63,25 +63,23 @@ export async function watch() {
     const batch = [...queued];
     queued.clear();
 
-    const touched = new Set<string>();
-
     for (const file of batch) {
       try {
         const abs = path.resolve(file);
-
         const raw = await fs.readFile(abs, "utf-8");
+
         const { content, virtualFile } = processFile(abs, raw);
 
         engine["ts"].updateFile(virtualFile, content);
-
-        touched.add(virtualFile);
 
       } catch {
         console.log(chalk.gray(`skip: ${file}`));
       }
     }
 
-    for (const file of engine["ts"]["fileNames"]) {
+    const allFiles = [...engine["ts"]["fileNames"]];
+
+    for (const file of allFiles) {
       const content = engine["ts"].getFileContent(file);
       if (!content) continue;
 
