@@ -40,7 +40,10 @@ function isPropUsedInTracking(
     if (ts.isCallExpression(node)) {
       const name = getCallName(node.expression);
 
-      if (!TRACKING_NAMES.has(name)) return;
+      if (!TRACKING_NAMES.has(name)) {
+        ts.forEachChild(node, visit);
+        return;
+      }
 
       for (const arg of node.arguments) {
         if (
@@ -93,29 +96,54 @@ export function scanSource(
         w => w.name === name
       );
 
-      const fn = resolveFunctionFromCall(node.expression, checker);
+      let resolvedFn = resolveFunctionFromCall(node.expression, checker);
+
+      // fallback: tracker.track(...)
+      if (!resolvedFn && ts.isPropertyAccessExpression(node.expression)) {
+        const symbol = checker.getSymbolAtLocation(node.expression.name);
+
+        if (symbol) {
+          const decls = symbol.getDeclarations();
+
+          if (decls?.length) {
+            const d = decls[0];
+
+            if (
+              ts.isMethodDeclaration(d) ||
+              ts.isFunctionDeclaration(d) ||
+              ts.isFunctionExpression(d) ||
+              ts.isArrowFunction(d)
+            ) {
+              resolvedFn = d;
+            }
+          }
+        }
+      }
 
       const isAutoWrapper =
-        fn && findTrackParamIndex(fn) !== null;
+        resolvedFn && findTrackParamIndex(resolvedFn) !== null;
 
       const isTracking =
         isKnownWrapper ||
         TRACKING_NAMES.has(name) ||
         (isAutoWrapper &&
-          fn &&
-          !isExternalFile(fn.getSourceFile().fileName));
+          resolvedFn &&
+          !isExternalFile(resolvedFn.getSourceFile().fileName));
 
-      if (!isTracking) return;
+      if (!isTracking) {
+        ts.forEachChild(node, visit);
+        return;
+      }
 
       if (!isKnownWrapper && isAutoWrapper && !TRACKING_NAMES.has(name)) {
         detectedFunctionWrappers.add(name);
       }
 
-      // paramMap
+      // paramMap (chain support)
       const paramMap = new Map(inheritedParamMap ?? []);
 
-      if (fn && ts.isFunctionLike(fn)) {
-        fn.parameters.forEach((param, i) => {
+      if (resolvedFn && ts.isFunctionLike(resolvedFn)) {
+        resolvedFn.parameters.forEach((param, i) => {
           const arg = node.arguments[i];
           if (!arg) return;
 
@@ -127,8 +155,8 @@ export function scanSource(
 
       let handled = false;
 
-      if (fn) {
-        const idx = findTrackParamIndex(fn);
+      if (resolvedFn) {
+        const idx = findTrackParamIndex(resolvedFn);
 
         if (idx !== null && node.arguments[idx]) {
           const res = resolveNodeValue(
@@ -145,7 +173,6 @@ export function scanSource(
         }
       }
 
-      // fallback
       if (!handled) {
         for (const arg of node.arguments) {
           const res = resolveNodeValue(arg, checker, paramMap);
@@ -156,9 +183,9 @@ export function scanSource(
         }
       }
 
-      // cross-file WITH paramMap
-      if (fn) {
-        const sf = fn.getSourceFile();
+      // cross-file with paramMap
+      if (resolvedFn) {
+        const sf = resolvedFn.getSourceFile();
 
         if (!visited.has(sf.fileName)) {
           const res = scanSource(
@@ -195,7 +222,10 @@ export function scanSource(
         symbol = checker.getAliasedSymbol(symbol);
       }
 
-      if (!symbol) return;
+      if (!symbol) {
+        ts.forEachChild(node, visit);
+        return;
+      }
 
       const tagName =
         ts.isPropertyAccessExpression(node.tagName)
@@ -209,6 +239,7 @@ export function scanSource(
 
         if (ts.isVariableDeclaration(decl) && decl.initializer) {
           const init = decl.initializer;
+
           if (
             ts.isArrowFunction(init) ||
             ts.isFunctionExpression(init)

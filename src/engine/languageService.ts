@@ -62,10 +62,6 @@ export class TSService {
         this.files.get(file)?.version.toString() ?? "0",
 
       getScriptSnapshot: (file) => {
-        if (!this.fileNames.has(file)) {
-          return undefined;
-        }
-
         const f = this.files.get(file);
 
         if (f) {

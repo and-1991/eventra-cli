@@ -26,13 +26,24 @@ export async function sync() {
   const detectedFn = new Set<string>();
   const detectedCmp = new Map<string, string>();
 
+  const fileCache: { file: string; content: string }[] = [];
+
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-
       const { content, virtualFile } = processFile(file, raw);
 
-      const res = engine.scanFile(virtualFile, content, config);
+      fileCache.push({ file: virtualFile, content });
+
+      engine["ts"].updateFile(virtualFile, content);
+    } catch {
+      // ignore
+    }
+  }
+
+  for (const { file, content } of fileCache) {
+    try {
+      const res = engine.scanFile(file, content, config);
 
       for (const w of res.detectedFunctionWrappers) {
         detectedFn.add(w);
