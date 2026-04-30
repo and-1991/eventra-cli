@@ -1,34 +1,48 @@
 export function parseVue(content: string) {
-  const scriptMatches = [
-    ...content.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g)
-  ];
+  const parts: string[] = [];
 
-  const script = scriptMatches.map(m => m[1]).join("\n");
+  // --- SCRIPT ---
+  const scripts = content.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g);
 
-  // template
-  const templateMatch = content.match(/<template>([\s\S]*?)<\/template>/);
+  for (const m of scripts) {
+    const attrs = m[1];
+    const body = m[2];
+
+    if (attrs.includes("src")) {
+      const src = attrs.match(/src=["'](.+?)["']/)?.[1];
+      if (src) {
+        parts.push(`import "${src}"`);
+      }
+      continue;
+    }
+
+    parts.push(body);
+  }
+
+  // --- TEMPLATE ---
+  const templateMatch = content.match(/<template[^>]*>([\s\S]*?)<\/template>/);
   let template = templateMatch?.[1] ?? "";
 
+  // remove comments
   template = template.replace(/<!--[\s\S]*?-->/g, "");
 
-  // Vue → JSX
-  template = template
-    .replace(/\bclass=/g, "className=")
-    .replace(/\bfor=/g, "htmlFor=")
-    .replace(/@(\w+)=/g, (_, e) => {
-      const name = e.charAt(0).toUpperCase() + e.slice(1);
-      return `on${name}=`;
-    })
-    .replace(/v-if="[^"]+"/g, "")
-    .replace(/v-for="[^"]+"/g, "");
+  // --- event handlers (@click)
+  const handlers = template.matchAll(/@[\w-]+="([^"]+)"/g);
+  for (const h of handlers) {
+    parts.push(h[1] + ";");
+  }
 
-  const jsx = `
-const __VUE_JSX__ = (
-  <>
-    ${template}
-  </>
-);
-`;
+  // --- v-on
+  const vOn = template.matchAll(/v-on:[\w-]+="([^"]+)"/g);
+  for (const v of vOn) {
+    parts.push(v[1] + ";");
+  }
 
-  return script + "\n" + jsx;
+  // --- :prop bindings
+  const binds = template.matchAll(/:[\w-]+="([^"]+)"/g);
+  for (const b of binds) {
+    parts.push(b[1] + ";");
+  }
+
+  return parts.join("\n");
 }

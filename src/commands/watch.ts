@@ -8,15 +8,7 @@ import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
 
-const toVirtual = async (file: string) => {
-  const abs = path.resolve(file);
-  const raw = await fs.readFile(abs, "utf-8");
-  return processFile(abs, raw);
-};
-
 export async function watch() {
-  process.env.EVENTRA_WATCH = "1";
-
   const config = await loadConfig();
   if (!config) return;
 
@@ -36,7 +28,6 @@ export async function watch() {
       const abs = path.resolve(file);
       const raw = await fs.readFile(abs, "utf-8");
       const { content, virtualFile } = processFile(abs, raw);
-      engine["ts"].updateFile(virtualFile, content);
       fileCache.push({ file: virtualFile, content });
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
@@ -68,7 +59,8 @@ export async function watch() {
 
     for (const file of batch) {
       try {
-        const { content, virtualFile } = await toVirtual(file);
+        const raw = await fs.readFile(file, "utf-8");
+        const { content, virtualFile } = processFile(file, raw);
 
         engine.updateFile(virtualFile, content, config);
 
