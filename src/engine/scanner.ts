@@ -45,7 +45,8 @@ function isPropUsedInTracking(
       for (const arg of node.arguments) {
         if (
           (ts.isIdentifier(arg) && arg.text === prop) ||
-          (ts.isPropertyAccessExpression(arg) && arg.name.text === prop)
+          (ts.isPropertyAccessExpression(arg) &&
+            arg.name.text === prop)
         ) {
           found = true;
         }
@@ -70,7 +71,8 @@ export function scanSource(
   checker: ts.TypeChecker,
   config: EventraConfig,
   visited = new Set<string>(),
-  depth = 0
+  depth = 0,
+  inheritedParamMap?: Map<string, ts.Expression>
 ): ScanResult {
   const events = new Set<string>();
   const detectedFunctionWrappers = new Set<string>();
@@ -99,7 +101,9 @@ export function scanSource(
       const isTracking =
         isKnownWrapper ||
         TRACKING_NAMES.has(name) ||
-        (isAutoWrapper && fn && !isExternalFile(fn.getSourceFile().fileName));
+        (isAutoWrapper &&
+          fn &&
+          !isExternalFile(fn.getSourceFile().fileName));
 
       if (!isTracking) return;
 
@@ -107,7 +111,8 @@ export function scanSource(
         detectedFunctionWrappers.add(name);
       }
 
-      const paramMap = new Map<string, ts.Expression>();
+      // paramMap
+      const paramMap = new Map(inheritedParamMap ?? []);
 
       if (fn && ts.isFunctionLike(fn)) {
         fn.parameters.forEach((param, i) => {
@@ -140,6 +145,7 @@ export function scanSource(
         }
       }
 
+      // fallback
       if (!handled) {
         for (const arg of node.arguments) {
           const res = resolveNodeValue(arg, checker, paramMap);
@@ -150,6 +156,7 @@ export function scanSource(
         }
       }
 
+      // cross-file WITH paramMap
       if (fn) {
         const sf = fn.getSourceFile();
 
@@ -159,7 +166,8 @@ export function scanSource(
             checker,
             config,
             visited,
-            depth + 1
+            depth + 1,
+            paramMap
           );
 
           res.events.forEach(e => events.add(e));
@@ -167,7 +175,7 @@ export function scanSource(
       }
     }
 
-    // JSX
+    // JSX COMPONENTS
     if (
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxOpeningElement(node)
@@ -201,7 +209,10 @@ export function scanSource(
 
         if (ts.isVariableDeclaration(decl) && decl.initializer) {
           const init = decl.initializer;
-          if (ts.isArrowFunction(init) || ts.isFunctionExpression(init)) {
+          if (
+            ts.isArrowFunction(init) ||
+            ts.isFunctionExpression(init)
+          ) {
             fn = init;
           }
         }
@@ -235,11 +246,19 @@ export function scanSource(
 
           if (!expr) continue;
 
-          const res = resolveNodeValue(expr, checker);
+          const paramMap = new Map<string, ts.Expression>();
+          paramMap.set(prop, expr);
 
-          res?.values.forEach(v => {
-            if (isValidEvent(v)) events.add(v);
-          });
+          const res = scanSource(
+            fn.getSourceFile(),
+            checker,
+            config,
+            visited,
+            depth + 1,
+            paramMap
+          );
+
+          res.events.forEach(e => events.add(e));
 
           detectedComponentWrappers.set(tagName, prop);
         }
