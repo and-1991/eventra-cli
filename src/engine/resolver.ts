@@ -12,12 +12,13 @@ export function resolveNodeValue(
   paramMap?: Map<string, ts.Expression>,
   seen = new Set<ts.Node>()
 ): ResolveResult {
+
   if (seen.has(node)) {
     return { values: [], dynamic: true };
   }
   seen.add(node);
 
-  // param mapping
+  // PARAM MAPPING
   if (ts.isIdentifier(node) && paramMap?.has(node.text)) {
     return resolveNodeValue(
       paramMap.get(node.text)!,
@@ -43,12 +44,15 @@ export function resolveNodeValue(
       }
     }
 
-    return { values, dynamic: true };
+    return {
+      values: [...new Set(values)],
+      dynamic: true
+    };
   }
 
   // TEMPLATE
   if (ts.isTemplateExpression(node)) {
-    let results = [node.head.text];
+    let results = node.head.text ? [node.head.text] : [""];
 
     for (const span of node.templateSpans) {
       const res = resolveNodeValue(span.expression, checker, paramMap, seen);
@@ -83,14 +87,7 @@ export function resolveNodeValue(
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return { values: [], dynamic: true };
 
-    // unwrap export
-    symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
-
-    if (symbol.flags & ts.SymbolFlags.Alias) {
-      symbol = checker.getAliasedSymbol(symbol);
-    }
-
-    // inline variable
+    // INLINE FIRST
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
         return resolveNodeValue(
@@ -100,7 +97,16 @@ export function resolveNodeValue(
           seen
         );
       }
+    }
 
+    // unwrap export
+    symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
+
+    if (symbol.flags & ts.SymbolFlags.Alias) {
+      symbol = checker.getAliasedSymbol(symbol);
+    }
+
+    for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isEnumMember(decl) && decl.initializer) {
         if (ts.isStringLiteral(decl.initializer)) {
           return {
@@ -111,15 +117,15 @@ export function resolveNodeValue(
       }
     }
 
-    // UNION TYPES
     const type = checker.getTypeAtLocation(node);
 
+    // UNION
     if (type.isUnion()) {
       const values: string[] = [];
 
       for (const t of type.types) {
-        if ((t as any).isStringLiteral?.()) {
-          values.push((t as any).value);
+        if (t.flags & ts.TypeFlags.StringLiteral) {
+          values.push((t as ts.StringLiteralType).value);
         }
       }
 
@@ -128,15 +134,18 @@ export function resolveNodeValue(
       }
     }
 
-    // TYPE FALLBACK (as const)
-    if ((type as any).isStringLiteral?.()) {
-      return { values: [(type as any).value], dynamic: false };
+    // STRING LITERAL TYPE
+    if (type.flags & ts.TypeFlags.StringLiteral) {
+      return {
+        values: [(type as ts.StringLiteralType).value],
+        dynamic: false
+      };
     }
 
     return { values: [], dynamic: true };
   }
 
-  // PROPERTY ACCESS (obj.a.b)
+  // PROPERTY ACCESS
   if (ts.isPropertyAccessExpression(node)) {
 
     const symbol = checker.getSymbolAtLocation(node);
@@ -160,18 +169,16 @@ export function resolveNodeValue(
       }
     }
 
-    // constant enum / readonly
     const constantValue = checker.getConstantValue(node as any);
     if (typeof constantValue === "string") {
       return { values: [constantValue], dynamic: false };
     }
 
-    // type fallback
     const type = checker.getTypeAtLocation(node);
 
-    if ((type as any).isStringLiteral?.()) {
+    if (type.flags & ts.TypeFlags.StringLiteral) {
       return {
-        values: [(type as any).value],
+        values: [(type as ts.StringLiteralType).value],
         dynamic: false,
       };
     }
@@ -206,10 +213,11 @@ export function resolveNodeValue(
       }
     }
 
-    return { values: [], dynamic: true };
+    // fallback
+    return resolveNodeValue(node.name, checker, paramMap, seen);
   }
 
-  // ARRAY ACCESS (arr[0])
+  // ARRAY ACCESS
   if (ts.isElementAccessExpression(node)) {
     const obj = resolveNodeValue(node.expression, checker, paramMap, seen);
 
@@ -224,7 +232,6 @@ export function resolveNodeValue(
       seen
     );
 
-    // if index known
     if (index.values.length === 1) {
       const i = Number(index.values[0]);
 
@@ -236,7 +243,6 @@ export function resolveNodeValue(
       }
     }
 
-    // fallback → dynamic
     return obj.values.length
       ? { values: obj.values, dynamic: true }
       : { values: [], dynamic: true };
@@ -257,7 +263,10 @@ export function resolveNodeValue(
       }
     }
 
-    return { values, dynamic: true };
+    return {
+      values: [...new Set(values)],
+      dynamic: true
+    };
   }
 
   // BINARY ("btn_" + name)

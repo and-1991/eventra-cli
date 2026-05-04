@@ -13,15 +13,18 @@ export class DependencyGraph {
   ) {}
 
   private normalize(file: string) {
-    return path.resolve(file);
+    return path.resolve(file).replace(/\\/g, "/");
   }
 
+  // MODULE RESOLVE
   private resolveModule(module: string, from: string): string | null {
+    // relative import
     if (module.startsWith(".")) {
       const abs = path.resolve(path.dirname(from), module);
       return this.resolveFile(abs);
     }
 
+    // tsconfig paths
     for (const key in this.paths) {
       const pattern = key.replace(/\*/g, "(.*)");
       const regex = new RegExp("^" + pattern + "$");
@@ -44,10 +47,21 @@ export class DependencyGraph {
       }
     }
 
+    // node resolution (safe)
+    try {
+      const resolved = require.resolve(module, {
+        paths: [path.dirname(from)],
+      });
+
+      return this.normalize(resolved);
+    } catch {}
+
+    // fallback
     const abs = path.resolve(this.baseUrl, module);
     return this.resolveFile(abs);
   }
 
+  // FILE RESOLVE
   private resolveFile(base: string): string | null {
     if (this.fileCache.has(base)) {
       return this.fileCache.get(base)!;
@@ -59,6 +73,12 @@ export class DependencyGraph {
       base + ".tsx",
       base + ".js",
       base + ".jsx",
+      base + ".mjs",
+      base + ".cjs",
+      base + ".d.ts",
+      base + ".vue",
+      base + ".svelte",
+      base + ".astro",
       path.join(base, "index.ts"),
       path.join(base, "index.tsx"),
       path.join(base, "index.js"),
@@ -76,16 +96,28 @@ export class DependencyGraph {
     return null;
   }
 
+  // UPDATE GRAPH
   update(file: string, source: ts.SourceFile) {
     const normalizedFile = this.normalize(file);
+
+    for (const deps of this.reverse.values()) {
+      deps.delete(normalizedFile);
+    }
 
     this.exports.set(normalizedFile, new Set());
 
     for (const stmt of source.statements) {
-      if (ts.isImportDeclaration(stmt)) {
-        const module = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
-        const resolved = this.resolveModule(module, normalizedFile);
 
+      // IMPORT
+      if (ts.isImportDeclaration(stmt)) {
+        // ignore import type
+        if ((stmt.importClause as any)?.importKind === "type") continue;
+
+        const module = stmt.moduleSpecifier
+          .getText()
+          .replace(/['"]/g, "");
+
+        const resolved = this.resolveModule(module, normalizedFile);
         if (!resolved) continue;
 
         if (!this.reverse.has(resolved)) {
@@ -95,10 +127,15 @@ export class DependencyGraph {
         this.reverse.get(resolved)!.add(normalizedFile);
       }
 
-      if (ts.isExportDeclaration(stmt) && stmt.moduleSpecifier) {
-        const module = stmt.moduleSpecifier.getText().replace(/['"]/g, "");
-        const resolved = this.resolveModule(module, normalizedFile);
+      // EXPORT (re-export)
+      if (ts.isExportDeclaration(stmt)) {
+        if (!stmt.moduleSpecifier) continue;
 
+        const module = stmt.moduleSpecifier
+          .getText()
+          .replace(/['"]/g, "");
+
+        const resolved = this.resolveModule(module, normalizedFile);
         if (!resolved) continue;
 
         this.exports.get(normalizedFile)?.add(resolved);
@@ -112,6 +149,7 @@ export class DependencyGraph {
     }
   }
 
+  // DEPENDENTS
   getAllDependentsDeep(file: string): string[] {
     const start = this.normalize(file);
     const visited = new Set<string>();
@@ -136,6 +174,7 @@ export class DependencyGraph {
     return [...result];
   }
 
+  // REMOVE
   remove(file: string) {
     const normalized = this.normalize(file);
 

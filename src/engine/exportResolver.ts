@@ -1,5 +1,13 @@
 import ts from "typescript";
 
+function isRealDeclaration(node: ts.Node) {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isVariableDeclaration(node) ||
+    ts.isClassDeclaration(node)
+  );
+}
+
 export function resolveExportedSymbol(
   symbol: ts.Symbol,
   checker: ts.TypeChecker,
@@ -8,20 +16,29 @@ export function resolveExportedSymbol(
 
   if (visited.has(symbol)) return null;
   visited.add(symbol);
+
+  // unwrap alias
   if (symbol.flags & ts.SymbolFlags.Alias) {
     const aliased = checker.getAliasedSymbol(symbol);
     return resolveExportedSymbol(aliased, checker, visited);
   }
 
-  if (symbol.getDeclarations()?.length) {
+  // export symbol
+  const exportSymbol = checker.getExportSymbolOfSymbol(symbol);
+  if (exportSymbol && exportSymbol !== symbol) {
+    return resolveExportedSymbol(exportSymbol, checker, visited);
+  }
+
+  const decls = symbol.getDeclarations() ?? [];
+
+  if (decls.some(isRealDeclaration)) {
     return symbol;
   }
 
-  const declarations = symbol.getDeclarations() ?? [];
-
-  for (const decl of declarations) {
+  // exports (re-export)
+  for (const decl of decls) {
     const source = decl.getSourceFile();
-    const moduleSymbol = checker.getSymbolAtLocation(source);
+    const moduleSymbol = (source as any).symbol;
 
     if (!moduleSymbol) continue;
 

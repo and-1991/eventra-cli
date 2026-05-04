@@ -14,6 +14,10 @@ type QueueItem = {
   virtual: string;
 };
 
+function normalize(file: string) {
+  return path.resolve(file).replace(/\\/g, "/");
+}
+
 export async function watch() {
   const config = await loadConfig();
   if (!config) return;
@@ -27,6 +31,7 @@ export async function watch() {
 
   const engine = new EventraEngine(process.cwd());
   const watchedDeps = new Set<string>();
+
   const cache = new Map<
     string,
     { content: string; deps: string[] }
@@ -37,18 +42,18 @@ export async function watch() {
   // COLLECT + CACHE
   for (const file of files) {
     try {
-      const raw = await fs.readFile(file, "utf-8");
+      const abs = normalize(file);
+      const raw = await fs.readFile(abs, "utf-8");
 
-      if (raw.length > 2_000_000) continue; // safeguard
+      if (raw.length > 2_000_000) continue;
 
-      const parsed = processFile(file, raw);
+      const parsed = processFile(abs, raw);
 
-      cache.set(file, parsed);
-      toScan.add(file);
+      cache.set(abs, parsed);
+      toScan.add(abs);
 
       for (const dep of parsed.deps) {
-        const absDep = path.resolve(dep);
-        toScan.add(absDep);
+        toScan.add(normalize(dep));
       }
 
     } catch {
@@ -56,7 +61,7 @@ export async function watch() {
     }
   }
 
-  // PRELOAD (TS PROGRAM)
+  // PRELOAD
   for (const file of toScan) {
     try {
       let parsed = cache.get(file);
@@ -64,10 +69,10 @@ export async function watch() {
       if (!parsed) {
         const raw = await fs.readFile(file, "utf-8");
         parsed = processFile(file, raw);
+        cache.set(file, parsed);
       }
 
       const virtual = getVirtualFile(file);
-
       engine.preloadFile?.(virtual, parsed.content);
 
     } catch {}
@@ -88,7 +93,7 @@ export async function watch() {
       engine.scanFile(virtual, parsed.content, config);
 
       for (const dep of parsed.deps) {
-        watchedDeps.add(path.resolve(dep));
+        watchedDeps.add(normalize(dep));
       }
 
     } catch {}
@@ -120,29 +125,44 @@ export async function watch() {
         if (raw.length > 2_000_000) continue;
 
         const parsed = processFile(item.real, raw);
-
         cache.set(item.real, parsed);
 
         engine.updateFile(item.virtual, parsed.content, config);
 
-        // DEPS
+        // DEPENDENCY DIFF
+        const nextDeps = new Set<string>();
+
         for (const dep of parsed.deps) {
-          const absDep = path.resolve(dep);
+          nextDeps.add(normalize(dep));
+        }
 
-          if (!watchedDeps.has(absDep)) {
-            watcher.add(absDep);
-            watchedDeps.add(absDep);
+        // add new deps
+        for (const dep of nextDeps) {
+          if (!watchedDeps.has(dep)) {
+            watcher.add(dep);
+            watchedDeps.add(dep);
           }
+        }
 
+        // remove old deps
+        for (const dep of [...watchedDeps]) {
+          if (!nextDeps.has(dep)) {
+            watcher.unwatch(dep);
+            watchedDeps.delete(dep);
+          }
+        }
+
+        // preload deps
+        for (const dep of nextDeps) {
           try {
-            const depRaw = await fs.readFile(absDep, "utf-8");
-            const depParsed = processFile(absDep, depRaw);
+            const raw = await fs.readFile(dep, "utf-8");
+            const parsedDep = processFile(dep, raw);
 
-            cache.set(absDep, depParsed);
+            cache.set(dep, parsedDep);
 
-            const depVirtual = getVirtualFile(absDep);
+            const virtual = getVirtualFile(dep);
 
-            engine.updateFile(depVirtual, depParsed.content, config);
+            engine.updateFile(virtual, parsedDep.content, config);
           } catch {}
         }
 
@@ -174,7 +194,7 @@ export async function watch() {
 
   // SCHEDULER
   const schedule = (file: string) => {
-    const abs = path.resolve(file);
+    const abs = normalize(file);
     const virtual = getVirtualFile(abs);
 
     console.log(chalk.gray(`change: ${file}`));
@@ -182,7 +202,7 @@ export async function watch() {
     queued.set(abs, { real: abs, virtual });
 
     if (timer) clearTimeout(timer);
-    timer = setTimeout(run, 250);
+    timer = setTimeout(run, 200);
   };
 
   // WATCHER
@@ -196,7 +216,7 @@ export async function watch() {
     .on("add", schedule)
     .on("change", schedule)
     .on("unlink", async (file) => {
-      const abs = path.resolve(file);
+      const abs = normalize(file);
 
       console.log(chalk.gray(`remove: ${file}`));
 
@@ -220,7 +240,7 @@ export async function watch() {
       console.error(chalk.red("Watcher error:"), err);
     });
 
-  // WATCH DEPS
+  // WATCH DEPS INIT
   for (const dep of watchedDeps) {
     watcher.add(dep);
   }

@@ -1,3 +1,6 @@
+import path from "path";
+import fs from "fs";
+
 import { TSService } from "./languageService";
 import { ScanResult, scanSource } from "./scanner";
 import { DependencyGraph } from "./graph";
@@ -18,8 +21,29 @@ export class EventraEngine {
     const { baseUrl, paths } = this.ts.getModuleResolutionConfig();
     this.graph = new DependencyGraph(baseUrl, paths);
   }
+
+  private normalize(file: string) {
+    return path.resolve(file).replace(/\\/g, "/");
+  }
+
+  private empty(): ScanResult {
+    return {
+      events: new Set(),
+      detectedFunctionWrappers: new Set(),
+      detectedComponentWrappers: new Map(),
+    };
+  }
+
+  // PRELOAD
   preloadFile(file: string, content: string) {
+    file = this.normalize(file);
+
     this.ts.updateFile(file, content);
+
+    const source = this.ts.getSourceFile(file);
+    if (source) {
+      this.graph.update(file, source);
+    }
   }
 
   // SCAN FILE
@@ -28,33 +52,26 @@ export class EventraEngine {
     content: string,
     config: EventraConfig
   ): ScanResult {
+    file = this.normalize(file);
+
     const h = hash(content);
 
-    // skip unchanged
     if (this.fileHash.get(file) === h) {
-      return (
-        this.fileResults.get(file) ?? {
-          events: new Set(),
-          detectedFunctionWrappers: new Set(),
-          detectedComponentWrappers: new Map(),
-        }
-      );
+      return this.fileResults.get(file) ?? this.empty();
     }
 
     this.fileHash.set(file, h);
+
     this.ts.updateFile(file, content);
 
     const source = this.ts.getSourceFile(file);
     const checker = this.ts.getChecker();
 
     if (!source || !checker) {
-      return {
-        events: new Set(),
-        detectedFunctionWrappers: new Set(),
-        detectedComponentWrappers: new Map(),
-      };
+      return this.empty();
     }
 
+    // обновляем graph
     this.graph.update(file, source);
 
     const res = scanSource(source, checker, config);
@@ -69,32 +86,46 @@ export class EventraEngine {
     content: string,
     config: EventraConfig
   ) {
+    file = this.normalize(file);
+
     const res = this.scanFile(file, content, config);
 
     const dependents = this.graph.getAllDependentsDeep(file);
 
     for (const dep of dependents) {
-      if (isExternalFile(dep)) continue;
+      const abs = this.normalize(dep);
 
-      const depContent = this.ts.getFileContent(dep);
-      if (!depContent) continue;
+      if (isExternalFile(abs)) continue;
+
+      let depContent = this.ts.getFileContent(abs);
+
+      if (!depContent) {
+        try {
+          depContent = fs.readFileSync(abs, "utf-8");
+        } catch {
+          continue;
+        }
+      }
 
       const h = hash(depContent);
 
-      if (this.fileHash.get(dep) === h) continue;
+      if (this.fileHash.get(abs) === h) {
+        continue;
+      }
 
-      this.fileHash.set(dep, h);
-      this.ts.updateFile(dep, depContent);
+      this.fileHash.set(abs, h);
 
-      const source = this.ts.getSourceFile(dep);
+      this.ts.updateFile(abs, depContent);
+
+      const source = this.ts.getSourceFile(abs);
       const checker = this.ts.getChecker();
 
       if (!source || !checker) continue;
 
-      this.graph.update(dep, source);
+      this.graph.update(abs, source);
 
       const r = scanSource(source, checker, config);
-      this.fileResults.set(dep, r);
+      this.fileResults.set(abs, r);
     }
 
     return res;
@@ -113,30 +144,44 @@ export class EventraEngine {
 
   // REMOVE FILE
   removeFile(file: string, config?: EventraConfig) {
+    file = this.normalize(file);
+
+    const dependents = this.graph.getAllDependentsDeep(file);
+
     this.ts.removeFile(file);
     this.fileResults.delete(file);
     this.fileHash.delete(file);
     this.graph.remove(file);
 
-    const dependents = this.graph.getAllDependentsDeep(file);
-
     for (const dep of dependents) {
-      if (isExternalFile(dep)) continue;
+      const abs = this.normalize(dep);
 
-      const content = this.ts.getFileContent(dep);
-      if (!content) continue;
+      if (isExternalFile(abs)) continue;
+
+      let content = this.ts.getFileContent(abs);
+
+      if (!content) {
+        try {
+          content = fs.readFileSync(abs, "utf-8");
+        } catch {
+          continue;
+        }
+      }
 
       const h = hash(content);
 
-      if (this.fileHash.get(dep) === h) continue;
+      if (this.fileHash.get(abs) === h) continue;
 
-      this.fileHash.set(dep, h);
-      this.ts.updateFile(dep, content);
+      this.fileHash.set(abs, h);
 
-      const source = this.ts.getSourceFile(dep);
+      this.ts.updateFile(abs, content);
+
+      const source = this.ts.getSourceFile(abs);
       const checker = this.ts.getChecker();
 
       if (!source || !checker) continue;
+
+      this.graph.update(abs, source);
 
       const r = scanSource(
         source,
@@ -149,7 +194,7 @@ export class EventraEngine {
         }
       );
 
-      this.fileResults.set(dep, r);
+      this.fileResults.set(abs, r);
     }
   }
 }

@@ -12,7 +12,7 @@ function stripComments(input: string): string {
 }
 
 /**
- * Extract JS expressions safely
+ * Extract JS expressions
  */
 function extractJS(input: string): string[] {
   const result: string[] = [];
@@ -26,7 +26,6 @@ function extractJS(input: string): string[] {
   while (i < len) {
     const ch = input[i];
 
-    // STRING
     if (inString) {
       if (escape) escape = false;
       else if (ch === "\\") escape = true;
@@ -41,47 +40,20 @@ function extractJS(input: string): string[] {
       continue;
     }
 
-    // { ... }
     if (ch === "{") {
       let depth = 1;
       let j = i + 1;
 
-      let innerStr: '"' | "'" | "`" | null = null;
-      let innerEsc = false;
-
       while (j < len && depth > 0) {
-        const c = input[j];
-
-        if (innerStr) {
-          if (innerEsc) innerEsc = false;
-          else if (c === "\\") innerEsc = true;
-          else if (c === innerStr) innerStr = null;
-          j++;
-          continue;
-        }
-
-        if (c === '"' || c === "'" || c === "`") {
-          innerStr = c;
-          j++;
-          continue;
-        }
-
-        if (c === "{") depth++;
-        else if (c === "}") depth--;
-
+        if (input[j] === "{") depth++;
+        else if (input[j] === "}") depth--;
         j++;
       }
 
       if (depth === 0) {
         const expr = input.slice(i + 1, j - 1).trim();
 
-        if (
-          expr &&
-          (expr.includes("(") ||
-            expr.includes("=") ||
-            expr.includes(".") ||
-            expr.includes("track"))
-        ) {
+        if (expr && /[a-zA-Z0-9_$]\s*\(/.test(expr)) {
           result.push(expr);
         }
 
@@ -90,64 +62,14 @@ function extractJS(input: string): string[] {
       }
     }
 
-    // attr="..."
-    if (ch === "=" && (input[i + 1] === '"' || input[i + 1] === "'")) {
-      const quote = input[i + 1];
-      let j = i + 2;
-      let val = "";
-
-      while (j < len) {
-        const c = input[j];
-
-        if (c === "\\" && input[j + 1]) {
-          val += c + input[j + 1];
-          j += 2;
-          continue;
-        }
-
-        if (c === quote) break;
-
-        val += c;
-        j++;
-      }
-
-      if (
-        val.trim() &&
-        (val.includes("(") ||
-          val.includes("=>") ||
-          val.includes("track"))
-      ) {
-        result.push(val.trim());
-      }
-
-      i = j + 1;
-      continue;
-    }
-
     i++;
-  }
-
-  // Vue / Svelte / JSX handlers
-  const extra = [
-    /@[\w-]+\s*=\s*["']([\s\S]*?)["']/g,
-    /v-on:[\w-]+\s*=\s*["']([\s\S]*?)["']/g,
-    /on:[\w-]+\s*=\s*{([\s\S]*?)}/g,
-    /on\w+\s*=\s*{([\s\S]*?)}/g,
-  ];
-
-  for (const r of extra) {
-    const m = input.matchAll(r);
-    for (const x of m) {
-      const v = x[1]?.trim();
-      if (v) result.push(v);
-    }
   }
 
   return result;
 }
 
 /**
- * Extract loose JS but less noisy
+ * Loose JS extractor
  */
 function extractLooseJS(input: string): string[] {
   const result: string[] = [];
@@ -160,14 +82,7 @@ function extractLooseJS(input: string): string[] {
     if (!l) continue;
     if (l.startsWith("<")) continue;
 
-    // strict filter
-    if (
-      l.includes("track") ||
-      l.includes(".track(") ||
-      l.includes("=>") ||
-      l.startsWith("function") ||
-      l.includes("(")
-    ) {
+    if (/[a-zA-Z0-9_$]\s*\(/.test(l)) {
       result.push(l);
     }
   }
@@ -176,7 +91,14 @@ function extractLooseJS(input: string): string[] {
 }
 
 /**
- * Universal parser
+ * UNIVERSAL PARSER
+ * Support:
+ * - React / JSX
+ * - Vue
+ * - Svelte
+ * - Astro
+ * - HTML + JS
+ * - SSR
  */
 export function parseUniversal(
   content: string,
@@ -187,9 +109,11 @@ export function parseUniversal(
 
   const clean = stripComments(content);
 
-  // Astro frontmatter
+  // ASTRO FRONTMATTER
   const fm = clean.match(/^---([\s\S]*?)---/);
-  if (fm?.[1]) parts.push(fm[1]);
+  if (fm?.[1]) {
+    parts.push(fm[1]);
+  }
 
   // <script src="">
   const scriptSrc = clean.matchAll(
@@ -206,7 +130,7 @@ export function parseUniversal(
     deps.push(resolved);
   }
 
-  // inline <script>
+  // INLINE <script>
   const scripts = clean.matchAll(
     /<script\b([^>]*)>([\s\S]*?)<\/script>/g
   );
@@ -214,7 +138,7 @@ export function parseUniversal(
   for (const m of scripts) {
     const attrs = m[1];
 
-    // skip JSON / data
+    // skip JSON
     if (/type=["']application\/json/.test(attrs)) continue;
 
     if (m[2].trim()) {
@@ -222,24 +146,24 @@ export function parseUniversal(
     }
   }
 
-  // remove scripts
+  // REMOVE SCRIPTS → TEMPLATE PART
   const noScripts = clean.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
 
-  // loose JS
-  const loose = extractLooseJS(noScripts);
-  parts.push(...loose);
+  // LOOSE JS
+  parts.push(...extractLooseJS(noScripts));
 
-  // expressions
+  // EXPRESSIONS
   const extracted = extractJS(clean);
   for (const e of extracted) {
     parts.push(e + ";");
   }
 
+  // RESULT
   return {
     code: [...new Set(parts)].join("\n"),
-    deps,
+    deps: [...new Set(deps.filter(Boolean))],
   };
 }

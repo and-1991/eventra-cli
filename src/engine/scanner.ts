@@ -5,8 +5,7 @@ import { resolveExportedSymbol } from "./exportResolver";
 import { findTrackParamIndex } from "./functionAnalyzer";
 import { EventraConfig } from "../types";
 import { isExternalFile } from "./boundary";
-
-const TRACKING_NAMES = new Set(["track", "event", "capture", "send"]);
+import { isTrackingCall } from "./trackingDetector";
 
 function getCallName(expr: ts.Expression): string {
   if (ts.isIdentifier(expr)) return expr.text;
@@ -18,6 +17,19 @@ function getJsxAttrName(name: ts.JsxAttributeName): string | null {
   if (ts.isIdentifier(name)) return name.text;
   if (ts.isJsxNamespacedName(name)) return name.name.text;
   return null;
+}
+
+// unwrap
+function unwrap(expr: ts.Expression): ts.Expression {
+  while (
+    ts.isAsExpression(expr) ||
+    ts.isParenthesizedExpression(expr) ||
+    ts.isTypeAssertionExpression(expr) ||
+    ts.isNonNullExpression(expr)
+    ) {
+    expr = expr.expression;
+  }
+  return expr;
 }
 
 function isValidEvent(v: string) {
@@ -32,24 +44,25 @@ function isValidEvent(v: string) {
 
 function isPropUsedInTracking(
   fn: ts.FunctionLikeDeclaration,
+  checker: ts.TypeChecker,
   prop: string
 ) {
   let found = false;
 
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
-      const name = getCallName(node.expression);
-
-      if (!TRACKING_NAMES.has(name)) {
+      if (!isTrackingCall(node, checker)) {
         ts.forEachChild(node, visit);
         return;
       }
 
       for (const arg of node.arguments) {
+        const a = unwrap(arg as ts.Expression);
+
         if (
-          (ts.isIdentifier(arg) && arg.text === prop) ||
-          (ts.isPropertyAccessExpression(arg) &&
-            arg.name.text === prop)
+          (ts.isIdentifier(a) && a.text === prop) ||
+          (ts.isPropertyAccessExpression(a) &&
+            a.name.text === prop)
         ) {
           found = true;
         }
@@ -59,7 +72,10 @@ function isPropUsedInTracking(
     ts.forEachChild(node, visit);
   }
 
-  visit(fn);
+  if (fn.body) {
+    visit(fn.body);
+  }
+
   return found;
 }
 
@@ -81,7 +97,11 @@ export function scanSource(
   const detectedFunctionWrappers = new Set<string>();
   const detectedComponentWrappers = new Map<string, string>();
 
-  if (depth > 5 || visited.has(source.fileName)) {
+  if (
+    visited.has(source.fileName) ||
+    depth > 10 ||
+    visited.size > 200
+  ) {
     return { events, detectedFunctionWrappers, detectedComponentWrappers };
   }
 
@@ -90,53 +110,55 @@ export function scanSource(
   function visit(node: ts.Node) {
     // CALL EXPRESSIONS
     if (ts.isCallExpression(node)) {
-      const name = getCallName(node.expression);
+      const expr = unwrap(node.expression);
+      const name = getCallName(expr);
 
       const isKnownWrapper = config.functionWrappers.some(
         w => w.name === name
       );
 
-      let resolvedFn = resolveFunctionFromCall(node.expression, checker);
+      const isTrackingByType = isTrackingCall(node, checker);
 
-      // fallback: tracker.track(...)
-      if (!resolvedFn && ts.isPropertyAccessExpression(node.expression)) {
-        const symbol = checker.getSymbolAtLocation(node.expression.name);
-
-        if (symbol) {
-          const decls = symbol.getDeclarations();
-
-          if (decls?.length) {
-            const d = decls[0];
-
-            if (
-              ts.isMethodDeclaration(d) ||
-              ts.isFunctionDeclaration(d) ||
-              ts.isFunctionExpression(d) ||
-              ts.isArrowFunction(d)
-            ) {
-              resolvedFn = d;
-            }
-          }
-        }
-      }
+      let resolvedFn = resolveFunctionFromCall(expr, checker);
 
       const isAutoWrapper =
         resolvedFn && findTrackParamIndex(resolvedFn) !== null;
 
-      const isTracking =
+      let isTracking =
         isKnownWrapper ||
-        TRACKING_NAMES.has(name) ||
-        name.startsWith("$") || // NUXT FIX
+        isTrackingByType ||
+        name.startsWith("$") ||
         (isAutoWrapper &&
           resolvedFn &&
           !isExternalFile(resolvedFn.getSourceFile().fileName));
+
+      // fallback
+      if (!isTracking) {
+        if (
+          ts.isPropertyAccessExpression(expr) &&
+          expr.name.text === "track"
+        ) {
+          isTracking = true;
+        } else if (
+          ts.isIdentifier(expr) &&
+          expr.text === "track"
+        ) {
+          isTracking = true;
+        }
+      }
 
       if (!isTracking) {
         ts.forEachChild(node, visit);
         return;
       }
 
-      if (!isKnownWrapper && isAutoWrapper && !TRACKING_NAMES.has(name)) {
+      // detect wrapper
+      if (
+        !isKnownWrapper &&
+        isAutoWrapper &&
+        !isTrackingByType &&
+        !name.startsWith("track")
+      ) {
         detectedFunctionWrappers.add(name);
       }
 
@@ -161,16 +183,14 @@ export function scanSource(
 
         if (idx !== null && node.arguments[idx]) {
           const res = resolveNodeValue(
-            node.arguments[idx],
+            unwrap(node.arguments[idx]),
             checker,
             paramMap
           );
 
-          if (res && res.values.length) {
-            res.values.forEach(v => {
-              if (isValidEvent(v)) events.add(v);
-            });
-          }
+          res.values.forEach(v => {
+            if (isValidEvent(v)) events.add(v);
+          });
 
           handled = true;
         }
@@ -179,13 +199,15 @@ export function scanSource(
       // FALLBACK
       if (!handled) {
         for (const arg of node.arguments) {
-          const res = resolveNodeValue(arg, checker, paramMap);
+          const res = resolveNodeValue(
+            unwrap(arg),
+            checker,
+            paramMap
+          );
 
-          if (res && res.values.length) {
-            res.values.forEach(v => {
-              if (isValidEvent(v)) events.add(v);
-            });
-          }
+          res.values.forEach(v => {
+            if (isValidEvent(v)) events.add(v);
+          });
         }
       }
 
@@ -263,7 +285,7 @@ export function scanSource(
           const prop = el.name.getText();
 
           const isEvent =
-            isPropUsedInTracking(fn, prop) ||
+            isPropUsedInTracking(fn, checker, prop) ||
             config.wrappers.some(
               w => w.name === tagName && w.prop === prop
             );

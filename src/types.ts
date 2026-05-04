@@ -5,9 +5,6 @@ export type ParseResult = {
   deps: string[];
 };
 
-export type Parser = (content: string, file: string) => ParseResult;
-
-
 export type ComponentWrapper = {
   name: string;
   prop: string;
