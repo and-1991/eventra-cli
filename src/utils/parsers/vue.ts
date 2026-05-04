@@ -1,5 +1,6 @@
 import path from "path";
 import { ParseResult } from "../../types";
+import { resolveImport } from "./utils";
 
 export function parseVue(content: string, file: string): ParseResult {
   const parts: string[] = [];
@@ -17,7 +18,7 @@ export function parseVue(content: string, file: string): ParseResult {
       if (!src) continue;
 
       const resolved = src.startsWith("/")
-        ? path.resolve(process.cwd(), src.slice(1))
+        ? path.join(process.cwd(), src)
         : path.resolve(path.dirname(file), src);
 
       deps.push(resolved);
@@ -25,6 +26,14 @@ export function parseVue(content: string, file: string): ParseResult {
     }
 
     parts.push(body);
+
+    // imports
+    const imports = body.matchAll(/import\s+.*?from\s+["'](.+?)["']/g);
+
+    for (const im of imports) {
+      const resolved = resolveImport(file, im[1]);
+      if (resolved) deps.push(resolved);
+    }
   }
 
   // TEMPLATE
@@ -45,7 +54,7 @@ export function parseVue(content: string, file: string): ParseResult {
     parts.push(v[1] + ";");
   }
 
-  // :prop
+  // :bind
   const binds = template.matchAll(/:[\w-]+="([^"]+)"/g);
   for (const b of binds) {
     parts.push(b[1] + ";");

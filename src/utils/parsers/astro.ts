@@ -1,5 +1,6 @@
 import path from "path";
 import { ParseResult } from "../../types";
+import { resolveImport } from "./utils";
 
 export function parseAstro(content: string, file: string): ParseResult {
   const parts: string[] = [];
@@ -23,13 +24,25 @@ export function parseAstro(content: string, file: string): ParseResult {
       const src = attrs.match(/src=["'](.+?)["']/)?.[1];
       if (!src) continue;
 
-      const resolved = src.startsWith("/")
-        ? path.resolve(process.cwd(), src.slice(1))
-        : path.resolve(path.dirname(file), src);
+      let resolved: string;
+
+      if (src.startsWith("/")) {
+        resolved = path.join(process.cwd(), src); // FIX
+      } else {
+        resolved = path.resolve(path.dirname(file), src);
+      }
 
       deps.push(resolved);
-    } else {
-      parts.push(body);
+      continue;
+    }
+
+    parts.push(body);
+
+    const imports = body.matchAll(/import\s+.*?from\s+["'](.+?)["']/g);
+
+    for (const im of imports) {
+      const resolved = resolveImport(file, im[1]);
+      if (resolved) deps.push(resolved);
     }
   }
 

@@ -1,16 +1,28 @@
 import { ParseResult } from "../../types";
+import { resolveImport } from "./utils";
 
-export function parseSvelte(content: string): ParseResult {
+export function parseSvelte(content: string, file: string): ParseResult {
   const parts: string[] = [];
   const deps: string[] = [];
 
   // script
   const scripts = content.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g);
+
   for (const m of scripts) {
-    parts.push(m[1]);
+    const code = m[1];
+
+    parts.push(code);
+
+    // imports
+    const imports = code.matchAll(/import\s+.*?from\s+["'](.+?)["']/g);
+
+    for (const im of imports) {
+      const resolved = resolveImport(file, im[1]);
+      if (resolved) deps.push(resolved);
+    }
   }
 
-  // on:click={...}
+  // handlers
   const handlers = content.matchAll(/on:\w+=\{([^}]+)\}/g);
 
   for (const h of handlers) {
