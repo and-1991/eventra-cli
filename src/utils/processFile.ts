@@ -1,20 +1,19 @@
-import { detectParser } from "./parsers/router";
+import path from "path";
+import { parseUniversal } from "./parsers/universal";
 
 export function processFile(file: string, content: string) {
-  const parser = detectParser(file);
+  const { code, deps } = parseUniversal(content, file);
 
-  const res = parser(content, file);
+  const ext = path.extname(file);
 
   const virtualFile =
-    file.endsWith(".vue") ||
-    file.endsWith(".svelte") ||
-    file.endsWith(".astro")
-      ? file + ".tsx"
+    /\.(vue|svelte|astro|html)$/i.test(file)
+      ? file.replace(ext, "") + ".tsx"
       : file;
 
   return {
-    content: res.code,
+    content: code || "",
     virtualFile,
-    deps: res.deps,
+    deps: [...new Set(deps.filter(Boolean))],
   };
 }

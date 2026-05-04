@@ -166,9 +166,11 @@ export function scanSource(
             paramMap
           );
 
-          res?.values.forEach(v => {
-            if (isValidEvent(v)) events.add(v);
-          });
+          if (res && res.values.length) {
+            res.values.forEach(v => {
+              if (isValidEvent(v)) events.add(v);
+            });
+          }
 
           handled = true;
         }
@@ -179,9 +181,11 @@ export function scanSource(
         for (const arg of node.arguments) {
           const res = resolveNodeValue(arg, checker, paramMap);
 
-          res?.values.forEach(v => {
-            if (isValidEvent(v)) events.add(v);
-          });
+          if (res && res.values.length) {
+            res.values.forEach(v => {
+              if (isValidEvent(v)) events.add(v);
+            });
+          }
         }
       }
 

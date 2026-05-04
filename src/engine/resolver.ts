@@ -11,12 +11,13 @@ export function resolveNodeValue(
   checker: ts.TypeChecker,
   paramMap?: Map<string, ts.Expression>,
   seen = new Set<ts.Node>()
-): ResolveResult | null {
+): ResolveResult {
 
-  if (seen.has(node)) return null;
+  if (seen.has(node)) {
+    return { values: [], dynamic: true };
+  }
   seen.add(node);
 
-  // param mapping
   if (ts.isIdentifier(node) && paramMap?.has(node.text)) {
     return resolveNodeValue(
       paramMap.get(node.text)!,
@@ -46,16 +47,15 @@ export function resolveNodeValue(
     const b = resolveNodeValue(node.whenFalse, checker, paramMap, seen);
 
     return {
-      values: [...new Set([...(a?.values ?? []), ...(b?.values ?? [])])],
+      values: [...new Set([...(a.values ?? []), ...(b.values ?? [])])],
       dynamic: true,
     };
   }
 
   if (ts.isIdentifier(node)) {
     let symbol = checker.getSymbolAtLocation(node);
-    if (!symbol) return null;
+    if (!symbol) return { values: [], dynamic: true };
 
-    // variable inline resolve FIRST
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
         return resolveNodeValue(
@@ -71,7 +71,6 @@ export function resolveNodeValue(
 
     symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 
-    // avoid alias loop
     if (symbol !== original && (symbol.flags & ts.SymbolFlags.Alias)) {
       symbol = checker.getAliasedSymbol(symbol);
     }
@@ -95,6 +94,8 @@ export function resolveNodeValue(
         }
       }
     }
+
+    return { values: [], dynamic: true };
   }
 
   if (ts.isPropertyAccessExpression(node)) {
@@ -107,7 +108,6 @@ export function resolveNodeValue(
         s = checker.getAliasedSymbol(s);
       }
 
-      // ENUM support
       for (const decl of s.getDeclarations() ?? []) {
         if (ts.isEnumMember(decl) && decl.initializer) {
           if (ts.isStringLiteral(decl.initializer)) {
@@ -120,7 +120,6 @@ export function resolveNodeValue(
       }
     }
 
-    // OBJECT support
     if (ts.isIdentifier(node.expression)) {
       const objSymbol = checker.getSymbolAtLocation(node.expression);
 
@@ -149,6 +148,8 @@ export function resolveNodeValue(
         }
       }
     }
+
+    return { values: [], dynamic: true };
   }
 
   if (ts.isObjectLiteralExpression(node)) {
@@ -161,7 +162,7 @@ export function resolveNodeValue(
 
       if (name === "event") {
         const res = resolveNodeValue(prop.initializer, checker, paramMap, seen);
-        if (res) values.push(...res.values);
+        values.push(...res.values);
       }
     }
 
@@ -176,7 +177,9 @@ export function resolveNodeValue(
       if (left && right) {
         return {
           values: left.values.flatMap(l =>
-            right.values.map(r => l + r)
+            right.values.length
+              ? right.values.map(r => l + r)
+              : [l + "*"]
           ),
           dynamic: true,
         };
@@ -184,5 +187,9 @@ export function resolveNodeValue(
     }
   }
 
-  return null;
+  if (ts.isCallExpression(node)) {
+    return { values: [], dynamic: true };
+  }
+
+  return { values: [], dynamic: true };
 }
