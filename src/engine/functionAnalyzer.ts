@@ -15,9 +15,24 @@ export function findTrackParamIndex(
 
   function visit(node: ts.Node) {
     if (ts.isCallExpression(node)) {
-      const name = getCallName(node.expression);
+      let isTrackCall = false;
 
-      if (/(track|event|capture|send)/i.test(name)) {
+      if (ts.isPropertyAccessExpression(node.expression)) {
+        const method = node.expression.name.text;
+
+        if (method === "track") {
+          isTrackCall = true;
+        }
+      }
+
+      // fallback
+      if (ts.isIdentifier(node.expression)) {
+        if (node.expression.text === "track") {
+          isTrackCall = true;
+        }
+      }
+
+      if (isTrackCall) {
         for (const arg of node.arguments) {
           if (ts.isIdentifier(arg)) {
             const idx = paramIndex.get(arg.text);
@@ -25,6 +40,11 @@ export function findTrackParamIndex(
               result = idx;
               return;
             }
+          }
+
+          if (ts.isStringLiteral(arg)) {
+            result = 0;
+            return;
           }
         }
       }
@@ -38,14 +58,4 @@ export function findTrackParamIndex(
   }
 
   return result;
-}
-
-function getCallName(expr: ts.Expression): string {
-  if (ts.isIdentifier(expr)) return expr.text;
-
-  if (ts.isPropertyAccessExpression(expr)) {
-    return expr.name.text;
-  }
-
-  return "";
 }

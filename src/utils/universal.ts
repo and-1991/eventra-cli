@@ -2,10 +2,17 @@ import path from "path";
 import { ParseResult } from "../types";
 
 /**
- * exact JS:
- * - {...}
- * - attr="..."
- * - Vue / Svelte handlers
+ * Strip comments (HTML + JS)
+ */
+function stripComments(input: string): string {
+  return input
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/\/\/.*$/gm, "");
+}
+
+/**
+ * Extract JS expressions safely
  */
 function extractJS(input: string): string[] {
   const result: string[] = [];
@@ -24,7 +31,6 @@ function extractJS(input: string): string[] {
       if (escape) escape = false;
       else if (ch === "\\") escape = true;
       else if (ch === inString) inString = null;
-
       i++;
       continue;
     }
@@ -68,7 +74,17 @@ function extractJS(input: string): string[] {
 
       if (depth === 0) {
         const expr = input.slice(i + 1, j - 1).trim();
-        if (expr) result.push(expr);
+
+        if (
+          expr &&
+          (expr.includes("(") ||
+            expr.includes("=") ||
+            expr.includes(".") ||
+            expr.includes("track"))
+        ) {
+          result.push(expr);
+        }
+
         i = j;
         continue;
       }
@@ -95,7 +111,14 @@ function extractJS(input: string): string[] {
         j++;
       }
 
-      if (val.trim()) result.push(val.trim());
+      if (
+        val.trim() &&
+        (val.includes("(") ||
+          val.includes("=>") ||
+          val.includes("track"))
+      ) {
+        result.push(val.trim());
+      }
 
       i = j + 1;
       continue;
@@ -123,6 +146,9 @@ function extractJS(input: string): string[] {
   return result;
 }
 
+/**
+ * Extract loose JS but less noisy
+ */
 function extractLooseJS(input: string): string[] {
   const result: string[] = [];
 
@@ -134,12 +160,13 @@ function extractLooseJS(input: string): string[] {
     if (!l) continue;
     if (l.startsWith("<")) continue;
 
+    // strict filter
     if (
-      l.includes("(") ||
-      l.includes("=") ||
+      l.includes("track") ||
+      l.includes(".track(") ||
       l.includes("=>") ||
-      l.includes("function") ||
-      l.includes("track")
+      l.startsWith("function") ||
+      l.includes("(")
     ) {
       result.push(l);
     }
@@ -149,14 +176,8 @@ function extractLooseJS(input: string): string[] {
 }
 
 /**
- * Universal:
- * - Astro
- * - Vue
- * - Svelte
- * - React / JSX
- * - Node / backend
+ * Universal parser
  */
-
 export function parseUniversal(
   content: string,
   file: string
@@ -164,12 +185,14 @@ export function parseUniversal(
   const parts: string[] = [];
   const deps: string[] = [];
 
-  //  Astro frontmatter ---
-  const fm = content.match(/^---([\s\S]*?)---/);
+  const clean = stripComments(content);
+
+  // Astro frontmatter
+  const fm = clean.match(/^---([\s\S]*?)---/);
   if (fm?.[1]) parts.push(fm[1]);
 
   // <script src="">
-  const scriptSrc = content.matchAll(
+  const scriptSrc = clean.matchAll(
     /<script\b[^>]*?\bsrc=["'](.+?)["'][^>]*>/g
   );
 
@@ -184,28 +207,33 @@ export function parseUniversal(
   }
 
   // inline <script>
-  const scripts = content.matchAll(
-    /<script\b[^>]*>([\s\S]*?)<\/script>/g
+  const scripts = clean.matchAll(
+    /<script\b([^>]*)>([\s\S]*?)<\/script>/g
   );
 
   for (const m of scripts) {
-    if (m[1].trim()) parts.push(m[1]);
+    const attrs = m[1];
+
+    // skip JSON / data
+    if (/type=["']application\/json/.test(attrs)) continue;
+
+    if (m[2].trim()) {
+      parts.push(m[2]);
+    }
   }
 
-  const noScripts = content.replace(
+  // remove scripts
+  const noScripts = clean.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
 
+  // loose JS
   const loose = extractLooseJS(noScripts);
-
-  for (const l of loose) {
-    parts.push(l);
-  }
+  parts.push(...loose);
 
   // expressions
-  const extracted = extractJS(content);
-
+  const extracted = extractJS(clean);
   for (const e of extracted) {
     parts.push(e + ";");
   }

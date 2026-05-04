@@ -12,12 +12,12 @@ export function resolveNodeValue(
   paramMap?: Map<string, ts.Expression>,
   seen = new Set<ts.Node>()
 ): ResolveResult {
-
   if (seen.has(node)) {
     return { values: [], dynamic: true };
   }
   seen.add(node);
 
+  // param mapping
   if (ts.isIdentifier(node) && paramMap?.has(node.text)) {
     return resolveNodeValue(
       paramMap.get(node.text)!,
@@ -27,54 +27,70 @@ export function resolveNodeValue(
     );
   }
 
+  // STRING
   if (ts.isStringLiteral(node)) {
     return { values: [node.text], dynamic: false };
   }
 
-  if (ts.isTemplateExpression(node)) {
-    let result = node.head.text;
+  // ARRAY
+  if (ts.isArrayLiteralExpression(node)) {
+    const values: string[] = [];
 
-    for (const span of node.templateSpans) {
-      result += "*";
-      result += span.literal.text;
+    for (const el of node.elements) {
+      const res = resolveNodeValue(el, checker, paramMap, seen);
+      if (res.values.length) {
+        values.push(...res.values);
+      }
     }
 
-    return { values: [result], dynamic: true };
+    return { values, dynamic: true };
   }
 
+  // TEMPLATE
+  if (ts.isTemplateExpression(node)) {
+    let results = [node.head.text];
+
+    for (const span of node.templateSpans) {
+      const res = resolveNodeValue(span.expression, checker, paramMap, seen);
+
+      if (res.values.length) {
+        results = results.flatMap(r =>
+          res.values.map(v => r + v)
+        );
+      } else {
+        results = results.map(r => r + "*");
+      }
+
+      results = results.map(r => r + span.literal.text);
+    }
+
+    return { values: results, dynamic: true };
+  }
+
+  // CONDITIONAL
   if (ts.isConditionalExpression(node)) {
     const a = resolveNodeValue(node.whenTrue, checker, paramMap, seen);
     const b = resolveNodeValue(node.whenFalse, checker, paramMap, seen);
 
     return {
-      values: [...new Set([...(a.values ?? []), ...(b.values ?? [])])],
+      values: [...new Set([...a.values, ...b.values])],
       dynamic: true,
     };
   }
 
+  // IDENTIFIER
   if (ts.isIdentifier(node)) {
     let symbol = checker.getSymbolAtLocation(node);
     if (!symbol) return { values: [], dynamic: true };
 
-    for (const decl of symbol.getDeclarations() ?? []) {
-      if (ts.isVariableDeclaration(decl) && decl.initializer) {
-        return resolveNodeValue(
-          decl.initializer,
-          checker,
-          paramMap,
-          seen
-        );
-      }
-    }
-
-    const original = symbol;
-
+    // unwrap export
     symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 
-    if (symbol !== original && (symbol.flags & ts.SymbolFlags.Alias)) {
+    if (symbol.flags & ts.SymbolFlags.Alias) {
       symbol = checker.getAliasedSymbol(symbol);
     }
 
+    // inline variable
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
         return resolveNodeValue(
@@ -95,14 +111,38 @@ export function resolveNodeValue(
       }
     }
 
+    // UNION TYPES
+    const type = checker.getTypeAtLocation(node);
+
+    if (type.isUnion()) {
+      const values: string[] = [];
+
+      for (const t of type.types) {
+        if ((t as any).isStringLiteral?.()) {
+          values.push((t as any).value);
+        }
+      }
+
+      if (values.length) {
+        return { values, dynamic: false };
+      }
+    }
+
+    // TYPE FALLBACK (as const)
+    if ((type as any).isStringLiteral?.()) {
+      return { values: [(type as any).value], dynamic: false };
+    }
+
     return { values: [], dynamic: true };
   }
 
+  // PROPERTY ACCESS (obj.a.b)
   if (ts.isPropertyAccessExpression(node)) {
+
     const symbol = checker.getSymbolAtLocation(node);
 
     if (symbol) {
-      let s = symbol;
+      let s = resolveExportedSymbol(symbol, checker) ?? symbol;
 
       if (s.flags & ts.SymbolFlags.Alias) {
         s = checker.getAliasedSymbol(s);
@@ -120,6 +160,23 @@ export function resolveNodeValue(
       }
     }
 
+    // constant enum / readonly
+    const constantValue = checker.getConstantValue(node as any);
+    if (typeof constantValue === "string") {
+      return { values: [constantValue], dynamic: false };
+    }
+
+    // type fallback
+    const type = checker.getTypeAtLocation(node);
+
+    if ((type as any).isStringLiteral?.()) {
+      return {
+        values: [(type as any).value],
+        dynamic: false,
+      };
+    }
+
+    // object literal resolve
     if (ts.isIdentifier(node.expression)) {
       const objSymbol = checker.getSymbolAtLocation(node.expression);
 
@@ -152,6 +209,40 @@ export function resolveNodeValue(
     return { values: [], dynamic: true };
   }
 
+  // ARRAY ACCESS (arr[0])
+  if (ts.isElementAccessExpression(node)) {
+    const obj = resolveNodeValue(node.expression, checker, paramMap, seen);
+
+    if (!node.argumentExpression) {
+      return { values: obj.values, dynamic: true };
+    }
+
+    const index = resolveNodeValue(
+      node.argumentExpression,
+      checker,
+      paramMap,
+      seen
+    );
+
+    // if index known
+    if (index.values.length === 1) {
+      const i = Number(index.values[0]);
+
+      if (!Number.isNaN(i) && obj.values[i] !== undefined) {
+        return {
+          values: [obj.values[i]],
+          dynamic: false,
+        };
+      }
+    }
+
+    // fallback → dynamic
+    return obj.values.length
+      ? { values: obj.values, dynamic: true }
+      : { values: [], dynamic: true };
+  }
+
+  // OBJECT
   if (ts.isObjectLiteralExpression(node)) {
     const values: string[] = [];
 
@@ -160,7 +251,7 @@ export function resolveNodeValue(
 
       const name = prop.name.getText();
 
-      if (name === "event") {
+      if (["event", "name", "type"].includes(name)) {
         const res = resolveNodeValue(prop.initializer, checker, paramMap, seen);
         values.push(...res.values);
       }
@@ -169,24 +260,28 @@ export function resolveNodeValue(
     return { values, dynamic: true };
   }
 
+  // BINARY ("btn_" + name)
   if (ts.isBinaryExpression(node)) {
     if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
       const left = resolveNodeValue(node.left, checker, paramMap, seen);
       const right = resolveNodeValue(node.right, checker, paramMap, seen);
 
-      if (left && right) {
-        return {
-          values: left.values.flatMap(l =>
-            right.values.length
-              ? right.values.map(r => l + r)
-              : [l + "*"]
-          ),
-          dynamic: true,
-        };
+      if (!left.values.length) {
+        return { values: [], dynamic: true };
       }
+
+      return {
+        values: left.values.flatMap(l =>
+          right.values.length
+            ? right.values.map(r => l + r)
+            : [l + "*"]
+        ),
+        dynamic: true,
+      };
     }
   }
 
+  // CALL → dynamic
   if (ts.isCallExpression(node)) {
     return { values: [], dynamic: true };
   }
