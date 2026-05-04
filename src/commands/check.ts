@@ -1,10 +1,12 @@
 import chalk from "chalk";
 import fg from "fast-glob";
 import fs from "fs/promises";
+import path from "path";
 
 import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
+import { getVirtualFile } from "../utils/getVirtualFile";
 
 export async function check({ fix = false }: { fix?: boolean }) {
   const config = await loadConfig();
@@ -18,36 +20,68 @@ export async function check({ fix = false }: { fix?: boolean }) {
 
   const files = await fg(config.sync.include, {
     ignore: config.sync.exclude,
+    absolute: true,
   });
 
   const engine = new EventraEngine(process.cwd());
 
+  const toScan = new Set<string>();
+
+  const cache = new Map<
+    string,
+    { content: string; deps: string[] }
+  >();
+
+  // COLLECT + CACHE
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
 
-      const { content, virtualFile, deps } = processFile(file, raw);
+      if (raw.length > 2_000_000) continue;
 
-      engine.scanFile(virtualFile, content, config);
+      const parsed = processFile(file, raw);
 
-      for (const dep of deps) {
-        try {
-          const depRaw = await fs.readFile(dep, "utf-8");
+      cache.set(file, parsed);
+      toScan.add(file);
 
-          const {
-            content: depContent,
-            virtualFile: depVirtual,
-          } = processFile(dep, depRaw);
-
-          engine.scanFile(depVirtual, depContent, config);
-        } catch {}
+      for (const dep of parsed.deps) {
+        toScan.add(path.resolve(dep));
       }
 
-    } catch (err) {
-      console.log(chalk.yellow(`Skipped: ${file}`));
-    }
+    } catch {}
   }
 
+  // PRELOAD
+  for (const file of toScan) {
+    try {
+      let parsed = cache.get(file);
+
+      if (!parsed) {
+        const raw = await fs.readFile(file, "utf-8");
+        parsed = processFile(file, raw);
+        cache.set(file, parsed);
+      }
+
+      const virtual = getVirtualFile(file);
+      engine.preloadFile(virtual, parsed.content);
+
+    } catch {}
+  }
+
+  // SCAN
+  for (const file of toScan) {
+    try {
+      const parsed = cache.get(file);
+      if (!parsed) continue;
+
+      const virtual = getVirtualFile(file);
+
+      engine.scanFile(virtual, parsed.content, config);
+
+    } catch {}
+  }
+
+  // DIFF
   const found = new Set(engine.getAllEvents());
   const known = new Set(config.events ?? []);
 
@@ -56,26 +90,12 @@ export async function check({ fix = false }: { fix?: boolean }) {
 
   // FIX MODE
   if (fix) {
-    const next = new Set<string>();
-
-    found.forEach(e => next.add(e));
-
-    newEvents.forEach(e =>
-      console.log(chalk.green(`+ ${e}`))
-    );
-
-    removed.forEach(e =>
-      console.log(chalk.red(`- ${e}`))
-    );
-
-    config.events = [...next].sort();
-
+    config.events = [...found].sort();
     await saveConfig(config);
 
     console.log(
       chalk.green(`\nSynced (${config.events.length} events)`)
     );
-
     return;
   }
 

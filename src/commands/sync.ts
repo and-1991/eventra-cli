@@ -1,10 +1,12 @@
 import fg from "fast-glob";
 import fs from "fs/promises";
 import chalk from "chalk";
+import path from "path";
 
 import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
+import { getVirtualFile } from "../utils/getVirtualFile";
 
 export async function sync() {
   const config = await loadConfig();
@@ -14,6 +16,7 @@ export async function sync() {
 
   const files = await fg(config.sync.include, {
     ignore: config.sync.exclude,
+    absolute: true,
   });
 
   if (!files.length) {
@@ -23,76 +26,86 @@ export async function sync() {
 
   const engine = new EventraEngine(process.cwd());
 
-  const detectedFn = new Set<string>();
-  const detectedCmp = new Map<string, string>();
+  const toScan = new Set<string>();
 
-  const fileCache: { file: string; content: string }[] = [];
+  const cache = new Map<
+    string,
+    { content: string; deps: string[] }
+  >();
 
+  // COLLECT + CACHE
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
 
-      const { content, virtualFile, deps } = processFile(file, raw);
+      if (raw.length > 2_000_000) continue;
 
-      engine["ts"].updateFile(virtualFile, content);
-      fileCache.push({ file: virtualFile, content });
+      const parsed = processFile(file, raw);
 
-      // deps
-      for (const dep of deps) {
-        try {
-          const depRaw = await fs.readFile(dep, "utf-8");
+      cache.set(file, parsed);
+      toScan.add(file);
 
-          const {
-            content: depContent,
-            virtualFile: depVirtual,
-          } = processFile(dep, depRaw);
-
-          engine["ts"].updateFile(depVirtual, depContent);
-          fileCache.push({ file: depVirtual, content: depContent });
-
-        } catch {}
+      for (const dep of parsed.deps) {
+        toScan.add(path.resolve(dep));
       }
 
     } catch {}
   }
 
-  for (const { file, content } of fileCache) {
+  // PRELOAD
+  for (const file of toScan) {
     try {
-      const res = engine.scanFile(file, content, config);
+      let parsed = cache.get(file);
 
-      for (const w of res.detectedFunctionWrappers) {
-        detectedFn.add(w);
+      if (!parsed) {
+        const raw = await fs.readFile(file, "utf-8");
+        parsed = processFile(file, raw);
+        cache.set(file, parsed);
       }
+
+      const virtual = getVirtualFile(file);
+      engine.preloadFile(virtual, parsed.content);
+
+    } catch {}
+  }
+
+  // SCAN
+  const detectedFn = new Set<string>();
+  const detectedCmp = new Map<string, string>();
+
+  for (const file of toScan) {
+    try {
+      const parsed = cache.get(file);
+      if (!parsed) continue;
+
+      const virtual = getVirtualFile(file);
+
+      const res = engine.scanFile(virtual, parsed.content, config);
+
+      res.detectedFunctionWrappers.forEach(w =>
+        detectedFn.add(w)
+      );
 
       for (const [k, v] of res.detectedComponentWrappers) {
         detectedCmp.set(k, v);
       }
 
-    } catch (err) {
-      console.log(chalk.yellow(`Skipped: ${file}`));
-
-      if (err instanceof Error) {
-        console.log(chalk.gray(err.message));
-      }
+    } catch {
+      console.log(chalk.gray(`skip: ${file}`));
     }
   }
 
-  // EVENTS
+  // RESULT
   const events = engine.getAllEvents().sort();
 
-  const mergedEvents = new Set(config.events ?? []);
-  events.forEach(e => mergedEvents.add(e));
+  config.events = events;
 
-  config.events = [...mergedEvents].sort();
-
-  // FUNCTION WRAPPERS
   config.functionWrappers = mergeUnique(
     config.functionWrappers ?? [],
     [...detectedFn].map(name => ({ name })),
     w => w.name
   );
 
-  // COMPONENT WRAPPERS
   config.wrappers = mergeUnique(
     config.wrappers ?? [],
     [...detectedCmp.entries()].map(([name, prop]) => ({
@@ -105,18 +118,6 @@ export async function sync() {
   await saveConfig(config);
 
   console.log(chalk.green(`Found ${events.length} events`));
-
-  if (detectedFn.size) {
-    console.log(chalk.blue("\nDetected function wrappers:"));
-    detectedFn.forEach(w => console.log(chalk.gray(`• ${w}`)));
-  }
-
-  if (detectedCmp.size) {
-    console.log(chalk.blue("\nDetected component wrappers:"));
-    detectedCmp.forEach((prop, name) =>
-      console.log(chalk.gray(`• ${name} (${prop})`))
-    );
-  }
 }
 
 // HELPERS

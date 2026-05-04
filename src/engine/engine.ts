@@ -18,6 +18,9 @@ export class EventraEngine {
     const { baseUrl, paths } = this.ts.getModuleResolutionConfig();
     this.graph = new DependencyGraph(baseUrl, paths);
   }
+  preloadFile(file: string, content: string) {
+    this.ts.updateFile(file, content);
+  }
 
   // SCAN FILE
   scanFile(
@@ -66,7 +69,6 @@ export class EventraEngine {
     content: string,
     config: EventraConfig
   ) {
-    // сначала обновляем текущий файл
     const res = this.scanFile(file, content, config);
 
     const dependents = this.graph.getAllDependentsDeep(file);

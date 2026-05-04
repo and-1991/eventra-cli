@@ -7,18 +7,12 @@ import path from "path";
 import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
+import { getVirtualFile } from "../utils/getVirtualFile";
 
 type QueueItem = {
   real: string;
   virtual: string;
 };
-
-// stabile virtual mapping
-function getVirtualFile(file: string) {
-  return /\.(vue|svelte|astro|html)$/i.test(file)
-    ? file + ".tsx"
-    : file;
-}
 
 export async function watch() {
   const config = await loadConfig();
@@ -28,31 +22,76 @@ export async function watch() {
 
   const files = await fg(config.sync.include, {
     ignore: config.sync.exclude,
+    absolute: true,
   });
 
   const engine = new EventraEngine(process.cwd());
-
   const watchedDeps = new Set<string>();
+  const cache = new Map<
+    string,
+    { content: string; deps: string[] }
+  >();
 
-  // INITIAL LOAD
+  const toScan = new Set<string>();
+
+  // COLLECT + CACHE
   for (const file of files) {
     try {
-      const abs = path.resolve(file);
-      const raw = await fs.readFile(abs, "utf-8");
+      const raw = await fs.readFile(file, "utf-8");
 
-      const { content, deps } = processFile(abs, raw);
-      const virtual = getVirtualFile(abs);
+      if (raw.length > 2_000_000) continue; // safeguard
 
-      engine.scanFile(virtual, content, config);
+      const parsed = processFile(file, raw);
 
-      // deps
-      for (const dep of deps) {
-        watchedDeps.add(path.resolve(dep));
+      cache.set(file, parsed);
+      toScan.add(file);
+
+      for (const dep of parsed.deps) {
+        const absDep = path.resolve(dep);
+        toScan.add(absDep);
       }
 
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
     }
+  }
+
+  // PRELOAD (TS PROGRAM)
+  for (const file of toScan) {
+    try {
+      let parsed = cache.get(file);
+
+      if (!parsed) {
+        const raw = await fs.readFile(file, "utf-8");
+        parsed = processFile(file, raw);
+      }
+
+      const virtual = getVirtualFile(file);
+
+      engine.preloadFile?.(virtual, parsed.content);
+
+    } catch {}
+  }
+
+  // INITIAL SCAN
+  for (const file of toScan) {
+    try {
+      let parsed = cache.get(file);
+
+      if (!parsed) {
+        const raw = await fs.readFile(file, "utf-8");
+        parsed = processFile(file, raw);
+      }
+
+      const virtual = getVirtualFile(file);
+
+      engine.scanFile(virtual, parsed.content, config);
+
+      for (const dep of parsed.deps) {
+        watchedDeps.add(path.resolve(dep));
+      }
+
+    } catch {}
   }
 
   config.events = engine.getAllEvents().sort();
@@ -64,15 +103,11 @@ export async function watch() {
 
   // QUEUE
   let locked = false;
-  let queued = new Map<string, QueueItem>();
+  const queued = new Map<string, QueueItem>();
   let timer: NodeJS.Timeout | null = null;
 
   const run = async () => {
-    if (locked) {
-      timer = setTimeout(run, 100);
-      return;
-    }
-
+    if (locked) return;
     locked = true;
 
     const batch = [...queued.values()];
@@ -82,12 +117,16 @@ export async function watch() {
       try {
         const raw = await fs.readFile(item.real, "utf-8");
 
-        const { content, deps } = processFile(item.real, raw);
+        if (raw.length > 2_000_000) continue;
 
-        engine.updateFile(item.virtual, content, config);
+        const parsed = processFile(item.real, raw);
+
+        cache.set(item.real, parsed);
+
+        engine.updateFile(item.virtual, parsed.content, config);
 
         // DEPS
-        for (const dep of deps) {
+        for (const dep of parsed.deps) {
           const absDep = path.resolve(dep);
 
           if (!watchedDeps.has(absDep)) {
@@ -97,11 +136,13 @@ export async function watch() {
 
           try {
             const depRaw = await fs.readFile(absDep, "utf-8");
-            const { content: depContent } = processFile(absDep, depRaw);
+            const depParsed = processFile(absDep, depRaw);
+
+            cache.set(absDep, depParsed);
 
             const depVirtual = getVirtualFile(absDep);
 
-            engine.updateFile(depVirtual, depContent, config);
+            engine.updateFile(depVirtual, depParsed.content, config);
           } catch {}
         }
 
@@ -110,7 +151,7 @@ export async function watch() {
       }
     }
 
-    // EVENTS DIFF
+    // DIFF EVENTS
     const next = engine.getAllEvents();
 
     const added = next.filter(e => !config.events.includes(e));
@@ -136,16 +177,19 @@ export async function watch() {
     const abs = path.resolve(file);
     const virtual = getVirtualFile(abs);
 
+    console.log(chalk.gray(`change: ${file}`));
+
     queued.set(abs, { real: abs, virtual });
 
     if (timer) clearTimeout(timer);
-    timer = setTimeout(run, 300);
+    timer = setTimeout(run, 250);
   };
 
   // WATCHER
   const watcher = chokidar.watch(config.sync.include, {
     ignored: config.sync.exclude,
     ignoreInitial: true,
+    persistent: true,
   });
 
   watcher
@@ -160,6 +204,7 @@ export async function watch() {
 
       engine.removeFile(virtual, config);
 
+      watcher.unwatch(abs);
       watchedDeps.delete(abs);
 
       const next = engine.getAllEvents();
@@ -170,6 +215,9 @@ export async function watch() {
       console.log(
         chalk.gray(`Total: ${config.events.length} events\n`)
       );
+    })
+    .on("error", (err) => {
+      console.error(chalk.red("Watcher error:"), err);
     });
 
   // WATCH DEPS
