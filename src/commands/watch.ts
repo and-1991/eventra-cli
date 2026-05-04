@@ -8,6 +8,18 @@ import { loadConfig, saveConfig } from "../utils/config";
 import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
 
+type QueueItem = {
+  real: string;
+  virtual: string;
+};
+
+// stabile virtual mapping
+function getVirtualFile(file: string) {
+  return /\.(vue|svelte|astro|html)$/i.test(file)
+    ? file + ".tsx"
+    : file;
+}
+
 export async function watch() {
   const config = await loadConfig();
   if (!config) return;
@@ -20,23 +32,27 @@ export async function watch() {
 
   const engine = new EventraEngine(process.cwd());
 
-  const fileCache: { file: string; content: string }[] = [];
+  const watchedDeps = new Set<string>();
 
-  // PRELOAD TS
+  // INITIAL LOAD
   for (const file of files) {
     try {
       const abs = path.resolve(file);
       const raw = await fs.readFile(abs, "utf-8");
-      const { content, virtualFile } = processFile(abs, raw);
-      fileCache.push({ file: virtualFile, content });
+
+      const { content, deps } = processFile(abs, raw);
+      const virtual = getVirtualFile(abs);
+
+      engine.scanFile(virtual, content, config);
+
+      // deps
+      for (const dep of deps) {
+        watchedDeps.add(path.resolve(dep));
+      }
+
     } catch {
       console.log(chalk.gray(`skip: ${file}`));
     }
-  }
-
-  // INITIAL SCAN
-  for (const { file, content } of fileCache) {
-    engine.scanFile(file, content, config);
   }
 
   config.events = engine.getAllEvents().sort();
@@ -46,45 +62,55 @@ export async function watch() {
     chalk.gray(`Initial: ${config.events.length} events\n`)
   );
 
+  // QUEUE
   let locked = false;
-  let queued = new Set<string>();
+  let queued = new Map<string, QueueItem>();
   let timer: NodeJS.Timeout | null = null;
 
   const run = async () => {
-    if (locked) return;
+    if (locked) {
+      timer = setTimeout(run, 100);
+      return;
+    }
+
     locked = true;
 
-    const batch = [...queued];
+    const batch = [...queued.values()];
     queued.clear();
 
-    for (const file of batch) {
+    for (const item of batch) {
       try {
-        const raw = await fs.readFile(file, "utf-8");
+        const raw = await fs.readFile(item.real, "utf-8");
 
-        const { content, virtualFile, deps } = processFile(file, raw);
+        const { content, deps } = processFile(item.real, raw);
 
-        engine.updateFile(virtualFile, content, config);
+        engine.updateFile(item.virtual, content, config);
 
-        // deps
+        // DEPS
         for (const dep of deps) {
-          try {
-            const depRaw = await fs.readFile(dep, "utf-8");
+          const absDep = path.resolve(dep);
 
-            const {
-              content: depContent,
-              virtualFile: depVirtual,
-            } = processFile(dep, depRaw);
+          if (!watchedDeps.has(absDep)) {
+            watcher.add(absDep);
+            watchedDeps.add(absDep);
+          }
+
+          try {
+            const depRaw = await fs.readFile(absDep, "utf-8");
+            const { content: depContent } = processFile(absDep, depRaw);
+
+            const depVirtual = getVirtualFile(absDep);
 
             engine.updateFile(depVirtual, depContent, config);
-
           } catch {}
         }
 
       } catch {
-        console.log(chalk.gray(`skip: ${file}`));
+        console.log(chalk.gray(`skip: ${item.real}`));
       }
     }
 
+    // EVENTS DIFF
     const next = engine.getAllEvents();
 
     const added = next.filter(e => !config.events.includes(e));
@@ -105,13 +131,18 @@ export async function watch() {
     locked = false;
   };
 
+  // SCHEDULER
   const schedule = (file: string) => {
-    queued.add(path.resolve(file));
+    const abs = path.resolve(file);
+    const virtual = getVirtualFile(abs);
+
+    queued.set(abs, { real: abs, virtual });
 
     if (timer) clearTimeout(timer);
-    timer = setTimeout(run, 200);
+    timer = setTimeout(run, 300);
   };
 
+  // WATCHER
   const watcher = chokidar.watch(config.sync.include, {
     ignored: config.sync.exclude,
     ignoreInitial: true,
@@ -125,9 +156,11 @@ export async function watch() {
 
       console.log(chalk.gray(`remove: ${file}`));
 
-      const { virtualFile } = processFile(abs, "");
+      const virtual = getVirtualFile(abs);
 
-      engine.removeFile(virtualFile, config);
+      engine.removeFile(virtual, config);
+
+      watchedDeps.delete(abs);
 
       const next = engine.getAllEvents();
 
@@ -139,6 +172,12 @@ export async function watch() {
       );
     });
 
+  // WATCH DEPS
+  for (const dep of watchedDeps) {
+    watcher.add(dep);
+  }
+
+  // EXIT
   process.on("SIGINT", async () => {
     console.log(chalk.yellow("\nStopping watcher..."));
     await watcher.close();
