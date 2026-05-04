@@ -1,33 +1,24 @@
-import path from "path";
+import { ParseResult } from "../../types";
 
-export function parseSvelte(content: string, file: string) {
+export function parseSvelte(content: string): ParseResult {
   const parts: string[] = [];
+  const deps: string[] = [];
 
-  const scripts = content.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g);
-
+  // script
+  const scripts = content.matchAll(/<script[^>]*>([\s\S]*?)<\/script>/g);
   for (const m of scripts) {
-    const attrs = m[1];
-    const body = m[2];
-
-    if (attrs.includes("src")) {
-      const src = attrs.match(/src=["'](.+?)["']/)?.[1];
-      if (!src) continue;
-
-      const resolved = src.startsWith("/")
-        ? path.resolve(process.cwd(), src.slice(1))
-        : path.resolve(path.dirname(file), src);
-
-      parts.push(`import "${resolved}"`);
-      continue;
-    }
-
-    parts.push(body);
+    parts.push(m[1]);
   }
 
-  // handlers
-  for (const h of content.matchAll(/on:\w+=\{([^}]+)\}/g)) {
-    parts.push(`${h[1]}();`);
+  // on:click={...}
+  const handlers = content.matchAll(/on:\w+=\{([^}]+)\}/g);
+
+  for (const h of handlers) {
+    parts.push(h[1] + ";");
   }
 
-  return parts.join("\n");
+  return {
+    code: parts.join("\n"),
+    deps,
+  };
 }

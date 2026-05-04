@@ -31,12 +31,29 @@ export async function sync() {
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-      const { content, virtualFile } = processFile(file, raw);
+
+      const { content, virtualFile, deps } = processFile(file, raw);
+
       engine["ts"].updateFile(virtualFile, content);
       fileCache.push({ file: virtualFile, content });
-    } catch {
-      // ignore
-    }
+
+      // deps
+      for (const dep of deps) {
+        try {
+          const depRaw = await fs.readFile(dep, "utf-8");
+
+          const {
+            content: depContent,
+            virtualFile: depVirtual,
+          } = processFile(dep, depRaw);
+
+          engine["ts"].updateFile(depVirtual, depContent);
+          fileCache.push({ file: depVirtual, content: depContent });
+
+        } catch {}
+      }
+
+    } catch {}
   }
 
   for (const { file, content } of fileCache) {

@@ -1,15 +1,17 @@
 import path from "path";
+import { ParseResult } from "../../types";
 
-export function parseVue(content: string, file: string) {
+export function parseVue(content: string, file: string): ParseResult {
   const parts: string[] = [];
+  const deps: string[] = [];
 
+  // SCRIPT
   const scripts = content.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g);
 
   for (const m of scripts) {
     const attrs = m[1];
     const body = m[2];
 
-    // src
     if (attrs.includes("src")) {
       const src = attrs.match(/src=["'](.+?)["']/)?.[1];
       if (!src) continue;
@@ -18,11 +20,10 @@ export function parseVue(content: string, file: string) {
         ? path.resolve(process.cwd(), src.slice(1))
         : path.resolve(path.dirname(file), src);
 
-      parts.push(`import "${resolved}"`);
+      deps.push(resolved);
       continue;
     }
 
-    // script setup
     parts.push(body);
   }
 
@@ -33,14 +34,25 @@ export function parseVue(content: string, file: string) {
   template = template.replace(/<!--[\s\S]*?-->/g, "");
 
   // @click
-  for (const m of template.matchAll(/@[\w-]+="([^"]+)"/g)) {
-    parts.push(`${m[1]}();`);
+  const handlers = template.matchAll(/@[\w-]+="([^"]+)"/g);
+  for (const h of handlers) {
+    parts.push(h[1] + ";");
   }
 
   // v-on
-  for (const m of template.matchAll(/v-on:[\w-]+="([^"]+)"/g)) {
-    parts.push(`${m[1]}();`);
+  const vOn = template.matchAll(/v-on:[\w-]+="([^"]+)"/g);
+  for (const v of vOn) {
+    parts.push(v[1] + ";");
   }
 
-  return parts.join("\n");
+  // :prop
+  const binds = template.matchAll(/:[\w-]+="([^"]+)"/g);
+  for (const b of binds) {
+    parts.push(b[1] + ";");
+  }
+
+  return {
+    code: parts.join("\n"),
+    deps,
+  };
 }

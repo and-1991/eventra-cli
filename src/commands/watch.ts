@@ -60,9 +60,25 @@ export async function watch() {
     for (const file of batch) {
       try {
         const raw = await fs.readFile(file, "utf-8");
-        const { content, virtualFile } = processFile(file, raw);
+
+        const { content, virtualFile, deps } = processFile(file, raw);
 
         engine.updateFile(virtualFile, content, config);
+
+        // deps
+        for (const dep of deps) {
+          try {
+            const depRaw = await fs.readFile(dep, "utf-8");
+
+            const {
+              content: depContent,
+              virtualFile: depVirtual,
+            } = processFile(dep, depRaw);
+
+            engine.updateFile(depVirtual, depContent, config);
+
+          } catch {}
+        }
 
       } catch {
         console.log(chalk.gray(`skip: ${file}`));

@@ -3,7 +3,10 @@ import { parseVue } from "./vue";
 import { parseSvelte } from "./svelte";
 import { parseAstro } from "./astro";
 
-const fallback: Parser = (content) => content;
+const fallback: Parser = (content) => ({
+  code: content,
+  deps: [],
+});
 
 export function detectParser(file: string): Parser {
   const f = file.toLowerCase();

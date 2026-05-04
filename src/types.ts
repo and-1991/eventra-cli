@@ -1,6 +1,12 @@
 export type ScanMode = "strict" | "hybrid" | "discovery";
 
-export type Parser = (content: string, file: string) => string;
+export type ParseResult = {
+  code: string;
+  deps: string[];
+};
+
+export type Parser = (content: string, file: string) => ParseResult;
+
 
 export type ComponentWrapper = {
   name: string;

@@ -1,18 +1,20 @@
-import path from "path";
 import { detectParser } from "./parsers/router";
 
 export function processFile(file: string, content: string) {
-  const abs = path.resolve(file);
+  const parser = detectParser(file);
 
-  const parser = detectParser(abs);
-  content = parser(content, abs);
+  const res = parser(content, file);
 
-  const isVirtual =
+  const virtualFile =
     file.endsWith(".vue") ||
     file.endsWith(".svelte") ||
-    file.endsWith(".astro");
+    file.endsWith(".astro")
+      ? file + ".tsx"
+      : file;
 
-  const virtualFile = isVirtual ? abs + ".tsx" : abs;
-
-  return { content, virtualFile };
+  return {
+    content: res.code,
+    virtualFile,
+    deps: res.deps,
+  };
 }

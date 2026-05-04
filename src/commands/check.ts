@@ -25,16 +25,26 @@ export async function check({ fix = false }: { fix?: boolean }) {
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-      const { content, virtualFile } = processFile(file, raw);
+
+      const { content, virtualFile, deps } = processFile(file, raw);
 
       engine.scanFile(virtualFile, content, config);
 
+      for (const dep of deps) {
+        try {
+          const depRaw = await fs.readFile(dep, "utf-8");
+
+          const {
+            content: depContent,
+            virtualFile: depVirtual,
+          } = processFile(dep, depRaw);
+
+          engine.scanFile(depVirtual, depContent, config);
+        } catch {}
+      }
+
     } catch (err) {
       console.log(chalk.yellow(`Skipped: ${file}`));
-
-      if (err instanceof Error) {
-        console.log(chalk.gray(err.message));
-      }
     }
   }
 
