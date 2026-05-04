@@ -1,5 +1,5 @@
 import path from "path";
-import { parseUniversal } from "./parsers/universal";
+import { parseUniversal } from "./universal";
 
 export function processFile(file: string, content: string) {
   const { code, deps } = parseUniversal(content, file);

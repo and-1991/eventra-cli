@@ -1,6 +1,12 @@
 import path from "path";
-import { ParseResult } from "../../types";
+import { ParseResult } from "../types";
 
+/**
+ * exact JS:
+ * - {...}
+ * - attr="..."
+ * - Vue / Svelte handlers
+ */
 function extractJS(input: string): string[] {
   const result: string[] = [];
 
@@ -29,7 +35,7 @@ function extractJS(input: string): string[] {
       continue;
     }
 
-    //  { ... }
+    // { ... }
     if (ch === "{") {
       let depth = 1;
       let j = i + 1;
@@ -68,7 +74,7 @@ function extractJS(input: string): string[] {
       }
     }
 
-    //  attr="..."
+    // attr="..."
     if (ch === "=" && (input[i + 1] === '"' || input[i + 1] === "'")) {
       const quote = input[i + 1];
       let j = i + 2;
@@ -98,7 +104,7 @@ function extractJS(input: string): string[] {
     i++;
   }
 
-  // Vue / Svelte handlers
+  // Vue / Svelte / JSX handlers
   const extra = [
     /@[\w-]+\s*=\s*["']([\s\S]*?)["']/g,
     /v-on:[\w-]+\s*=\s*["']([\s\S]*?)["']/g,
@@ -117,12 +123,38 @@ function extractJS(input: string): string[] {
   return result;
 }
 
+function extractLooseJS(input: string): string[] {
+  const result: string[] = [];
+
+  const lines = input.split("\n");
+
+  for (const line of lines) {
+    const l = line.trim();
+
+    if (!l) continue;
+    if (l.startsWith("<")) continue;
+
+    if (
+      l.includes("(") ||
+      l.includes("=") ||
+      l.includes("=>") ||
+      l.includes("function") ||
+      l.includes("track")
+    ) {
+      result.push(l);
+    }
+  }
+
+  return result;
+}
+
 /**
+ * Universal:
  * - Astro
  * - Vue
  * - Svelte
- * - HTML + JS
- * - SSR / mixed files
+ * - React / JSX
+ * - Node / backend
  */
 
 export function parseUniversal(
@@ -132,7 +164,7 @@ export function parseUniversal(
   const parts: string[] = [];
   const deps: string[] = [];
 
-  //  Astro frontmatter
+  //  Astro frontmatter ---
   const fm = content.match(/^---([\s\S]*?)---/);
   if (fm?.[1]) parts.push(fm[1]);
 
@@ -160,17 +192,16 @@ export function parseUniversal(
     if (m[1].trim()) parts.push(m[1]);
   }
 
-  // JS <script>
   const noScripts = content.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
 
-  const noHtml = noScripts
-    .replace(/<[^>]+>/g, "\n")
-    .replace(/\n+/g, "\n");
+  const loose = extractLooseJS(noScripts);
 
-  if (noHtml.trim()) parts.push(noHtml);
+  for (const l of loose) {
+    parts.push(l);
+  }
 
   // expressions
   const extracted = extractJS(content);
