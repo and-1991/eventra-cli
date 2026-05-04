@@ -126,6 +126,7 @@ export function scanSource(
       const isTracking =
         isKnownWrapper ||
         TRACKING_NAMES.has(name) ||
+        name.startsWith("$") || // NUXT FIX
         (isAutoWrapper &&
           resolvedFn &&
           !isExternalFile(resolvedFn.getSourceFile().fileName));
@@ -139,7 +140,6 @@ export function scanSource(
         detectedFunctionWrappers.add(name);
       }
 
-      // paramMap (chain support)
       const paramMap = new Map(inheritedParamMap ?? []);
 
       if (resolvedFn && ts.isFunctionLike(resolvedFn)) {
@@ -155,6 +155,7 @@ export function scanSource(
 
       let handled = false;
 
+      // MAIN RESOLVE
       if (resolvedFn) {
         const idx = findTrackParamIndex(resolvedFn);
 
@@ -173,6 +174,7 @@ export function scanSource(
         }
       }
 
+      // FALLBACK
       if (!handled) {
         for (const arg of node.arguments) {
           const res = resolveNodeValue(arg, checker, paramMap);
@@ -183,7 +185,7 @@ export function scanSource(
         }
       }
 
-      // cross-file with paramMap
+      // CROSS FILE
       if (resolvedFn) {
         const sf = resolvedFn.getSourceFile();
 

@@ -25,7 +25,6 @@ export async function check({ fix = false }: { fix?: boolean }) {
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-
       const { content, virtualFile } = processFile(file, raw);
 
       engine.scanFile(virtualFile, content, config);
@@ -45,31 +44,45 @@ export async function check({ fix = false }: { fix?: boolean }) {
   const newEvents = [...found].filter(e => !known.has(e));
   const removed = [...known].filter(e => !found.has(e));
 
+  // FIX MODE
   if (fix) {
-    const merged = new Set(config.events ?? []);
+    const next = new Set<string>();
 
-    newEvents.forEach(e => {
-      merged.add(e);
-      console.log(chalk.green(`+ ${e}`));
-    });
+    found.forEach(e => next.add(e));
 
-    config.events = [...merged].sort();
+    newEvents.forEach(e =>
+      console.log(chalk.green(`+ ${e}`))
+    );
+
+    removed.forEach(e =>
+      console.log(chalk.red(`- ${e}`))
+    );
+
+    config.events = [...next].sort();
 
     await saveConfig(config);
 
-    console.log(chalk.green("\nFixed"));
+    console.log(
+      chalk.green(`\nSynced (${config.events.length} events)`)
+    );
+
     return;
   }
 
+  // CHECK MODE
   if (newEvents.length || removed.length) {
     if (newEvents.length) {
       console.log(chalk.red("\nNew events:"));
-      newEvents.forEach(e => console.log(chalk.red(`+ ${e}`)));
+      newEvents.forEach(e =>
+        console.log(chalk.red(`+ ${e}`))
+      );
     }
 
     if (removed.length) {
       console.log(chalk.yellow("\nRemoved events:"));
-      removed.forEach(e => console.log(chalk.yellow(`- ${e}`)));
+      removed.forEach(e =>
+        console.log(chalk.yellow(`- ${e}`))
+      );
     }
 
     process.exit(1);

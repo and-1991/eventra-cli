@@ -1,21 +1,18 @@
+import path from "path";
 import { detectParser } from "./parsers/router";
-import { parseVue } from "./parsers/vue";
-import { parseSvelte } from "./parsers/svelte";
-import { parseAstro } from "./parsers/astro";
 
 export function processFile(file: string, content: string) {
-  const parser = detectParser(file);
+  const abs = path.resolve(file);
 
-  if (parser === "vue") content = parseVue(content);
-  if (parser === "svelte") content = parseSvelte(content);
-  if (parser === "astro") content = parseAstro(content);
+  const parser = detectParser(abs);
+  content = parser(content, abs);
 
-  const virtualFile =
+  const isVirtual =
     file.endsWith(".vue") ||
     file.endsWith(".svelte") ||
-    file.endsWith(".astro")
-      ? file + ".tsx"
-      : file;
+    file.endsWith(".astro");
+
+  const virtualFile = isVirtual ? abs + ".tsx" : abs;
 
   return { content, virtualFile };
 }

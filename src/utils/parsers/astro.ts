@@ -1,4 +1,6 @@
-export function parseAstro(content: string) {
+import path from "path";
+
+export function parseAstro(content: string, file: string) {
   const parts: string[] = [];
 
   // frontmatter
@@ -7,7 +9,6 @@ export function parseAstro(content: string) {
     parts.push(frontmatter[1]);
   }
 
-  // scripts
   const scripts = content.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g);
 
   for (const m of scripts) {
@@ -16,19 +17,16 @@ export function parseAstro(content: string) {
 
     if (attrs.includes("src")) {
       const src = attrs.match(/src=["'](.+?)["']/)?.[1];
-      if (src) {
-        parts.push(`import "${src}"`);
-      }
+      if (!src) continue;
+
+      const resolved = src.startsWith("/")
+        ? path.resolve(process.cwd(), src.slice(1))
+        : path.resolve(path.dirname(file), src);
+
+      parts.push(`import "${resolved}"`);
     } else {
       parts.push(body);
     }
-  }
-
-  // inline handlers
-  const inlineJS = content.matchAll(/on\w+="([^"]+)"/g);
-
-  for (const m of inlineJS) {
-    parts.push(m[1] + ";");
   }
 
   return parts.join("\n");

@@ -1,5 +1,7 @@
 export type ScanMode = "strict" | "hybrid" | "discovery";
 
+export type Parser = (content: string, file: string) => string;
+
 export type ComponentWrapper = {
   name: string;
   prop: string;
@@ -22,9 +24,4 @@ export type EventraConfig = {
     include: string[];
     exclude: string[];
   };
-};
-
-export type ResolveResult = {
-  values: string[];
-  dynamic: boolean;
 };

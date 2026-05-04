@@ -1,47 +1,45 @@
-export function parseVue(content: string) {
+import path from "path";
+
+export function parseVue(content: string, file: string) {
   const parts: string[] = [];
 
-  // --- SCRIPT ---
   const scripts = content.matchAll(/<script([^>]*)>([\s\S]*?)<\/script>/g);
 
   for (const m of scripts) {
     const attrs = m[1];
     const body = m[2];
 
+    // src
     if (attrs.includes("src")) {
       const src = attrs.match(/src=["'](.+?)["']/)?.[1];
-      if (src) {
-        parts.push(`import "${src}"`);
-      }
+      if (!src) continue;
+
+      const resolved = src.startsWith("/")
+        ? path.resolve(process.cwd(), src.slice(1))
+        : path.resolve(path.dirname(file), src);
+
+      parts.push(`import "${resolved}"`);
       continue;
     }
 
+    // script setup
     parts.push(body);
   }
 
-  // --- TEMPLATE ---
+  // TEMPLATE
   const templateMatch = content.match(/<template[^>]*>([\s\S]*?)<\/template>/);
   let template = templateMatch?.[1] ?? "";
 
-  // remove comments
   template = template.replace(/<!--[\s\S]*?-->/g, "");
 
-  // --- event handlers (@click)
-  const handlers = template.matchAll(/@[\w-]+="([^"]+)"/g);
-  for (const h of handlers) {
-    parts.push(h[1] + ";");
+  // @click
+  for (const m of template.matchAll(/@[\w-]+="([^"]+)"/g)) {
+    parts.push(`${m[1]}();`);
   }
 
-  // --- v-on
-  const vOn = template.matchAll(/v-on:[\w-]+="([^"]+)"/g);
-  for (const v of vOn) {
-    parts.push(v[1] + ";");
-  }
-
-  // --- :prop bindings
-  const binds = template.matchAll(/:[\w-]+="([^"]+)"/g);
-  for (const b of binds) {
-    parts.push(b[1] + ";");
+  // v-on
+  for (const m of template.matchAll(/v-on:[\w-]+="([^"]+)"/g)) {
+    parts.push(`${m[1]}();`);
   }
 
   return parts.join("\n");
