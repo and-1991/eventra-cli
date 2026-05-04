@@ -9,23 +9,29 @@
 [![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/npm/l/@eventra_dev/eventra-cli)]()
 
-Eventra CLI automatically discovers feature usage events in your codebase and syncs them with Eventra.
+Eventra CLI automatically discovers and tracks event usage across your codebase — even through abstractions like wrappers, variables, and cross-file calls.
 
 ---
 
-# Installation
+## Overview
+
+Eventra scans your codebase using a TypeScript-powered engine and extracts event usage — even through abstractions like wrappers, variables, and cross-file calls.
+
+It requires no runtime instrumentation and fits naturally into CI/CD workflows.
+
+---
+
+## Installation
 
 ```bash
 npm install -D @eventra_dev/eventra-cli
-```
-
-```bash
+# or
 pnpm add -D @eventra_dev/eventra-cli
 ```
 
 ---
 
-# Quick Start
+## Quick Start
 
 ```bash
 eventra init
@@ -36,22 +42,43 @@ eventra send
 
 ---
 
-# Commands
+## How it works
 
-## eventra init
+1. Parses your project using the TypeScript AST
+2. Resolves function calls, imports, and dependencies
+3. Tracks event propagation through variables and wrappers
+4. Extracts event names and aggregates them
 
+No runtime required. No SDK needed.
+
+---
+
+## Why Eventra
+
+- Prevent missing or inconsistent event tracking
+- Keep your analytics schema in sync with code
+- Detect dead or unused events
+- Integrate validation into CI pipelines
+
+---
+
+## Commands
+
+### `eventra init`
 Creates `eventra.json` configuration file.
 
 ---
 
-## eventra sync
+### `eventra sync`
+Scans your project and updates the list of detected events.
 
-Scans your project and discovers events automatically.
+#### Supports
 
-### Supports:
-
-- track("event")
-- analytics.track("event")
+- Direct calls
+```ts
+track("event")
+analytics.track("event")
+```
 
 - Variables
 ```ts
@@ -74,7 +101,7 @@ track(`click_${type}`)
 track(condition ? "a" : "b")
 ```
 
-- Object format
+- Object payloads
 ```ts
 track({ event: "click" })
 ```
@@ -88,36 +115,27 @@ const trackFeature = (name: string) => {
 trackFeature("click")
 ```
 
-- Multi-argument wrappers
-```ts
-trackFeature("test", "click")
-```
-
-- Cross-file tracking
-
-- Vue / Svelte / Astro support
+- Cross-file event resolution
+- Framework templates (Vue, Svelte, Astro)
 
 ---
 
-## eventra check
-
-Validate events without modifying config.
+### `eventra check`
+Validates detected events against config.
 
 ```bash
 eventra check
 ```
 
-### Detects:
-
+Detects:
 - New events
 - Removed events
-- Dynamic values
+- Inconsistent tracking usage
 
 ---
 
-## eventra check --fix
-
-Auto-fix mode.
+### `eventra check --fix`
+Automatically updates config to match detected events.
 
 ```bash
 eventra check --fix
@@ -125,9 +143,8 @@ eventra check --fix
 
 ---
 
-## eventra watch
-
-Real-time event detection.
+### `eventra watch`
+Runs in watch mode and updates events in real time.
 
 ```bash
 eventra watch
@@ -135,9 +152,8 @@ eventra watch
 
 ---
 
-## eventra send
-
-Send events to backend.
+### `eventra send`
+Sends events to Eventra backend.
 
 ```bash
 eventra send
@@ -145,11 +161,12 @@ eventra send
 
 ---
 
-# Configuration
+## Configuration
 
 ```json
 {
   "apiKey": "",
+  "endpoint": "",
   "events": [],
   "wrappers": [],
   "functionWrappers": [],
@@ -163,25 +180,20 @@ eventra send
 
 ---
 
-# Supported Frameworks
+## Supported Environments
 
-- React
-- Vue
-- Svelte
-- Astro
-- Node.js
-- Express
-- NestJS
-- Fastify
+Eventra works with **any JavaScript or TypeScript codebase**.
+
+No framework limitations.
 
 ---
 
-# Requirements
+## Requirements
 
 - Node.js 18+
 
 ---
 
-# License
+## License
 
 MIT
