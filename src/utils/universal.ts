@@ -1,7 +1,7 @@
 import path from "path";
 import { ParseResult } from "../types";
 
-// Strip comments (HTML + JS)
+// Remove comments
 function stripComments(input: string): string {
   return input
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -9,63 +9,13 @@ function stripComments(input: string): string {
     .replace(/\/\/.*$/gm, "");
 }
 
-// Extract JS expressions inside {}
-function extractJS(input: string): string[] {
-  const result: string[] = [];
-
-  let i = 0;
-  const len = input.length;
-
-  let inString: '"' | "'" | "`" | null = null;
-  let escape = false;
-
-  while (i < len) {
-    const ch = input[i];
-
-    if (inString) {
-      if (escape) escape = false;
-      else if (ch === "\\") escape = true;
-      else if (ch === inString) inString = null;
-      i++;
-      continue;
-    }
-
-    if (ch === '"' || ch === "'" || ch === "`") {
-      inString = ch;
-      i++;
-      continue;
-    }
-
-    if (ch === "{") {
-      let depth = 1;
-      let j = i + 1;
-
-      while (j < len && depth > 0) {
-        if (input[j] === "{") depth++;
-        else if (input[j] === "}") depth--;
-        j++;
-      }
-
-      if (depth === 0) {
-        const expr = input.slice(i + 1, j - 1).trim();
-
-        if (expr && /[a-zA-Z0-9_$]\s*\(/.test(expr)) {
-          result.push(expr);
-        }
-
-        i = j;
-        continue;
-      }
-    }
-
-    i++;
-  }
-
-  return result;
+// Basic filter
+function looksLikeTracking(code: string) {
+  return /track/i.test(code);
 }
 
-// Extract inline HTML handlers
-function extractInlineHandlers(input: string): string[] {
+// HTML inline handlers (onclick="")
+function extractHTMLHandlers(input: string): string[] {
   const result: string[] = [];
 
   const matches = input.matchAll(
@@ -73,16 +23,64 @@ function extractInlineHandlers(input: string): string[] {
   );
 
   for (const m of matches) {
-    const code = m[1];
-    if (/[a-zA-Z0-9_$]\s*\(/.test(code)) {
-      result.push(code);
+    if (looksLikeTracking(m[1])) {
+      result.push(m[1]);
     }
   }
 
   return result;
 }
 
-// Extract dynamic imports
+// Vue handlers (@click / v-on)
+function extractVueHandlers(input: string): string[] {
+  const result: string[] = [];
+
+  const matches = input.matchAll(
+    /(?:@|v-on:)[\w:-]+\s*=\s*["']([^"']+)["']/g
+  );
+
+  for (const m of matches) {
+    if (looksLikeTracking(m[1])) {
+      result.push(m[1]);
+    }
+  }
+
+  return result;
+}
+
+// Svelte handlers (on:click)
+function extractSvelteHandlers(input: string): string[] {
+  const result: string[] = [];
+
+  const matches = input.matchAll(
+    /\bon:[\w]+\s*=\s*{([^}]+)}/g
+  );
+
+  for (const m of matches) {
+    if (looksLikeTracking(m[1])) {
+      result.push(m[1]);
+    }
+  }
+
+  return result;
+}
+
+// JSX / template { ... }
+function extractJSExpressions(input: string): string[] {
+  const result: string[] = [];
+
+  const matches = input.matchAll(/\{([^}]+)\}/g);
+
+  for (const m of matches) {
+    if (looksLikeTracking(m[1])) {
+      result.push(m[1]);
+    }
+  }
+
+  return result;
+}
+
+// dynamic import()
 function extractDynamicImports(
   input: string,
   file: string
@@ -102,15 +100,13 @@ function extractDynamicImports(
       : path.resolve(path.dirname(file), mod);
 
     deps.push(resolved);
-    calls.push(`import("${mod}")`);
+
+    if (looksLikeTracking(mod)) {
+      calls.push(`import("${mod}")`);
+    }
   }
 
   return { deps, calls };
-}
-
-// Filter only probable tracking-related code
-function isProbablyTracking(code: string): boolean {
-  return /track|event|analytics/i.test(code);
 }
 
 // UNIVERSAL PARSER
@@ -150,39 +146,29 @@ export function parseUniversal(
   );
 
   for (const m of scripts) {
-    const attrs = m[1];
-
-    if (/type=["']application\/json/.test(attrs)) continue;
-
     if (m[2].trim()) {
       parts.push(m[2]);
     }
   }
 
-  // REMOVE SCRIPTS → TEMPLATE PART
+  // TEMPLATE PART
   const noScripts = clean.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
 
-  // INLINE HANDLERS
-  parts.push(
-    ...extractInlineHandlers(noScripts).filter(isProbablyTracking)
-  );
+  // handlers
+  parts.push(...extractHTMLHandlers(noScripts));
+  parts.push(...extractVueHandlers(noScripts));
+  parts.push(...extractSvelteHandlers(noScripts));
 
-  // DYNAMIC IMPORTS
+  // JSX / Astro / Vue expressions
+  parts.push(...extractJSExpressions(clean));
+
+  // dynamic imports
   const dyn = extractDynamicImports(clean, file);
   deps.push(...dyn.deps);
-  parts.push(...dyn.calls.filter(isProbablyTracking));
-
-  // EXPRESSIONS
-  const extracted = extractJS(clean);
-
-  for (const e of extracted) {
-    if (isProbablyTracking(e)) {
-      parts.push(e + ";");
-    }
-  }
+  parts.push(...dyn.calls);
 
   return {
     code: [...new Set(parts)].join("\n"),

@@ -1,11 +1,9 @@
 import ts from "typescript";
 import { resolveNodeValue } from "./resolver";
 import { resolveFunctionFromCall } from "./callResolver";
-import { resolveExportedSymbol } from "./exportResolver";
 import { findTrackParamIndex } from "./functionAnalyzer";
 import { EventraConfig } from "../types";
 import { isExternalFile } from "./boundary";
-import { isTrackingCall } from "./trackingDetector";
 
 function getCallName(expr: ts.Expression): string {
   if (ts.isIdentifier(expr)) return expr.text;
@@ -23,42 +21,6 @@ function isValidEvent(v: string) {
   );
 }
 
-function resolveFunctionDeep(
-  expr: ts.Expression,
-  checker: ts.TypeChecker
-): ts.FunctionLikeDeclaration | null {
-  let fn = resolveFunctionFromCall(expr, checker);
-  if (fn) return fn;
-
-  let symbol = checker.getSymbolAtLocation(expr);
-
-  if (!symbol) return null;
-
-  if (symbol.flags & ts.SymbolFlags.Alias) {
-    symbol = checker.getAliasedSymbol(symbol);
-  }
-
-  const resolvedSymbol =
-    resolveExportedSymbol(symbol, checker) ?? symbol;
-
-  for (const decl of resolvedSymbol.getDeclarations() ?? []) {
-    if (ts.isFunctionDeclaration(decl)) {
-      return decl;
-    }
-
-    if (
-      ts.isVariableDeclaration(decl) &&
-      decl.initializer &&
-      (ts.isArrowFunction(decl.initializer) ||
-        ts.isFunctionExpression(decl.initializer))
-    ) {
-      return decl.initializer;
-    }
-  }
-
-  return null;
-}
-
 export type ScanResult = {
   events: Set<string>;
   detectedFunctionWrappers: Set<string>;
@@ -70,7 +32,6 @@ export function scanSource(
   checker: ts.TypeChecker,
   config: EventraConfig,
   visited = new Set<string>(),
-  depth = 0,
   inheritedParamMap?: Map<string, ts.Expression>
 ): ScanResult {
   const events = new Set<string>();
@@ -84,7 +45,6 @@ export function scanSource(
   visited.add(source.fileName);
 
   function visit(node: ts.Node) {
-    // CALL EXPRESSIONS
     if (ts.isCallExpression(node)) {
       const name = getCallName(node.expression);
 
@@ -92,55 +52,28 @@ export function scanSource(
         w => w.name === name
       );
 
-      const isTrackingByType = isTrackingCall(node, checker);
-
-      const resolvedFn = resolveFunctionDeep(
-        node.expression,
-        checker
-      );
+      const resolvedFn = resolveFunctionFromCall(node.expression, checker);
 
       const isAutoWrapper =
-        resolvedFn && findTrackParamIndex(resolvedFn) !== null;
+        !!resolvedFn && findTrackParamIndex(resolvedFn) !== null;
 
-      let isTracking =
+      const isTracking =
+        name === "track" ||
         isKnownWrapper ||
-        isTrackingByType ||
-        name.startsWith("$") ||
         (isAutoWrapper &&
           resolvedFn &&
-          resolvedFn.getSourceFile &&
           !isExternalFile(resolvedFn.getSourceFile().fileName));
-
-      if (!isTracking) {
-        if (
-          ts.isPropertyAccessExpression(node.expression) &&
-          node.expression.name.text === "track"
-        ) {
-          isTracking = true;
-        } else if (
-          ts.isIdentifier(node.expression) &&
-          node.expression.text === "track"
-        ) {
-          isTracking = true;
-        }
-      }
 
       if (!isTracking) {
         ts.forEachChild(node, visit);
         return;
       }
 
-      // DETECT WRAPPER
-      if (
-        !isKnownWrapper &&
-        isAutoWrapper &&
-        !isTrackingByType &&
-        !name.startsWith("track")
-      ) {
+      // авто-детект wrapper
+      if (!isKnownWrapper && isAutoWrapper && name !== "track") {
         detectedFunctionWrappers.add(name);
       }
 
-      // PARAM MAP
       const paramMap = new Map(inheritedParamMap ?? []);
 
       if (resolvedFn && ts.isFunctionLike(resolvedFn)) {
@@ -154,7 +87,7 @@ export function scanSource(
         });
       }
 
-      // STRICT EVENT RESOLVE
+      // ✅ ТОЛЬКО правильный аргумент
       if (resolvedFn) {
         const idx = findTrackParamIndex(resolvedFn);
 
@@ -165,23 +98,24 @@ export function scanSource(
             paramMap
           );
 
-          res.values.forEach(v => {
-            if (isValidEvent(v)) events.add(v);
-          });
+          for (const v of res.values) {
+            if (isValidEvent(v)) {
+              events.add(v);
+            }
+          }
         }
       }
 
-      // CROSS-FILE
+      // CROSS FILE
       if (resolvedFn) {
-        const sf = resolvedFn.getSourceFile?.();
+        const sf = resolvedFn.getSourceFile();
 
-        if (sf && !visited.has(sf.fileName)) {
+        if (!visited.has(sf.fileName)) {
           const res = scanSource(
             sf,
             checker,
             config,
             visited,
-            depth + 1,
             paramMap
           );
 

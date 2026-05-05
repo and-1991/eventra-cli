@@ -8,31 +8,13 @@ export function findTrackParamIndex(
   fn.parameters.forEach((p, i) => {
     if (ts.isIdentifier(p.name)) {
       paramIndex.set(p.name.text, i);
-
-      // default param: (name = "x")
-      if (p.initializer && ts.isStringLiteral(p.initializer)) {
-        if (i === 0) return 0;
-      }
     }
   });
 
   let result: number | null = null;
 
-  function unwrap(node: ts.Expression): ts.Expression {
-    // as / parentheses
-    while (
-      ts.isAsExpression(node) ||
-      ts.isParenthesizedExpression(node)
-      ) {
-      node = node.expression;
-    }
-    return node;
-  }
-
-  function checkArg(arg: ts.Expression) {
-    arg = unwrap(arg);
-
-    // identifier → param
+  function check(arg: ts.Expression): boolean {
+    // identifier
     if (ts.isIdentifier(arg)) {
       const idx = paramIndex.get(arg.text);
       if (idx !== undefined) {
@@ -41,13 +23,7 @@ export function findTrackParamIndex(
       }
     }
 
-    // string literal
-    if (ts.isStringLiteral(arg)) {
-      result = 0;
-      return true;
-    }
-
-    // template `${name}`
+    // template
     if (ts.isTemplateExpression(arg)) {
       for (const span of arg.templateSpans) {
         if (ts.isIdentifier(span.expression)) {
@@ -58,8 +34,6 @@ export function findTrackParamIndex(
           }
         }
       }
-      result = 0;
-      return true;
     }
 
     // object { event: name }
@@ -67,18 +41,11 @@ export function findTrackParamIndex(
       for (const prop of arg.properties) {
         if (!ts.isPropertyAssignment(prop)) continue;
 
-        const name = prop.name.getText();
+        const key = prop.name.getText();
 
-        if (["event", "name", "type"].includes(name)) {
-          return checkArg(prop.initializer);
+        if (["event", "name", "type"].includes(key)) {
+          return check(prop.initializer);
         }
-      }
-    }
-
-    // call: String(name)
-    if (ts.isCallExpression(arg)) {
-      for (const inner of arg.arguments) {
-        if (checkArg(inner)) return true;
       }
     }
 
@@ -89,24 +56,17 @@ export function findTrackParamIndex(
     if (result !== null) return;
 
     if (ts.isCallExpression(node)) {
-      let isTrackCall = false;
+      const expr = node.expression;
 
-      if (ts.isPropertyAccessExpression(node.expression)) {
-        if (node.expression.name.text === "track") {
-          isTrackCall = true;
-        }
-      }
+      const isTrack =
+        (ts.isIdentifier(expr) && expr.text === "track") ||
+        (ts.isPropertyAccessExpression(expr) &&
+          expr.name.text === "track");
 
-      if (ts.isIdentifier(node.expression)) {
-        if (node.expression.text === "track") {
-          isTrackCall = true;
-        }
-      }
+      if (!isTrack) return;
 
-      if (isTrackCall) {
-        for (const arg of node.arguments) {
-          if (checkArg(arg)) return;
-        }
+      for (const arg of node.arguments) {
+        if (check(arg)) return;
       }
     }
 
