@@ -243,7 +243,7 @@ export function parseUniversal(
   parts.push(...dyn.calls);
 
   return {
-    code: [...new Set(parts)].join("\n"),
+    code: content,
     deps: [...new Set(deps.filter(Boolean))],
   };
 }

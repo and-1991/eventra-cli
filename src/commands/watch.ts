@@ -9,92 +9,39 @@ import { EventraEngine } from "../engine/engine";
 import { processFile } from "../utils/processFile";
 import { getVirtualFile } from "../utils/getVirtualFile";
 
-type QueueItem = {
-  real: string;
-  virtual: string;
-};
-
-function normalize(file: string) {
-  return path.resolve(file).replace(/\\/g, "/");
-}
-
 export async function watch() {
   const config = await loadConfig();
   if (!config) return;
 
   console.log(chalk.blue("Watching...\n"));
 
+  const engine = new EventraEngine(process.cwd());
+  const fileDeps = new Map<string, Set<string>>();
+  const cache = new Map<string, { content: string; deps: string[] }>();
+  const watchedDeps = new Set<string>();
+
+  const normalize = (f: string) =>
+    path.resolve(f).replace(/\\/g, "/");
+
+  // INITIAL LOAD
   const files = await fg(config.sync.include, {
     ignore: config.sync.exclude,
     absolute: true,
   });
 
-  const engine = new EventraEngine(process.cwd());
-  const watchedDeps = new Set<string>();
-
-  const cache = new Map<
-    string,
-    { content: string; deps: string[] }
-  >();
-
-  const toScan = new Set<string>();
-
-  // COLLECT + CACHE
   for (const file of files) {
     try {
       const abs = normalize(file);
       const raw = await fs.readFile(abs, "utf-8");
 
-      if (raw.length > 2_000_000) continue;
-
       const parsed = processFile(abs, raw);
 
       cache.set(abs, parsed);
-      toScan.add(abs);
 
-      for (const dep of parsed.deps) {
-        toScan.add(normalize(dep));
-      }
+      engine.preloadFile(getVirtualFile(abs), parsed.content);
+      engine.updateFile(getVirtualFile(abs), parsed.content, config);
 
-    } catch {
-      console.log(chalk.gray(`skip: ${file}`));
-    }
-  }
-
-  // PRELOAD
-  for (const file of toScan) {
-    try {
-      let parsed = cache.get(file);
-
-      if (!parsed) {
-        const raw = await fs.readFile(file, "utf-8");
-        parsed = processFile(file, raw);
-        cache.set(file, parsed);
-      }
-
-      const virtual = getVirtualFile(file);
-      engine.preloadFile?.(virtual, parsed.content);
-
-    } catch {}
-  }
-
-  // INITIAL SCAN
-  for (const file of toScan) {
-    try {
-      let parsed = cache.get(file);
-
-      if (!parsed) {
-        const raw = await fs.readFile(file, "utf-8");
-        parsed = processFile(file, raw);
-      }
-
-      const virtual = getVirtualFile(file);
-
-      engine.scanFile(virtual, parsed.content, config);
-
-      for (const dep of parsed.deps) {
-        watchedDeps.add(normalize(dep));
-      }
+      fileDeps.set(abs, new Set(parsed.deps.map(d => normalize(d))));
 
     } catch {}
   }
@@ -102,152 +49,95 @@ export async function watch() {
   config.events = engine.getAllEvents().sort();
   await saveConfig(config);
 
-  console.log(
-    chalk.gray(`Initial: ${config.events.length} events\n`)
+  console.log(chalk.gray(`Initial: ${config.events.length}\n`));
+
+  // WATCHER
+  const watcher = chokidar.watch(
+    [...files.map(normalize), ...watchedDeps],
+    { ignoreInitial: true }
   );
 
-  // QUEUE
-  let locked = false;
-  const queued = new Map<string, QueueItem>();
+  const queue = new Map<string, boolean>();
   let timer: NodeJS.Timeout | null = null;
 
   const run = async () => {
-    if (locked) return;
-    locked = true;
+    const batch = [...queue.keys()];
+    queue.clear();
 
-    const batch = [...queued.values()];
-    queued.clear();
-
-    for (const item of batch) {
+    for (const file of batch) {
       try {
-        const raw = await fs.readFile(item.real, "utf-8");
+        const raw = await fs.readFile(file, "utf-8");
+        const parsed = processFile(file, raw);
 
-        if (raw.length > 2_000_000) continue;
+        cache.set(file, parsed);
 
-        const parsed = processFile(item.real, raw);
-        cache.set(item.real, parsed);
+        engine.updateFile(
+          getVirtualFile(file),
+          parsed.content,
+          config
+        );
 
-        engine.updateFile(item.virtual, parsed.content, config);
+        //dependency diff
+        const abs = normalize(file);
 
-        // DEPENDENCY DIFF
-        const nextDeps = new Set<string>();
-
-        for (const dep of parsed.deps) {
-          nextDeps.add(normalize(dep));
-        }
+        const prevDeps = fileDeps.get(abs) ?? new Set();
+        const nextDeps = new Set(parsed.deps.map(d => normalize(d)));
 
         // add new deps
         for (const dep of nextDeps) {
-          if (!watchedDeps.has(dep)) {
+          if (!prevDeps.has(dep)) {
             watcher.add(dep);
             watchedDeps.add(dep);
           }
         }
 
         // remove old deps
-        for (const dep of [...watchedDeps]) {
+        for (const dep of prevDeps) {
           if (!nextDeps.has(dep)) {
             watcher.unwatch(dep);
             watchedDeps.delete(dep);
           }
         }
 
-        // preload deps
-        for (const dep of nextDeps) {
-          try {
-            const raw = await fs.readFile(dep, "utf-8");
-            const parsedDep = processFile(dep, raw);
-
-            cache.set(dep, parsedDep);
-
-            const virtual = getVirtualFile(dep);
-
-            engine.updateFile(virtual, parsedDep.content, config);
-          } catch {}
-        }
+        fileDeps.set(abs, nextDeps);
 
       } catch {
-        console.log(chalk.gray(`skip: ${item.real}`));
+        console.log(chalk.gray(`skip: ${file}`));
       }
     }
 
-    // DIFF EVENTS
-    const next = engine.getAllEvents();
+    const next = engine.getAllEvents().sort();
+    config.events = next;
 
-    const added = next.filter(e => !config.events.includes(e));
-    const removed = config.events.filter(e => !next.includes(e));
+    await saveConfig(config);
 
-    if (added.length || removed.length) {
-      added.forEach(e => console.log(chalk.green(`+ ${e}`)));
-      removed.forEach(e => console.log(chalk.red(`- ${e}`)));
-
-      config.events = next.sort();
-      await saveConfig(config);
-
-      console.log(
-        chalk.gray(`Total: ${config.events.length} events\n`)
-      );
-    }
-
-    locked = false;
+    console.log(chalk.green(`Updated: ${next.length}`));
   };
 
-  // SCHEDULER
   const schedule = (file: string) => {
     const abs = normalize(file);
-    const virtual = getVirtualFile(abs);
-
-    console.log(chalk.gray(`change: ${file}`));
-
-    queued.set(abs, { real: abs, virtual });
+    queue.set(abs, true);
 
     if (timer) clearTimeout(timer);
     timer = setTimeout(run, 200);
   };
 
-  // WATCHER
-  const watcher = chokidar.watch(config.sync.include, {
-    ignored: config.sync.exclude,
-    ignoreInitial: true,
-    persistent: true,
-  });
-
   watcher
-    .on("add", schedule)
     .on("change", schedule)
+    .on("add", schedule)
     .on("unlink", async (file) => {
       const abs = normalize(file);
 
-      console.log(chalk.gray(`remove: ${file}`));
+      engine.removeFile(getVirtualFile(abs), config);
 
-      const virtual = getVirtualFile(abs);
-
-      engine.removeFile(virtual, config);
-
-      watcher.unwatch(abs);
-      watchedDeps.delete(abs);
-
-      const next = engine.getAllEvents();
-
-      config.events = next.sort();
+      const next = engine.getAllEvents().sort();
+      config.events = next;
       await saveConfig(config);
 
-      console.log(
-        chalk.gray(`Total: ${config.events.length} events\n`)
-      );
-    })
-    .on("error", (err) => {
-      console.error(chalk.red("Watcher error:"), err);
+      console.log(chalk.red(`Removed → ${next.length}`));
     });
 
-  // WATCH DEPS INIT
-  for (const dep of watchedDeps) {
-    watcher.add(dep);
-  }
-
-  // EXIT
   process.on("SIGINT", async () => {
-    console.log(chalk.yellow("\nStopping watcher..."));
     await watcher.close();
     process.exit(0);
   });

@@ -5,7 +5,7 @@ import { TSService } from "./languageService";
 import { scanSource } from "./scanner";
 import { DependencyGraph } from "./graph";
 import { hash } from "./hash";
-import {EventraConfig, ScanResult} from "../types";
+import { EventraConfig, ScanResult } from "../types";
 import { isExternalFile } from "./boundary";
 
 export class EventraEngine {
@@ -46,7 +46,7 @@ export class EventraEngine {
     }
   }
 
-  // SCAN FILE
+  // SCAN FILE (cached)
   scanFile(
     file: string,
     content: string,
@@ -71,7 +71,6 @@ export class EventraEngine {
       return this.empty();
     }
 
-    // update graph
     this.graph.update(file, source);
 
     const res = scanSource(
@@ -82,6 +81,7 @@ export class EventraEngine {
       undefined,
       this.wrapperCache
     );
+
     this.fileResults.set(file, res);
 
     return res;
@@ -92,9 +92,16 @@ export class EventraEngine {
     file: string,
     content: string,
     config: EventraConfig
-  ) {
-    this.wrapperCache.clear();
+  ): ScanResult {
     file = this.normalize(file);
+
+    // EARLY EXIT
+    if (this.fileHash.get(file) === hash(content)) {
+      return this.fileResults.get(file) ?? this.empty();
+    }
+
+    // invalidate wrapper cache
+    this.wrapperCache.clear();
 
     const res = this.scanFile(file, content, config);
 
@@ -103,6 +110,7 @@ export class EventraEngine {
     for (const dep of dependents) {
       const abs = this.normalize(dep);
 
+      if (abs === file) continue; // self-skip
       if (isExternalFile(abs)) continue;
 
       let depContent = this.ts.getFileContent(abs);
@@ -140,6 +148,7 @@ export class EventraEngine {
         undefined,
         this.wrapperCache
       );
+
       this.fileResults.set(abs, r);
     }
 
@@ -159,19 +168,22 @@ export class EventraEngine {
 
   // REMOVE FILE
   removeFile(file: string, config?: EventraConfig) {
-    this.wrapperCache.clear();
     file = this.normalize(file);
 
+    this.wrapperCache.clear();
+
     const dependents = this.graph.getAllDependentsDeep(file);
+
+    this.graph.remove(file);
 
     this.ts.removeFile(file);
     this.fileResults.delete(file);
     this.fileHash.delete(file);
-    this.graph.remove(file);
 
     for (const dep of dependents) {
       const abs = this.normalize(dep);
 
+      if (abs === file) continue;
       if (isExternalFile(abs)) continue;
 
       let content = this.ts.getFileContent(abs);
@@ -184,11 +196,7 @@ export class EventraEngine {
         }
       }
 
-      const h = hash(content);
-
-      if (this.fileHash.get(abs) === h) continue;
-
-      this.fileHash.set(abs, h);
+      this.fileHash.delete(abs);
 
       this.ts.updateFile(abs, content);
 

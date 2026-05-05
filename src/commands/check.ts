@@ -25,28 +25,20 @@ export async function check({ fix = false }: { fix?: boolean }) {
 
   const engine = new EventraEngine(process.cwd());
 
+  const cache = new Map<string, { content: string; deps: string[] }>();
   const toScan = new Set<string>();
 
-  const cache = new Map<
-    string,
-    { content: string; deps: string[] }
-  >();
-
-  // COLLECT + CACHE
+  // COLLECT
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-
       if (raw.length > 2_000_000) continue;
 
       const parsed = processFile(file, raw);
 
       cache.set(file, parsed);
       toScan.add(file);
-
-      for (const dep of parsed.deps) {
-        toScan.add(path.resolve(dep));
-      }
+      parsed.deps.forEach(dep => toScan.add(path.resolve(dep)));
 
     } catch {}
   }
@@ -54,17 +46,9 @@ export async function check({ fix = false }: { fix?: boolean }) {
   // PRELOAD
   for (const file of toScan) {
     try {
-      let parsed = cache.get(file);
-
-      if (!parsed) {
-        const raw = await fs.readFile(file, "utf-8");
-        parsed = processFile(file, raw);
-        cache.set(file, parsed);
-      }
-
-      const virtual = getVirtualFile(file);
-      engine.preloadFile(virtual, parsed.content);
-
+      const parsed = cache.get(file);
+      if (!parsed) continue;
+      engine.preloadFile(getVirtualFile(file), parsed.content);
     } catch {}
   }
 
@@ -74,49 +58,34 @@ export async function check({ fix = false }: { fix?: boolean }) {
       const parsed = cache.get(file);
       if (!parsed) continue;
 
-      const virtual = getVirtualFile(file);
-
-      engine.scanFile(virtual, parsed.content, config);
+      engine.scanFile(
+        getVirtualFile(file),
+        parsed.content,
+        config
+      );
 
     } catch {}
   }
 
-  // DIFF
   const found = new Set(engine.getAllEvents());
   const known = new Set(config.events ?? []);
 
-  const newEvents = [...found].filter(e => !known.has(e));
+  const added = [...found].filter(e => !known.has(e));
   const removed = [...known].filter(e => !found.has(e));
 
-  // FIX MODE
   if (fix) {
     config.events = [...found].sort();
     await saveConfig(config);
-
-    console.log(
-      chalk.green(`\nSynced (${config.events.length} events)`)
-    );
+    console.log(chalk.green("Synced"));
     return;
   }
 
-  // CHECK MODE
-  if (newEvents.length || removed.length) {
-    if (newEvents.length) {
-      console.log(chalk.red("\nNew events:"));
-      newEvents.forEach(e =>
-        console.log(chalk.red(`+ ${e}`))
-      );
-    }
-
-    if (removed.length) {
-      console.log(chalk.yellow("\nRemoved events:"));
-      removed.forEach(e =>
-        console.log(chalk.yellow(`- ${e}`))
-      );
-    }
+  if (added.length || removed.length) {
+    added.forEach(e => console.log(chalk.red(`+ ${e}`)));
+    removed.forEach(e => console.log(chalk.yellow(`- ${e}`)));
 
     process.exit(1);
   }
 
-  console.log(chalk.green("\nAll good"));
+  console.log(chalk.green("All good"));
 }
