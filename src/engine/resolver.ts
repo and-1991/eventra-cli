@@ -1,5 +1,6 @@
 import ts from "typescript";
 import { resolveExportedSymbol } from "./exportResolver";
+import { resolveFunctionFromCall } from "./callResolver";
 
 export type ResolveResult = {
   values: string[];
@@ -12,186 +13,164 @@ export function resolveNodeValue(
   paramMap?: Map<string, ts.Expression>,
   seen = new Set<ts.Node>()
 ): ResolveResult {
-  if (seen.has(node)) {
-    return { values: [], dynamic: true };
-  }
+  if (seen.has(node)) return { values: [], dynamic: true };
   seen.add(node);
 
-  // PARAM MAP (wrapper args)
+  // param passthrough
   if (ts.isIdentifier(node) && paramMap?.has(node.text)) {
-    return resolveNodeValue(
-      paramMap.get(node.text)!,
-      checker,
-      paramMap,
-      seen
-    );
+    return resolveNodeValue(paramMap.get(node.text)!, checker, paramMap, seen);
   }
 
-  // STRING
+  // string
   if (ts.isStringLiteral(node)) {
     return { values: [node.text], dynamic: false };
   }
 
-  // TEMPLATE
+  // template
   if (ts.isTemplateExpression(node)) {
     let results = node.head.text ? [node.head.text] : [""];
-
     for (const span of node.templateSpans) {
-      const res = resolveNodeValue(
-        span.expression,
-        checker,
-        paramMap,
-        seen
+      const r = resolveNodeValue(span.expression, checker, paramMap, seen);
+      results = results.flatMap(s =>
+        r.values.length ? r.values.map(v => s + v) : [s + "*"]
       );
-
-      results = results.flatMap(r =>
-        res.values.length
-          ? res.values.map(v => r + v)
-          : [r + "*"]
-      );
-
-      results = results.map(r => r + span.literal.text);
+      results = results.map(s => s + span.literal.text);
     }
-
     return { values: results, dynamic: true };
   }
 
-  // CONDITIONAL (a ? b : c)
+  // ternary
   if (ts.isConditionalExpression(node)) {
     const a = resolveNodeValue(node.whenTrue, checker, paramMap, seen);
     const b = resolveNodeValue(node.whenFalse, checker, paramMap, seen);
-
     return {
       values: [...new Set([...a.values, ...b.values])],
       dynamic: true,
     };
   }
 
-  // OBJECT → берём ВСЕ значения (без привязки к ключам)
+  // object (event/name priority)
   if (ts.isObjectLiteralExpression(node)) {
-    const values: string[] = [];
-
-    for (const prop of node.properties) {
-      if (!ts.isPropertyAssignment(prop)) continue;
-
-      const res = resolveNodeValue(
-        prop.initializer,
-        checker,
-        paramMap,
-        seen
-      );
-
-      values.push(...res.values);
-    }
-
-    return {
-      values: [...new Set(values)],
-      dynamic: true,
-    };
-  }
-
-  // ARRAY
-  if (ts.isArrayLiteralExpression(node)) {
-    const values: string[] = [];
-
-    for (const el of node.elements) {
-      const res = resolveNodeValue(el, checker, paramMap, seen);
-      values.push(...res.values);
-    }
-
-    return {
-      values: [...new Set(values)],
-      dynamic: true,
-    };
-  }
-
-  // BINARY CONCAT
-  if (ts.isBinaryExpression(node)) {
-    if (node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
-      const left = resolveNodeValue(node.left, checker, paramMap, seen);
-      const right = resolveNodeValue(node.right, checker, paramMap, seen);
-
-      return {
-        values: left.values.flatMap(l =>
-          right.values.length
-            ? right.values.map(r => l + r)
-            : [l + "*"]
-        ),
-        dynamic: true,
-      };
-    }
-  }
-
-  // IDENTIFIER
-  if (ts.isIdentifier(node)) {
-    let symbol = checker.getSymbolAtLocation(node);
-    if (!symbol) return { values: [], dynamic: true };
-
-    symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
-
-    // const VAR = "click"
-    for (const decl of symbol.getDeclarations() ?? []) {
-      if (ts.isVariableDeclaration(decl) && decl.initializer) {
-        return resolveNodeValue(
-          decl.initializer,
-          checker,
-          paramMap,
-          seen
-        );
-      }
-
-      // enum
-      if (ts.isEnumMember(decl) && decl.initializer) {
-        if (ts.isStringLiteral(decl.initializer)) {
-          return {
-            values: [decl.initializer.text],
-            dynamic: false,
-          };
+    for (const p of node.properties) {
+      if (ts.isPropertyAssignment(p)) {
+        const key = p.name.getText();
+        if (key === "event" || key === "name") {
+          return resolveNodeValue(p.initializer, checker, paramMap, seen);
         }
       }
     }
+    const vals: string[] = [];
+    for (const p of node.properties) {
+      if (!ts.isPropertyAssignment(p)) continue;
+      const r = resolveNodeValue(p.initializer, checker, paramMap, seen);
+      vals.push(...r.values);
+    }
+    return { values: [...new Set(vals)], dynamic: true };
+  }
 
+  // array
+  if (ts.isArrayLiteralExpression(node)) {
+    const vals: string[] = [];
+    for (const el of node.elements) {
+      const r = resolveNodeValue(el, checker, paramMap, seen);
+      vals.push(...r.values);
+    }
+    return { values: [...new Set(vals)], dynamic: true };
+  }
+
+  // concat
+  if (ts.isBinaryExpression(node) &&
+    node.operatorToken.kind === ts.SyntaxKind.PlusToken) {
+    const l = resolveNodeValue(node.left, checker, paramMap, seen);
+    const r = resolveNodeValue(node.right, checker, paramMap, seen);
+    return {
+      values: l.values.flatMap(a =>
+        r.values.length ? r.values.map(b => a + b) : [a + "*"]
+      ),
+      dynamic: true,
+    };
+  }
+
+  // identifier (const / enum)
+  if (ts.isIdentifier(node)) {
+    let s = checker.getSymbolAtLocation(node);
+    if (!s) return { values: [], dynamic: true };
+
+    s = resolveExportedSymbol(s, checker) ?? s;
+
+    for (const d of s.getDeclarations() ?? []) {
+      if (ts.isVariableDeclaration(d) && d.initializer) {
+        return resolveNodeValue(d.initializer, checker, paramMap, seen);
+      }
+      if (ts.isEnumMember(d) && d.initializer && ts.isStringLiteral(d.initializer)) {
+        return { values: [d.initializer.text], dynamic: false };
+      }
+    }
     return { values: [], dynamic: true };
   }
 
-  // PROPERTY ACCESS (ENUM / CONST)
+  // PROPERTY ACCESS (OBJECT + ENUM)
   if (ts.isPropertyAccessExpression(node)) {
-    const symbol = checker.getSymbolAtLocation(node);
+    const obj = node.expression;
+    const prop = node.name.text;
 
-    if (symbol) {
-      let s = resolveExportedSymbol(symbol, checker) ?? symbol;
-
-      if (s.flags & ts.SymbolFlags.Alias) {
-        s = checker.getAliasedSymbol(s);
-      }
-
-      for (const decl of s.getDeclarations() ?? []) {
-        if (ts.isEnumMember(decl) && decl.initializer) {
-          if (ts.isStringLiteral(decl.initializer)) {
-            return {
-              values: [decl.initializer.text],
-              dynamic: false,
-            };
+    // object literal lookup
+    if (ts.isIdentifier(obj)) {
+      const sym = checker.getSymbolAtLocation(obj);
+      if (sym) {
+        const s = resolveExportedSymbol(sym, checker) ?? sym;
+        for (const d of s.getDeclarations() ?? []) {
+          if (
+            ts.isVariableDeclaration(d) &&
+            d.initializer &&
+            ts.isObjectLiteralExpression(d.initializer)
+          ) {
+            for (const p of d.initializer.properties) {
+              if (
+                ts.isPropertyAssignment(p) &&
+                p.name.getText() === prop
+              ) {
+                return resolveNodeValue(p.initializer, checker, paramMap, seen);
+              }
+            }
           }
         }
       }
     }
 
+    // enum fallback
+    const sym = checker.getSymbolAtLocation(node);
+    if (sym) {
+      let s = resolveExportedSymbol(sym, checker) ?? sym;
+      if (s.flags & ts.SymbolFlags.Alias) s = checker.getAliasedSymbol(s);
+      for (const d of s.getDeclarations() ?? []) {
+        if (ts.isEnumMember(d) && d.initializer && ts.isStringLiteral(d.initializer)) {
+          return { values: [d.initializer.text], dynamic: false };
+        }
+      }
+    }
+
     return { values: [], dynamic: true };
   }
 
-  // CALL → unwrap args
+  // CALL (unwrap + dive into wrapper body)
   if (ts.isCallExpression(node)) {
-    const values: string[] = [];
+    const vals: string[] = [];
 
-    for (const arg of node.arguments) {
-      const res = resolveNodeValue(arg, checker, paramMap, seen);
-      values.push(...res.values);
+    // args
+    for (const a of node.arguments) {
+      const r = resolveNodeValue(a, checker, paramMap, seen);
+      vals.push(...r.values);
     }
 
-    return values.length
-      ? { values, dynamic: true }
-      : { values: [], dynamic: true };
+    // dive into called function (wrapper support)
+    const fn = resolveFunctionFromCall(node.expression, checker);
+    if (fn?.body) {
+      const r = resolveNodeValue(fn.body, checker, paramMap, seen);
+      vals.push(...r.values);
+    }
+
+    return { values: [...new Set(vals)], dynamic: true };
   }
 
   return { values: [], dynamic: true };
