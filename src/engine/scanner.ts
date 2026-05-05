@@ -4,6 +4,7 @@ import { resolveFunctionFromCall } from "./callResolver";
 import { resolveExportedSymbol } from "./exportResolver";
 import { EventraConfig, ScanResult } from "../types";
 
+// HELPERS
 function isValidEvent(v: string) {
   return (
     v &&
@@ -32,6 +33,7 @@ function getJsxAttrName(name: ts.JsxAttributeName): string {
   return "";
 }
 
+// MAIN
 export function scanSource(
   source: ts.SourceFile,
   checker: ts.TypeChecker,
@@ -47,35 +49,52 @@ export function scanSource(
   if (visited.has(source.fileName)) {
     return { events, detectedFunctionWrappers, detectedComponentWrappers };
   }
+
   visited.add(source.fileName);
 
-  function extractTrackCall(node: ts.CallExpression, paramMap: Map<string, ts.Expression>) {
-    const expr = node.expression;
+  // TRACK DETECTION
+  function isTrackCall(expr: ts.Expression) {
+    if (ts.isIdentifier(expr)) {
+      return expr.text === "track";
+    }
 
-    if (ts.isPropertyAccessExpression(expr) && expr.name.text === "track") {
-      const arg = node.arguments[0];
-      if (!arg) return;
+    if (ts.isPropertyAccessExpression(expr)) {
+      return expr.name.text === "track";
+    }
 
-      const res = resolveNodeValue(arg, checker, paramMap);
-      for (const v of res.values) {
-        if (isValidEvent(v)) events.add(v);
+    return false;
+  }
+
+  function extractTrackCall(
+    node: ts.CallExpression,
+    paramMap: Map<string, ts.Expression>
+  ) {
+    if (!isTrackCall(node.expression)) return;
+
+    const arg = node.arguments[0];
+    if (!arg) return;
+
+    const res = resolveNodeValue(arg, checker, paramMap);
+
+    for (const v of res.values) {
+      if (isValidEvent(v)) {
+        events.add(v);
       }
     }
   }
 
+  // WRAPPER DETECTION
   function isWrapperFunction(fn: ts.FunctionLikeDeclaration) {
     let found = false;
 
     function walk(n: ts.Node) {
       if (found) return;
 
-      if (ts.isCallExpression(n)) {
-        const expr = n.expression;
-        if (ts.isPropertyAccessExpression(expr) && expr.name.text === "track") {
-          found = true;
-          return;
-        }
+      if (ts.isCallExpression(n) && isTrackCall(n.expression)) {
+        found = true;
+        return;
       }
+
       ts.forEachChild(n, walk);
     }
 
@@ -83,15 +102,20 @@ export function scanSource(
     return found;
   }
 
+  // COMPONENT WRAPPER
   function detectComponentWrapper(tag: ts.JsxTagNameExpression): string | null {
     const tagName = getJsxTagName(tag);
 
-    if (wrapperCache.has(tagName)) return wrapperCache.get(tagName)!;
+    if (wrapperCache.has(tagName)) {
+      return wrapperCache.get(tagName)!;
+    }
 
     let symbol = checker.getSymbolAtLocation(tag);
+
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
       symbol = checker.getAliasedSymbol(symbol);
     }
+
     if (!symbol) {
       wrapperCache.set(tagName, null);
       return null;
@@ -120,21 +144,20 @@ export function scanSource(
       function walk(n: ts.Node) {
         if (prop) return;
 
-        if (ts.isCallExpression(n)) {
-          const expr = n.expression;
+        if (ts.isCallExpression(n) && isTrackCall(n.expression)) {
+          const arg = n.arguments[0];
 
-          if (ts.isPropertyAccessExpression(expr) && expr.name.text === "track") {
-            const arg = n.arguments[0];
-            if (ts.isPropertyAccessExpression(arg)) {
-              prop = arg.name.text;
-              return;
-            }
+          if (ts.isPropertyAccessExpression(arg)) {
+            prop = arg.name.text;
+            return;
           }
         }
+
         ts.forEachChild(n, walk);
       }
 
       walk(fn.body);
+
       wrapperCache.set(tagName, prop);
 
       if (prop) {
@@ -147,6 +170,7 @@ export function scanSource(
     return null;
   }
 
+  // VISITOR
   function visit(node: ts.Node) {
     // JSX
     if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
@@ -205,29 +229,45 @@ export function scanSource(
         resolvedFn.parameters.forEach((p, i) => {
           const arg = node.arguments[i];
           if (!arg) return;
+
           if (ts.isIdentifier(p.name)) {
             paramMap.set(p.name.text, arg);
           }
         });
       }
 
-      // direct track
       extractTrackCall(node, paramMap);
 
-      // wrapper
       if (resolvedFn && isWrapperFunction(resolvedFn)) {
         const name = getCallName(node.expression);
+
         if (name && name !== "track") {
           detectedFunctionWrappers.add(name);
         }
+
         if (resolvedFn.body) {
           visit(resolvedFn.body);
         }
       }
 
-      for (const arg of node.arguments) {
-        visit(arg);
+      if (resolvedFn && resolvedFn.body) {
+        const sf = resolvedFn.getSourceFile();
+
+        if (!visited.has(sf.fileName)) {
+          const res = scanSource(
+            sf,
+            checker,
+            config,
+            visited,
+            paramMap,
+            wrapperCache
+          );
+
+          res.events.forEach(e => events.add(e));
+        }
       }
+
+      node.arguments.forEach(visit);
       visit(node.expression);
 
       return;

@@ -19,25 +19,15 @@ export async function sync() {
     absolute: true,
   });
 
-  if (!files.length) {
-    console.log(chalk.yellow("No files found"));
-    return;
-  }
-
   const engine = new EventraEngine(process.cwd());
 
+  const cache = new Map<string, { content: string; deps: string[] }>();
   const toScan = new Set<string>();
 
-  const cache = new Map<
-    string,
-    { content: string; deps: string[] }
-  >();
-
-  // COLLECT + CACHE
+  // COLLECT
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf-8");
-
       if (raw.length > 2_000_000) continue;
 
       const parsed = processFile(file, raw);
@@ -45,9 +35,7 @@ export async function sync() {
       cache.set(file, parsed);
       toScan.add(file);
 
-      for (const dep of parsed.deps) {
-        toScan.add(path.resolve(dep));
-      }
+      parsed.deps.forEach(dep => toScan.add(path.resolve(dep)));
 
     } catch {}
   }
@@ -63,8 +51,7 @@ export async function sync() {
         cache.set(file, parsed);
       }
 
-      const virtual = getVirtualFile(file);
-      engine.preloadFile(virtual, parsed.content);
+      engine.preloadFile(getVirtualFile(file), parsed.content);
 
     } catch {}
   }
@@ -78,21 +65,16 @@ export async function sync() {
       const parsed = cache.get(file);
       if (!parsed) continue;
 
-      const virtual = getVirtualFile(file);
-
-      const res = engine.scanFile(virtual, parsed.content, config);
-
-      res.detectedFunctionWrappers.forEach(w =>
-        detectedFn.add(w)
+      const res = engine.updateFile(
+        getVirtualFile(file),
+        parsed.content,
+        config
       );
 
-      for (const [k, v] of res.detectedComponentWrappers) {
-        detectedCmp.set(k, v);
-      }
+      res.detectedFunctionWrappers.forEach(w => detectedFn.add(w));
+      res.detectedComponentWrappers.forEach((v, k) => detectedCmp.set(k, v));
 
-    } catch {
-      console.log(chalk.gray(`skip: ${file}`));
-    }
+    } catch {}
   }
 
   // RESULT
@@ -108,10 +90,7 @@ export async function sync() {
 
   config.wrappers = mergeUnique(
     config.wrappers ?? [],
-    [...detectedCmp.entries()].map(([name, prop]) => ({
-      name,
-      prop,
-    })),
+    [...detectedCmp.entries()].map(([name, prop]) => ({ name, prop })),
     w => `${w.name}:${w.prop}`
   );
 
@@ -120,17 +99,8 @@ export async function sync() {
   console.log(chalk.green(`Found ${events.length} events`));
 }
 
-// HELPERS
-function mergeUnique<T>(
-  a: T[],
-  b: T[],
-  key: (v: T) => string
-): T[] {
+function mergeUnique<T>(a: T[], b: T[], key: (v: T) => string): T[] {
   const map = new Map<string, T>();
-
-  [...b, ...a].forEach(item => {
-    map.set(key(item), item);
-  });
-
+  [...b, ...a].forEach(item => map.set(key(item), item));
   return [...map.values()];
 }
