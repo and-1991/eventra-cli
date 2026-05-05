@@ -1,5 +1,6 @@
 import ts from "typescript";
 
+// HELPERS
 function isFunctionLike(
   node: ts.Node
 ): node is ts.FunctionLikeDeclaration {
@@ -12,40 +13,39 @@ function isFunctionLike(
   );
 }
 
+// symbol → function
 function resolveFromSymbol(
   symbol: ts.Symbol,
   checker: ts.TypeChecker,
   visited = new Set<ts.Symbol>(),
   depth = 0
 ): ts.FunctionLikeDeclaration | null {
+  if (!symbol) return null;
   if (visited.has(symbol)) return null;
-  if (depth > 5) return null;
+  if (depth > 10) return null;
 
   visited.add(symbol);
 
-  // unwrap alias
+  // Alias unwrap (import/export)
   if (symbol.flags & ts.SymbolFlags.Alias) {
-    const aliased = checker.getAliasedSymbol(symbol);
-    return resolveFromSymbol(aliased, checker, visited, depth + 1);
+    try {
+      const aliased = checker.getAliasedSymbol(symbol);
+      return resolveFromSymbol(aliased, checker, visited, depth + 1);
+    } catch {}
   }
 
-  // re-export support
-  if ((symbol as any).exports) {
-    for (const exp of (symbol as any).exports.values()) {
-      const resolved = resolveFromSymbol(exp, checker, visited, depth + 1);
-      if (resolved) return resolved;
-    }
-  }
-
+  // Declarations
   const decls = symbol.getDeclarations() ?? [];
 
   for (const decl of decls) {
-    // direct function
+    /**
+     * direct function
+     */
     if (isFunctionLike(decl)) {
       return decl;
     }
 
-    // VARIABLE → FUNCTION
+    // VARIABLE → FUNCTION const fn = () => {}
     if (ts.isVariableDeclaration(decl) && decl.initializer) {
       if (isFunctionLike(decl.initializer)) {
         return decl.initializer;
@@ -63,7 +63,12 @@ function resolveFromSymbol(
       }
     }
 
-    // MethodSignature (interface / type)
+    // CLASS METHOD
+    if (ts.isMethodDeclaration(decl)) {
+      return decl;
+    }
+
+    // interface / type method
     if (ts.isMethodSignature(decl)) {
       const parent = decl.parent;
 
@@ -71,14 +76,10 @@ function resolveFromSymbol(
         ts.isInterfaceDeclaration(parent) ||
         ts.isTypeLiteralNode(parent)
       ) {
-        const name = decl.name.getText();
-
         const type = checker.getTypeAtLocation(parent);
         const props = type.getProperties();
 
         for (const prop of props) {
-          if (prop.name !== name) continue;
-
           const resolved = resolveFromSymbol(
             prop,
             checker,
@@ -91,10 +92,24 @@ function resolveFromSymbol(
     }
 
     // fallback recursion
-    const s = checker.getSymbolAtLocation(decl);
-    if (s && s !== symbol) {
+    const inner = checker.getSymbolAtLocation(decl);
+    if (inner && inner !== symbol) {
       const resolved = resolveFromSymbol(
-        s,
+        inner,
+        checker,
+        visited,
+        depth + 1
+      );
+      if (resolved) return resolved;
+    }
+  }
+
+  // Exports (re-export)
+  const exports = (symbol as any).exports;
+  if (exports) {
+    for (const exp of exports.values()) {
+      const resolved = resolveFromSymbol(
+        exp,
         checker,
         visited,
         depth + 1
@@ -106,17 +121,19 @@ function resolveFromSymbol(
   return null;
 }
 
+// MAIN FUNCTION
 export function resolveFunctionFromCall(
   expr: ts.Expression,
   checker: ts.TypeChecker
 ): ts.FunctionLikeDeclaration | null {
-
-  // tracker.track
+  // obj.method()
   if (ts.isPropertyAccessExpression(expr)) {
     let symbol = checker.getSymbolAtLocation(expr.name);
 
     if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
-      symbol = checker.getAliasedSymbol(symbol);
+      try {
+        symbol = checker.getAliasedSymbol(symbol);
+      } catch {}
     }
 
     if (symbol) {
@@ -125,7 +142,7 @@ export function resolveFunctionFromCall(
     }
   }
 
-  // tracker["track"]
+  // obj["method"]()
   if (ts.isElementAccessExpression(expr)) {
     const symbol = checker.getSymbolAtLocation(expr.argumentExpression);
 
@@ -135,7 +152,7 @@ export function resolveFunctionFromCall(
     }
   }
 
-  // normal call signatures
+  // Call signatures
   const type = checker.getTypeAtLocation(expr);
   const signatures = type.getCallSignatures();
 
@@ -157,7 +174,23 @@ export function resolveFunctionFromCall(
     }
   }
 
-  // fallback
+  // Identifier fallback
+  if (ts.isIdentifier(expr)) {
+    let symbol = checker.getSymbolAtLocation(expr);
+
+    if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
+      try {
+        symbol = checker.getAliasedSymbol(symbol);
+      } catch {}
+    }
+
+    if (symbol) {
+      const resolved = resolveFromSymbol(symbol, checker);
+      if (resolved) return resolved;
+    }
+  }
+
+  // LAST fallback
   const symbol = checker.getSymbolAtLocation(expr);
   if (symbol) {
     return resolveFromSymbol(symbol, checker);

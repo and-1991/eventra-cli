@@ -7,9 +7,10 @@ export class TSService {
   private fileNames = new Set<string>();
   private service: ts.LanguageService;
 
-  private compilerOptions: ts.CompilerOptions;
-  private baseUrl: string;
-  private paths: Record<string, string[]>;
+  private readonly compilerOptions: ts.CompilerOptions;
+  private readonly baseUrl: string;
+  private readonly paths: Record<string, string[]>;
+
   private usage = new Map<string, number>();
   private tick = 0;
   private MAX_FILES = 2000;
@@ -23,6 +24,7 @@ export class TSService {
 
     let compilerOptions: ts.CompilerOptions = {
       allowJs: true,
+      allowNonTsExtensions: true,
       jsx: ts.JsxEmit.React,
       jsxImportSource: "react",
       moduleResolution: ts.ModuleResolutionKind.Node16,
@@ -60,7 +62,17 @@ export class TSService {
     this.paths = paths;
 
     const host: ts.LanguageServiceHost = {
-      getScriptFileNames: () => Array.from(this.fileNames),
+      getScriptFileNames: () => {
+        if (this.fileNames.size === 0) {
+          return ts.sys.readDirectory(
+            this.root,
+            [".ts", ".tsx", ".js", ".jsx"],
+            undefined,
+            undefined
+          );
+        }
+        return Array.from(this.fileNames);
+      },
 
       getScriptVersion: (file) => {
         file = this.normalize(file);
@@ -69,13 +81,29 @@ export class TSService {
 
       getScriptSnapshot: (file) => {
         file = this.normalize(file);
-
         const f = this.files.get(file);
         if (f) {
           this.touch(file);
           return ts.ScriptSnapshot.fromString(f.content);
         }
+        if (file.endsWith(".tsx")) {
+          const original = file.replace(/\.tsx$/, "");
 
+          if (fs.existsSync(original)) {
+            const content = fs.readFileSync(original, "utf-8");
+
+            this.files.set(file, {
+              content,
+              version: 1,
+            });
+
+            this.fileNames.add(file);
+            this.touch(file);
+            this.evictIfNeeded();
+
+            return ts.ScriptSnapshot.fromString(content);
+          }
+        }
         try {
           if (fs.existsSync(file)) {
             const content = fs.readFileSync(file, "utf-8");
@@ -93,16 +121,22 @@ export class TSService {
           }
         } catch {}
 
-        // fallback
         return ts.ScriptSnapshot.fromString("");
       },
-
       getCurrentDirectory: () => this.root,
       getCompilationSettings: () => this.compilerOptions,
       getDefaultLibFileName: (opts) =>
         ts.getDefaultLibFilePath(opts),
-      fileExists: ts.sys.fileExists,
-      readFile: ts.sys.readFile,
+      fileExists: (file) => {
+        file = this.normalize(file);
+        return this.files.has(file) || ts.sys.fileExists(file);
+      },
+
+      readFile: (file) => {
+        file = this.normalize(file);
+        return this.files.get(file)?.content ?? ts.sys.readFile(file);
+      },
+
       readDirectory: ts.sys.readDirectory,
     };
 
@@ -122,7 +156,7 @@ export class TSService {
   private evictIfNeeded() {
     if (this.fileNames.size <= this.MAX_FILES) return;
 
-    let oldestFile: string | null = null;
+    let oldest: string | null = null;
     let oldestTick = Infinity;
 
     for (const f of this.fileNames) {
@@ -130,20 +164,20 @@ export class TSService {
 
       if (t < oldestTick) {
         oldestTick = t;
-        oldestFile = f;
+        oldest = f;
       }
     }
 
-    if (oldestFile) {
-      this.files.delete(oldestFile);
-      this.fileNames.delete(oldestFile);
-      this.usage.delete(oldestFile);
+    if (oldest) {
+      this.files.delete(oldest);
+      this.fileNames.delete(oldest);
+      this.usage.delete(oldest);
     }
   }
 
   private ensureProgram() {
     try {
-      this.service.getProgram();
+      this.service.getProgram()?.getTypeChecker();
     } catch {}
   }
 

@@ -1,27 +1,47 @@
 import path from "path";
 import { ParseResult } from "../types";
 
-// SAFE COMMENT STRIP
+/* ---------------------------------- */
+/* COMMENT STRIP (SAFE)               */
+/* ---------------------------------- */
 function stripComments(input: string): string {
   return input
     .replace(/<!--[\s\S]*?-->/g, "")
     .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-// TRACK FILTER
+/* ---------------------------------- */
+/* TRACK DETECTOR                     */
+/* ---------------------------------- */
 function looksLikeTracking(code: string) {
-  return /\btrack\w*\s*\(/.test(code);
+  return /\btrack\s*\(|\.track\s*\(/.test(code);
 }
 
-// SAFE {} PARSER
+/* ---------------------------------- */
+/* SAFE {} PARSER (JSX / TEMPLATES)   */
+/* ---------------------------------- */
 function extractBracedExpressions(input: string): string[] {
   const result: string[] = [];
 
   let depth = 0;
   let start = -1;
+  let inString: string | null = null;
 
   for (let i = 0; i < input.length; i++) {
     const char = input[i];
+
+    // handle strings
+    if (inString) {
+      if (char === inString && input[i - 1] !== "\\") {
+        inString = null;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'" || char === "`") {
+      inString = char;
+      continue;
+    }
 
     if (char === "{") {
       if (depth === 0) start = i + 1;
@@ -30,9 +50,11 @@ function extractBracedExpressions(input: string): string[] {
       depth--;
       if (depth === 0 && start !== -1) {
         const expr = input.slice(start, i);
+
         if (looksLikeTracking(expr)) {
           result.push(expr);
         }
+
         start = -1;
       }
     }
@@ -41,7 +63,9 @@ function extractBracedExpressions(input: string): string[] {
   return result;
 }
 
-// HTML handlers
+/* ---------------------------------- */
+/* HTML HANDLERS                      */
+/* ---------------------------------- */
 function extractHTMLHandlers(input: string): string[] {
   const result: string[] = [];
 
@@ -56,7 +80,9 @@ function extractHTMLHandlers(input: string): string[] {
   return result;
 }
 
-// VUE handlers
+/* ---------------------------------- */
+/* VUE HANDLERS                       */
+/* ---------------------------------- */
 function extractVueHandlers(input: string): string[] {
   const result: string[] = [];
 
@@ -71,29 +97,34 @@ function extractVueHandlers(input: string): string[] {
   return result;
 }
 
-// SVELTE handlers
+/* ---------------------------------- */
+/* SVELTE HANDLERS                    */
+/* ---------------------------------- */
 function extractSvelteHandlers(input: string): string[] {
   const result: string[] = [];
 
-  const regex = /\bon:[\w]+\s*=\s*{([^}]+)}/g;
+  const regex = /\bon:[\w]+\s*=\s*{([\s\S]*?)}/g;
 
   for (const m of input.matchAll(regex)) {
-    if (looksLikeTracking(m[1])) {
-      result.push(m[1]);
-    }
+    const expr = m[1];
+
+    const nested = extractBracedExpressions(`{${expr}}`);
+    result.push(...nested);
   }
 
   return result;
 }
 
-// SCRIPT EXTRACTION
+/* ---------------------------------- */
+/* SCRIPT EXTRACTION                  */
+/* ---------------------------------- */
 function extractScripts(input: string, file: string) {
   const scripts: string[] = [];
   const deps: string[] = [];
 
-  // src scripts
+  // <script src="">
   const srcRegex =
-    /<script\b[^>]*?\bsrc=["'](.+?)["'][^>]*>/g;
+    /<script\b[^>]*?\bsrc=["'](.+?)["'][^>]*>/gi;
 
   for (const m of input.matchAll(srcRegex)) {
     const src = m[1];
@@ -105,9 +136,9 @@ function extractScripts(input: string, file: string) {
     deps.push(resolved);
   }
 
-  // inline scripts
+  // inline <script>
   const scriptRegex =
-    /<script\b[^>]*>([\s\S]*?)<\/script>/g;
+    /<script\b[^>]*>([\s\S]*?)<\/script>/gi;
 
   for (const m of input.matchAll(scriptRegex)) {
     if (m[1]?.trim()) {
@@ -120,9 +151,37 @@ function extractScripts(input: string, file: string) {
   return { scripts, deps, noScripts };
 }
 
-// DYNAMIC IMPORTS
+/* ---------------------------------- */
+/* STATIC IMPORTS                     */
+/* ---------------------------------- */
+function extractStaticImports(input: string, file: string) {
+  const deps: string[] = [];
+
+  const regex =
+    /import\s+(?:.+?\s+from\s+)?["'](.+?)["']/g;
+
+  for (const m of input.matchAll(regex)) {
+    const mod = m[1];
+
+    if (!mod.startsWith(".") && !mod.startsWith("/")) continue;
+
+    const resolved = path.resolve(
+      path.dirname(file),
+      mod
+    );
+
+    deps.push(resolved);
+  }
+
+  return deps;
+}
+
+/* ---------------------------------- */
+/* DYNAMIC IMPORTS                    */
+/* ---------------------------------- */
 function extractDynamicImports(input: string, file: string) {
   const deps: string[] = [];
+  const calls: string[] = [];
 
   const regex = /import\(\s*["'](.+?)["']\s*\)/g;
 
@@ -134,12 +193,18 @@ function extractDynamicImports(input: string, file: string) {
       : path.resolve(path.dirname(file), mod);
 
     deps.push(resolved);
+
+    if (looksLikeTracking(mod)) {
+      calls.push(`import("${mod}")`);
+    }
   }
 
-  return deps;
+  return { deps, calls };
 }
 
-// MAIN
+/* ---------------------------------- */
+/* MAIN                               */
+/* ---------------------------------- */
 export function parseUniversal(
   content: string,
   file: string
@@ -150,7 +215,7 @@ export function parseUniversal(
   const clean = stripComments(content);
 
   /* ---------- ASTRO FRONTMATTER ---------- */
-  const fm = clean.match(/^---([\s\S]*?)---/);
+  const fm = clean.match(/^\s*---([\s\S]*?)---/);
   if (fm?.[1]) {
     parts.push(fm[1]);
   }
@@ -171,7 +236,11 @@ export function parseUniversal(
   parts.push(...extractBracedExpressions(clean));
 
   /* ---------- IMPORTS ---------- */
-  deps.push(...extractDynamicImports(clean, file));
+  deps.push(...extractStaticImports(clean, file));
+
+  const dyn = extractDynamicImports(clean, file);
+  deps.push(...dyn.deps);
+  parts.push(...dyn.calls);
 
   return {
     code: [...new Set(parts)].join("\n"),

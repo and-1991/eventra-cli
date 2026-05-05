@@ -173,15 +173,13 @@ export function scanSource(
   config: EventraConfig,
   visited = new Set<string>(),
   inheritedParamMap?: Map<string, ts.Expression>,
-  wrapperCache?: Map<string, string | null>
+  wrapperCache = new Map<string, string | null>()
 ): ScanResult {
-  wrapperCache = wrapperCache ?? new Map();
-
   const events = new Set<string>();
   const detectedFunctionWrappers = new Set<string>();
   const detectedComponentWrappers = new Map<string, string>();
 
-  if (visited.size > 200 || visited.has(source.fileName)) {
+  if (visited.has(source.fileName) || visited.size > 200) {
     return { events, detectedFunctionWrappers, detectedComponentWrappers };
   }
 
@@ -189,75 +187,57 @@ export function scanSource(
 
   function visit(node: ts.Node) {
     // JSX WRAPPERS
-    if (
-      ts.isJsxSelfClosingElement(node) ||
-      ts.isJsxOpeningElement(node)
-    ) {
+    if (ts.isJsxSelfClosingElement(node) || ts.isJsxOpeningElement(node)) {
       const tagName = getJsxTagName(node.tagName);
 
       // skip html
-      if (!tagName || tagName[0] === tagName[0].toLowerCase()) {
+      if (tagName[0] === tagName[0].toLowerCase()) {
         ts.forEachChild(node, visit);
         return;
       }
 
-      let wrapper = config.wrappers.find(
-        (w) => w.name === tagName
-      );
+      let wrapper = config.wrappers.find(w => w.name === tagName);
 
+      // AUTO DETECT
       if (!wrapper) {
-        let symbol = checker.getSymbolAtLocation(node.tagName);
+        if (wrapperCache.has(tagName)) {
+          const cached = wrapperCache.get(tagName);
+          if (cached) wrapper = { name: tagName, prop: cached };
+        } else {
+          let symbol = checker.getSymbolAtLocation(node.tagName);
 
-        let cacheKey = tagName;
-
-        if (symbol) {
-          if (symbol.flags & ts.SymbolFlags.Alias) {
+          if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
             symbol = checker.getAliasedSymbol(symbol);
           }
 
-          symbol =
-            resolveExportedSymbol(symbol, checker) ?? symbol;
+          if (symbol) {
+            symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
 
-          cacheKey = checker.getFullyQualifiedName(symbol);
-        }
+            for (const decl of symbol.getDeclarations() ?? []) {
+              let fn: ts.FunctionLikeDeclaration | null = null;
 
-        if (wrapperCache?.has(cacheKey)) {
-          const cached = wrapperCache.get(cacheKey);
-          if (cached) {
-            wrapper = { name: tagName, prop: cached };
-          }
-        } else if (symbol) {
-          let detected: string | null = null;
+              if (ts.isFunctionDeclaration(decl)) fn = decl;
 
-          for (const decl of symbol.getDeclarations() ?? []) {
-            let fn: ts.FunctionLikeDeclaration | null = null;
+              if (
+                ts.isVariableDeclaration(decl) &&
+                decl.initializer &&
+                (ts.isArrowFunction(decl.initializer) ||
+                  ts.isFunctionExpression(decl.initializer))
+              ) {
+                fn = decl.initializer;
+              }
 
-            if (ts.isFunctionDeclaration(decl)) fn = decl;
+              if (!fn) continue;
 
-            if (
-              ts.isVariableDeclaration(decl) &&
-              decl.initializer &&
-              (ts.isArrowFunction(decl.initializer) ||
-                ts.isFunctionExpression(decl.initializer))
-            ) {
-              fn = decl.initializer;
+              const prop = findTrackedPropName(fn, checker);
+              wrapperCache.set(tagName, prop ?? null);
+
+              if (prop) {
+                wrapper = { name: tagName, prop };
+                detectedComponentWrappers.set(tagName, prop);
+                break;
+              }
             }
-
-            if (!fn) continue;
-
-            const prop = findTrackedPropName(fn, checker);
-
-            if (prop) {
-              detected = prop;
-              break;
-            }
-          }
-
-          wrapperCache?.set(cacheKey, detected);
-
-          if (detected) {
-            wrapper = { name: tagName, prop: detected };
-            detectedComponentWrappers.set(tagName, detected);
           }
         }
       }
@@ -268,25 +248,21 @@ export function scanSource(
 
           const name = getJsxAttrName(attr.name);
           if (name !== wrapper.prop) continue;
+
           if (!attr.initializer) continue;
 
           if (ts.isStringLiteral(attr.initializer)) {
-            if (isValidEvent(attr.initializer.text)) {
-              events.add(attr.initializer.text);
-            }
+            const v = attr.initializer.text;
+            if (isValidEvent(v)) events.add(v);
           }
 
           if (ts.isJsxExpression(attr.initializer)) {
             const expr = attr.initializer.expression;
             if (!expr) continue;
 
-            const res = resolveNodeValue(
-              expr,
-              checker,
-              inheritedParamMap
-            );
+            const res = resolveNodeValue(expr, checker, inheritedParamMap);
 
-            res.values.forEach((v) => {
+            res.values.forEach(v => {
               if (isValidEvent(v)) events.add(v);
             });
           }
@@ -297,38 +273,54 @@ export function scanSource(
       return;
     }
 
-    // FUNCTION TRACKING
+    // FUNCTION CALLS
     if (ts.isCallExpression(node)) {
-      const name = getCallName(node.expression);
+      let trackParamIndex: number | null = null;
+      let isTracking = false;
 
-      const isKnownWrapper = config.functionWrappers.some(
-        (w) => w.name === name
+      const callName = getCallName(node.expression);
+
+      // direct .track()
+      if (
+        ts.isPropertyAccessExpression(node.expression) &&
+        node.expression.name.text === "track"
+      ) {
+        isTracking = true;
+        trackParamIndex = 0;
+      }
+
+      // config wrapper
+      const manualWrapper = config.functionWrappers.find(
+        w => w.name === callName
       );
 
+      if (manualWrapper) {
+        isTracking = true;
+        trackParamIndex = 0;
+      }
+
+      // resolve function → check body
       const resolvedFn = resolveFunctionFromCall(
         node.expression,
         checker
       );
 
-      const isAutoWrapper =
-        !!resolvedFn && findTrackParamIndex(resolvedFn) !== null;
+      if (resolvedFn) {
+        const idx = findTrackParamIndex(resolvedFn);
 
-      const isTracking =
-        name === "track" ||
-        isKnownWrapper ||
-        (isAutoWrapper &&
-          resolvedFn &&
-          !isExternalFile(
-            resolvedFn.getSourceFile().fileName
-          ));
+        if (idx !== null) {
+          isTracking = true;
+          trackParamIndex = idx;
+
+          if (!manualWrapper && callName !== "track") {
+            detectedFunctionWrappers.add(callName);
+          }
+        }
+      }
 
       if (!isTracking) {
         ts.forEachChild(node, visit);
         return;
-      }
-
-      if (!isKnownWrapper && isAutoWrapper && name !== "track") {
-        detectedFunctionWrappers.add(name);
       }
 
       const paramMap = new Map(inheritedParamMap ?? []);
@@ -344,22 +336,19 @@ export function scanSource(
         });
       }
 
-      if (resolvedFn) {
-        const idx = findTrackParamIndex(resolvedFn);
+      if (trackParamIndex !== null && node.arguments[trackParamIndex]) {
+        const res = resolveNodeValue(
+          node.arguments[trackParamIndex],
+          checker,
+          paramMap
+        );
 
-        if (idx !== null && node.arguments[idx]) {
-          const res = resolveNodeValue(
-            node.arguments[idx],
-            checker,
-            paramMap
-          );
-
-          res.values.forEach((v) => {
-            if (isValidEvent(v)) events.add(v);
-          });
-        }
+        res.values.forEach(v => {
+          if (isValidEvent(v)) events.add(v);
+        });
       }
 
+      // CROSS FILE
       if (resolvedFn) {
         const sf = resolvedFn.getSourceFile();
 
@@ -373,7 +362,7 @@ export function scanSource(
             wrapperCache
           );
 
-          res.events.forEach((e) => events.add(e));
+          res.events.forEach(e => events.add(e));
         }
       }
     }
