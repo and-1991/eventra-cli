@@ -1,5 +1,11 @@
 export type ScanMode = "strict" | "hybrid" | "discovery";
 
+export type ScanResult = {
+  events: Set<string>;
+  detectedFunctionWrappers: Set<string>;
+  detectedComponentWrappers: Map<string, string>;
+};
+
 export type ParseResult = {
   code: string;
   deps: string[];
@@ -22,7 +28,6 @@ export type EventraConfig = {
   mode?: ScanMode;
   wrappers: ComponentWrapper[];
   functionWrappers: FunctionWrapper[];
-  aliases?: Record<string, string>;
   sync: {
     include: string[];
     exclude: string[];

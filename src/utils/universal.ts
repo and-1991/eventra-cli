@@ -1,28 +1,53 @@
 import path from "path";
 import { ParseResult } from "../types";
 
-// Remove comments
+// SAFE COMMENT STRIP
 function stripComments(input: string): string {
   return input
     .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/\/\*[\s\S]*?\*\//g, "")
-    .replace(/\/\/.*$/gm, "");
+    .replace(/\/\*[\s\S]*?\*\//g, "");
 }
 
-// Basic filter
+// TRACK FILTER
 function looksLikeTracking(code: string) {
-  return /track/i.test(code);
+  return /\btrack\w*\s*\(/.test(code);
 }
 
-// HTML inline handlers (onclick="")
+// SAFE {} PARSER
+function extractBracedExpressions(input: string): string[] {
+  const result: string[] = [];
+
+  let depth = 0;
+  let start = -1;
+
+  for (let i = 0; i < input.length; i++) {
+    const char = input[i];
+
+    if (char === "{") {
+      if (depth === 0) start = i + 1;
+      depth++;
+    } else if (char === "}") {
+      depth--;
+      if (depth === 0 && start !== -1) {
+        const expr = input.slice(start, i);
+        if (looksLikeTracking(expr)) {
+          result.push(expr);
+        }
+        start = -1;
+      }
+    }
+  }
+
+  return result;
+}
+
+// HTML handlers
 function extractHTMLHandlers(input: string): string[] {
   const result: string[] = [];
 
-  const matches = input.matchAll(
-    /\bon\w+\s*=\s*["']([^"']+)["']/g
-  );
+  const regex = /\bon\w+\s*=\s*["']([^"']+)["']/g;
 
-  for (const m of matches) {
+  for (const m of input.matchAll(regex)) {
     if (looksLikeTracking(m[1])) {
       result.push(m[1]);
     }
@@ -31,15 +56,13 @@ function extractHTMLHandlers(input: string): string[] {
   return result;
 }
 
-// Vue handlers (@click / v-on)
+// VUE handlers
 function extractVueHandlers(input: string): string[] {
   const result: string[] = [];
 
-  const matches = input.matchAll(
-    /(?:@|v-on:)[\w:-]+\s*=\s*["']([^"']+)["']/g
-  );
+  const regex = /(?:@|v-on:)[\w:-]+\s*=\s*["']([^"']+)["']/g;
 
-  for (const m of matches) {
+  for (const m of input.matchAll(regex)) {
     if (looksLikeTracking(m[1])) {
       result.push(m[1]);
     }
@@ -48,15 +71,13 @@ function extractVueHandlers(input: string): string[] {
   return result;
 }
 
-// Svelte handlers (on:click)
+// SVELTE handlers
 function extractSvelteHandlers(input: string): string[] {
   const result: string[] = [];
 
-  const matches = input.matchAll(
-    /\bon:[\w]+\s*=\s*{([^}]+)}/g
-  );
+  const regex = /\bon:[\w]+\s*=\s*{([^}]+)}/g;
 
-  for (const m of matches) {
+  for (const m of input.matchAll(regex)) {
     if (looksLikeTracking(m[1])) {
       result.push(m[1]);
     }
@@ -65,34 +86,47 @@ function extractSvelteHandlers(input: string): string[] {
   return result;
 }
 
-// JSX / template { ... }
-function extractJSExpressions(input: string): string[] {
-  const result: string[] = [];
-
-  const matches = input.matchAll(/\{([^}]+)\}/g);
-
-  for (const m of matches) {
-    if (looksLikeTracking(m[1])) {
-      result.push(m[1]);
-    }
-  }
-
-  return result;
-}
-
-// dynamic import()
-function extractDynamicImports(
-  input: string,
-  file: string
-): { deps: string[]; calls: string[] } {
+// SCRIPT EXTRACTION
+function extractScripts(input: string, file: string) {
+  const scripts: string[] = [];
   const deps: string[] = [];
-  const calls: string[] = [];
 
-  const matches = input.matchAll(
-    /import\(\s*["'](.+?)["']\s*\)/g
-  );
+  // src scripts
+  const srcRegex =
+    /<script\b[^>]*?\bsrc=["'](.+?)["'][^>]*>/g;
 
-  for (const m of matches) {
+  for (const m of input.matchAll(srcRegex)) {
+    const src = m[1];
+
+    const resolved = src.startsWith("/")
+      ? path.resolve(process.cwd(), "." + src)
+      : path.resolve(path.dirname(file), src);
+
+    deps.push(resolved);
+  }
+
+  // inline scripts
+  const scriptRegex =
+    /<script\b[^>]*>([\s\S]*?)<\/script>/g;
+
+  for (const m of input.matchAll(scriptRegex)) {
+    if (m[1]?.trim()) {
+      scripts.push(m[1]);
+    }
+  }
+
+  const noScripts = input.replace(scriptRegex, "");
+
+  return { scripts, deps, noScripts };
+}
+
+// DYNAMIC IMPORTS
+function extractDynamicImports(input: string, file: string) {
+  const deps: string[] = [];
+
+  const regex = /import\(\s*["'](.+?)["']\s*\)/g;
+
+  for (const m of input.matchAll(regex)) {
     const mod = m[1];
 
     const resolved = mod.startsWith("/")
@@ -100,16 +134,12 @@ function extractDynamicImports(
       : path.resolve(path.dirname(file), mod);
 
     deps.push(resolved);
-
-    if (looksLikeTracking(mod)) {
-      calls.push(`import("${mod}")`);
-    }
   }
 
-  return { deps, calls };
+  return deps;
 }
 
-// UNIVERSAL PARSER
+// MAIN
 export function parseUniversal(
   content: string,
   file: string
@@ -119,56 +149,29 @@ export function parseUniversal(
 
   const clean = stripComments(content);
 
-  // ASTRO FRONTMATTER
+  /* ---------- ASTRO FRONTMATTER ---------- */
   const fm = clean.match(/^---([\s\S]*?)---/);
   if (fm?.[1]) {
     parts.push(fm[1]);
   }
 
-  // <script src="">
-  const scriptSrc = clean.matchAll(
-    /<script\b[^>]*?\bsrc=["'](.+?)["'][^>]*>/g
-  );
+  /* ---------- SCRIPTS ---------- */
+  const { scripts, deps: scriptDeps, noScripts } =
+    extractScripts(clean, file);
 
-  for (const s of scriptSrc) {
-    const src = s[1];
+  parts.push(...scripts);
+  deps.push(...scriptDeps);
 
-    const resolved = src.startsWith("/")
-      ? path.resolve(process.cwd(), "." + src)
-      : path.resolve(path.dirname(file), src);
-
-    deps.push(resolved);
-  }
-
-  // INLINE <script>
-  const scripts = clean.matchAll(
-    /<script\b([^>]*)>([\s\S]*?)<\/script>/g
-  );
-
-  for (const m of scripts) {
-    if (m[2].trim()) {
-      parts.push(m[2]);
-    }
-  }
-
-  // TEMPLATE PART
-  const noScripts = clean.replace(
-    /<script[\s\S]*?<\/script>/g,
-    ""
-  );
-
-  // handlers
+  /* ---------- HANDLERS ---------- */
   parts.push(...extractHTMLHandlers(noScripts));
   parts.push(...extractVueHandlers(noScripts));
   parts.push(...extractSvelteHandlers(noScripts));
 
-  // JSX / Astro / Vue expressions
-  parts.push(...extractJSExpressions(clean));
+  /* ---------- JSX / TEMPLATE ---------- */
+  parts.push(...extractBracedExpressions(clean));
 
-  // dynamic imports
-  const dyn = extractDynamicImports(clean, file);
-  deps.push(...dyn.deps);
-  parts.push(...dyn.calls);
+  /* ---------- IMPORTS ---------- */
+  deps.push(...extractDynamicImports(clean, file));
 
   return {
     code: [...new Set(parts)].join("\n"),

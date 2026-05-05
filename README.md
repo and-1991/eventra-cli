@@ -170,7 +170,6 @@ eventra send
   "events": [],
   "wrappers": [],
   "functionWrappers": [],
-  "aliases": {},
   "sync": {
     "include": ["**/*.{ts,tsx,js,jsx,vue,svelte,astro}"],
     "exclude": ["node_modules", "dist", ".next", ".git"]

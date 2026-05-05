@@ -40,7 +40,6 @@ function ensureTestConfig(dir: string) {
     events: [],
     wrappers: [],
     functionWrappers: [],
-    aliases: {},
     sync: {
       include: [
         "**/*.{ts,tsx,js,jsx,vue,svelte,astro}"

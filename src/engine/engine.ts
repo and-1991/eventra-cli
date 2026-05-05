@@ -2,16 +2,16 @@ import path from "path";
 import fs from "fs";
 
 import { TSService } from "./languageService";
-import { ScanResult, scanSource } from "./scanner";
+import { scanSource } from "./scanner";
 import { DependencyGraph } from "./graph";
 import { hash } from "./hash";
-import { EventraConfig } from "../types";
+import {EventraConfig, ScanResult} from "../types";
 import { isExternalFile } from "./boundary";
 
 export class EventraEngine {
   private ts: TSService;
   private graph: DependencyGraph;
-
+  private wrapperCache = new Map<string, string | null>();
   private fileResults = new Map<string, ScanResult>();
   private fileHash = new Map<string, string>();
 
@@ -71,10 +71,17 @@ export class EventraEngine {
       return this.empty();
     }
 
-    // обновляем graph
+    // update graph
     this.graph.update(file, source);
 
-    const res = scanSource(source, checker, config);
+    const res = scanSource(
+      source,
+      checker,
+      config,
+      new Set(),
+      undefined,
+      this.wrapperCache
+    );
     this.fileResults.set(file, res);
 
     return res;
@@ -86,6 +93,7 @@ export class EventraEngine {
     content: string,
     config: EventraConfig
   ) {
+    this.wrapperCache.clear();
     file = this.normalize(file);
 
     const res = this.scanFile(file, content, config);
@@ -124,7 +132,14 @@ export class EventraEngine {
 
       this.graph.update(abs, source);
 
-      const r = scanSource(source, checker, config);
+      const r = scanSource(
+        source,
+        checker,
+        config,
+        new Set(),
+        undefined,
+        this.wrapperCache
+      );
       this.fileResults.set(abs, r);
     }
 
@@ -144,6 +159,7 @@ export class EventraEngine {
 
   // REMOVE FILE
   removeFile(file: string, config?: EventraConfig) {
+    this.wrapperCache.clear();
     file = this.normalize(file);
 
     const dependents = this.graph.getAllDependentsDeep(file);
@@ -191,7 +207,10 @@ export class EventraEngine {
           wrappers: [],
           functionWrappers: [],
           sync: { include: [], exclude: [] },
-        }
+        },
+        new Set(),
+        undefined,
+        this.wrapperCache
       );
 
       this.fileResults.set(abs, r);
