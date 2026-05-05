@@ -13,25 +13,6 @@ function getCallName(expr: ts.Expression): string {
   return "";
 }
 
-function getJsxAttrName(name: ts.JsxAttributeName): string | null {
-  if (ts.isIdentifier(name)) return name.text;
-  if (ts.isJsxNamespacedName(name)) return name.name.text;
-  return null;
-}
-
-// unwrap
-function unwrap(expr: ts.Expression): ts.Expression {
-  while (
-    ts.isAsExpression(expr) ||
-    ts.isParenthesizedExpression(expr) ||
-    ts.isTypeAssertionExpression(expr) ||
-    ts.isNonNullExpression(expr)
-    ) {
-    expr = expr.expression;
-  }
-  return expr;
-}
-
 function isValidEvent(v: string) {
   return (
     v &&
@@ -42,41 +23,40 @@ function isValidEvent(v: string) {
   );
 }
 
-function isPropUsedInTracking(
-  fn: ts.FunctionLikeDeclaration,
-  checker: ts.TypeChecker,
-  prop: string
-) {
-  let found = false;
+function resolveFunctionDeep(
+  expr: ts.Expression,
+  checker: ts.TypeChecker
+): ts.FunctionLikeDeclaration | null {
+  let fn = resolveFunctionFromCall(expr, checker);
+  if (fn) return fn;
 
-  function visit(node: ts.Node) {
-    if (ts.isCallExpression(node)) {
-      if (!isTrackingCall(node, checker)) {
-        ts.forEachChild(node, visit);
-        return;
-      }
+  let symbol = checker.getSymbolAtLocation(expr);
 
-      for (const arg of node.arguments) {
-        const a = unwrap(arg as ts.Expression);
+  if (!symbol) return null;
 
-        if (
-          (ts.isIdentifier(a) && a.text === prop) ||
-          (ts.isPropertyAccessExpression(a) &&
-            a.name.text === prop)
-        ) {
-          found = true;
-        }
-      }
+  if (symbol.flags & ts.SymbolFlags.Alias) {
+    symbol = checker.getAliasedSymbol(symbol);
+  }
+
+  const resolvedSymbol =
+    resolveExportedSymbol(symbol, checker) ?? symbol;
+
+  for (const decl of resolvedSymbol.getDeclarations() ?? []) {
+    if (ts.isFunctionDeclaration(decl)) {
+      return decl;
     }
 
-    ts.forEachChild(node, visit);
+    if (
+      ts.isVariableDeclaration(decl) &&
+      decl.initializer &&
+      (ts.isArrowFunction(decl.initializer) ||
+        ts.isFunctionExpression(decl.initializer))
+    ) {
+      return decl.initializer;
+    }
   }
 
-  if (fn.body) {
-    visit(fn.body);
-  }
-
-  return found;
+  return null;
 }
 
 export type ScanResult = {
@@ -114,7 +94,10 @@ export function scanSource(
 
       const isTrackingByType = isTrackingCall(node, checker);
 
-      let resolvedFn = resolveFunctionFromCall(node.expression, checker);
+      const resolvedFn = resolveFunctionDeep(
+        node.expression,
+        checker
+      );
 
       const isAutoWrapper =
         resolvedFn && findTrackParamIndex(resolvedFn) !== null;
@@ -122,10 +105,12 @@ export function scanSource(
       let isTracking =
         isKnownWrapper ||
         isTrackingByType ||
-        isAutoWrapper ||
-        name.startsWith("$");
+        name.startsWith("$") ||
+        (isAutoWrapper &&
+          resolvedFn &&
+          resolvedFn.getSourceFile &&
+          !isExternalFile(resolvedFn.getSourceFile().fileName));
 
-      // fallback track(...)
       if (!isTracking) {
         if (
           ts.isPropertyAccessExpression(node.expression) &&
@@ -145,7 +130,7 @@ export function scanSource(
         return;
       }
 
-      // DETECT WRAPPERS
+      // DETECT WRAPPER
       if (
         !isKnownWrapper &&
         isAutoWrapper &&
@@ -169,9 +154,7 @@ export function scanSource(
         });
       }
 
-      let handled = false;
-
-      // MAIN RESOLVE
+      // STRICT EVENT RESOLVE
       if (resolvedFn) {
         const idx = findTrackParamIndex(resolvedFn);
 
@@ -185,27 +168,14 @@ export function scanSource(
           res.values.forEach(v => {
             if (isValidEvent(v)) events.add(v);
           });
-
-          handled = true;
         }
       }
 
-      // fallback
-      if (!handled) {
-        for (const arg of node.arguments) {
-          const res = resolveNodeValue(arg, checker, paramMap);
-
-          res.values.forEach(v => {
-            if (isValidEvent(v)) events.add(v);
-          });
-        }
-      }
-
-      // CROSS FILE
+      // CROSS-FILE
       if (resolvedFn) {
-        const sf = resolvedFn.getSourceFile();
+        const sf = resolvedFn.getSourceFile?.();
 
-        if (!visited.has(sf.fileName)) {
+        if (sf && !visited.has(sf.fileName)) {
           const res = scanSource(
             sf,
             checker,
@@ -216,100 +186,6 @@ export function scanSource(
           );
 
           res.events.forEach(e => events.add(e));
-        }
-      }
-    }
-
-    // JSX
-    if (
-      ts.isJsxSelfClosingElement(node) ||
-      ts.isJsxOpeningElement(node)
-    ) {
-      const tagNode =
-        ts.isPropertyAccessExpression(node.tagName)
-          ? node.tagName.name
-          : node.tagName;
-
-      let symbol = checker.getSymbolAtLocation(tagNode);
-
-      if (symbol) {
-        symbol = resolveExportedSymbol(symbol, checker) ?? symbol;
-      }
-
-      if (symbol && (symbol.flags & ts.SymbolFlags.Alias)) {
-        symbol = checker.getAliasedSymbol(symbol);
-      }
-
-      if (!symbol) {
-        ts.forEachChild(node, visit);
-        return;
-      }
-
-      const tagName =
-        ts.isPropertyAccessExpression(node.tagName)
-          ? node.tagName.name.getText()
-          : node.tagName.getText();
-
-      for (const decl of symbol.getDeclarations() ?? []) {
-        let fn: ts.FunctionLikeDeclaration | null = null;
-
-        if (ts.isFunctionDeclaration(decl)) fn = decl;
-
-        if (ts.isVariableDeclaration(decl) && decl.initializer) {
-          const init = decl.initializer;
-
-          if (
-            ts.isArrowFunction(init) ||
-            ts.isFunctionExpression(init)
-          ) {
-            fn = init;
-          }
-        }
-
-        if (!fn) continue;
-
-        const param = fn.parameters[0];
-        if (!param || !ts.isObjectBindingPattern(param.name)) continue;
-
-        for (const el of param.name.elements) {
-          const prop = el.name.getText();
-
-          const isEvent =
-            isPropUsedInTracking(fn, checker, prop) ||
-            config.wrappers.some(
-              w => w.name === tagName && w.prop === prop
-            );
-
-          if (!isEvent) continue;
-
-          const attr = node.attributes.properties.find(p => {
-            if (!ts.isJsxAttribute(p)) return false;
-            return getJsxAttrName(p.name) === prop;
-          }) as ts.JsxAttribute | undefined;
-
-          if (!attr || !attr.initializer) continue;
-
-          const expr = ts.isJsxExpression(attr.initializer)
-            ? attr.initializer.expression
-            : attr.initializer;
-
-          if (!expr) continue;
-
-          const paramMap = new Map<string, ts.Expression>();
-          paramMap.set(prop, expr);
-
-          const res = scanSource(
-            fn.getSourceFile(),
-            checker,
-            config,
-            visited,
-            depth + 1,
-            paramMap
-          );
-
-          res.events.forEach(e => events.add(e));
-
-          detectedComponentWrappers.set(tagName, prop);
         }
       }
     }

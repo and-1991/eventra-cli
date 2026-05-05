@@ -64,17 +64,17 @@ function extractJS(input: string): string[] {
   return result;
 }
 
-// Extract inline handlers (onclick="...")
+// Extract inline HTML handlers
 function extractInlineHandlers(input: string): string[] {
   const result: string[] = [];
 
-  const regex = /\bon\w+\s*=\s*["']([^"']+)["']/g;
+  const matches = input.matchAll(
+    /\bon\w+\s*=\s*["']([^"']+)["']/g
+  );
 
-  let match;
-  while ((match = regex.exec(input))) {
-    const code = match[1].trim();
-
-    if (code && /[a-zA-Z0-9_$]\s*\(/.test(code)) {
+  for (const m of matches) {
+    const code = m[1];
+    if (/[a-zA-Z0-9_$]\s*\(/.test(code)) {
       result.push(code);
     }
   }
@@ -90,47 +90,27 @@ function extractDynamicImports(
   const deps: string[] = [];
   const calls: string[] = [];
 
-  const regex = /import\(\s*["'](.+?)["']\s*\)/g;
+  const matches = input.matchAll(
+    /import\(\s*["'](.+?)["']\s*\)/g
+  );
 
-  let match;
-  while ((match = regex.exec(input))) {
-    const mod = match[1];
+  for (const m of matches) {
+    const mod = m[1];
 
     const resolved = mod.startsWith("/")
       ? path.resolve(process.cwd(), "." + mod)
       : path.resolve(path.dirname(file), mod);
 
     deps.push(resolved);
-  }
-
-  // also extract calls chained after import
-  const callRegex = /import\([^)]+\)\.then\(([^)]+)\)/g;
-
-  while ((match = callRegex.exec(input))) {
-    calls.push(match[1]);
+    calls.push(`import("${mod}")`);
   }
 
   return { deps, calls };
 }
 
-// Loose JS extractor
-function extractLooseJS(input: string): string[] {
-  const result: string[] = [];
-
-  const lines = input.split("\n");
-
-  for (const line of lines) {
-    const l = line.trim();
-
-    if (!l) continue;
-    if (l.startsWith("<")) continue;
-
-    if (/[a-zA-Z0-9_$]\s*\(/.test(l)) {
-      result.push(l);
-    }
-  }
-
-  return result;
+// Filter only probable tracking-related code
+function isProbablyTracking(code: string): boolean {
+  return /track|event|analytics/i.test(code);
 }
 
 // UNIVERSAL PARSER
@@ -179,27 +159,29 @@ export function parseUniversal(
     }
   }
 
-  // REMOVE scripts
+  // REMOVE SCRIPTS → TEMPLATE PART
   const noScripts = clean.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
 
   // INLINE HANDLERS
-  parts.push(...extractInlineHandlers(noScripts));
+  parts.push(
+    ...extractInlineHandlers(noScripts).filter(isProbablyTracking)
+  );
 
   // DYNAMIC IMPORTS
   const dyn = extractDynamicImports(clean, file);
   deps.push(...dyn.deps);
-  parts.push(...dyn.calls);
-
-  // LOOSE JS
-  parts.push(...extractLooseJS(noScripts));
+  parts.push(...dyn.calls.filter(isProbablyTracking));
 
   // EXPRESSIONS
   const extracted = extractJS(clean);
+
   for (const e of extracted) {
-    parts.push(e + ";");
+    if (isProbablyTracking(e)) {
+      parts.push(e + ";");
+    }
   }
 
   return {
