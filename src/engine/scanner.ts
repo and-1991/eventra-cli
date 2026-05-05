@@ -97,11 +97,7 @@ export function scanSource(
   const detectedFunctionWrappers = new Set<string>();
   const detectedComponentWrappers = new Map<string, string>();
 
-  if (
-    visited.has(source.fileName) ||
-    depth > 10 ||
-    visited.size > 200
-  ) {
+  if (visited.size > 200 || visited.has(source.fileName)) {
     return { events, detectedFunctionWrappers, detectedComponentWrappers };
   }
 
@@ -110,8 +106,7 @@ export function scanSource(
   function visit(node: ts.Node) {
     // CALL EXPRESSIONS
     if (ts.isCallExpression(node)) {
-      const expr = unwrap(node.expression);
-      const name = getCallName(expr);
+      const name = getCallName(node.expression);
 
       const isKnownWrapper = config.functionWrappers.some(
         w => w.name === name
@@ -119,7 +114,7 @@ export function scanSource(
 
       const isTrackingByType = isTrackingCall(node, checker);
 
-      let resolvedFn = resolveFunctionFromCall(expr, checker);
+      let resolvedFn = resolveFunctionFromCall(node.expression, checker);
 
       const isAutoWrapper =
         resolvedFn && findTrackParamIndex(resolvedFn) !== null;
@@ -127,21 +122,19 @@ export function scanSource(
       let isTracking =
         isKnownWrapper ||
         isTrackingByType ||
-        name.startsWith("$") ||
-        (isAutoWrapper &&
-          resolvedFn &&
-          !isExternalFile(resolvedFn.getSourceFile().fileName));
+        isAutoWrapper ||
+        name.startsWith("$");
 
-      // fallback
+      // fallback track(...)
       if (!isTracking) {
         if (
-          ts.isPropertyAccessExpression(expr) &&
-          expr.name.text === "track"
+          ts.isPropertyAccessExpression(node.expression) &&
+          node.expression.name.text === "track"
         ) {
           isTracking = true;
         } else if (
-          ts.isIdentifier(expr) &&
-          expr.text === "track"
+          ts.isIdentifier(node.expression) &&
+          node.expression.text === "track"
         ) {
           isTracking = true;
         }
@@ -152,7 +145,7 @@ export function scanSource(
         return;
       }
 
-      // detect wrapper
+      // DETECT WRAPPERS
       if (
         !isKnownWrapper &&
         isAutoWrapper &&
@@ -162,6 +155,7 @@ export function scanSource(
         detectedFunctionWrappers.add(name);
       }
 
+      // PARAM MAP
       const paramMap = new Map(inheritedParamMap ?? []);
 
       if (resolvedFn && ts.isFunctionLike(resolvedFn)) {
@@ -183,7 +177,7 @@ export function scanSource(
 
         if (idx !== null && node.arguments[idx]) {
           const res = resolveNodeValue(
-            unwrap(node.arguments[idx]),
+            node.arguments[idx],
             checker,
             paramMap
           );
@@ -196,14 +190,10 @@ export function scanSource(
         }
       }
 
-      // FALLBACK
+      // fallback
       if (!handled) {
         for (const arg of node.arguments) {
-          const res = resolveNodeValue(
-            unwrap(arg),
-            checker,
-            paramMap
-          );
+          const res = resolveNodeValue(arg, checker, paramMap);
 
           res.values.forEach(v => {
             if (isValidEvent(v)) events.add(v);
@@ -230,7 +220,7 @@ export function scanSource(
       }
     }
 
-    // JSX COMPONENTS
+    // JSX
     if (
       ts.isJsxSelfClosingElement(node) ||
       ts.isJsxOpeningElement(node)

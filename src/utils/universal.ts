@@ -1,9 +1,7 @@
 import path from "path";
 import { ParseResult } from "../types";
 
-/**
- * Strip comments (HTML + JS)
- */
+// Strip comments (HTML + JS)
 function stripComments(input: string): string {
   return input
     .replace(/<!--[\s\S]*?-->/g, "")
@@ -11,9 +9,7 @@ function stripComments(input: string): string {
     .replace(/\/\/.*$/gm, "");
 }
 
-/**
- * Extract JS expressions
- */
+// Extract JS expressions inside {}
 function extractJS(input: string): string[] {
   const result: string[] = [];
 
@@ -68,9 +64,56 @@ function extractJS(input: string): string[] {
   return result;
 }
 
-/**
- * Loose JS extractor
- */
+// Extract inline handlers (onclick="...")
+function extractInlineHandlers(input: string): string[] {
+  const result: string[] = [];
+
+  const regex = /\bon\w+\s*=\s*["']([^"']+)["']/g;
+
+  let match;
+  while ((match = regex.exec(input))) {
+    const code = match[1].trim();
+
+    if (code && /[a-zA-Z0-9_$]\s*\(/.test(code)) {
+      result.push(code);
+    }
+  }
+
+  return result;
+}
+
+// Extract dynamic imports
+function extractDynamicImports(
+  input: string,
+  file: string
+): { deps: string[]; calls: string[] } {
+  const deps: string[] = [];
+  const calls: string[] = [];
+
+  const regex = /import\(\s*["'](.+?)["']\s*\)/g;
+
+  let match;
+  while ((match = regex.exec(input))) {
+    const mod = match[1];
+
+    const resolved = mod.startsWith("/")
+      ? path.resolve(process.cwd(), "." + mod)
+      : path.resolve(path.dirname(file), mod);
+
+    deps.push(resolved);
+  }
+
+  // also extract calls chained after import
+  const callRegex = /import\([^)]+\)\.then\(([^)]+)\)/g;
+
+  while ((match = callRegex.exec(input))) {
+    calls.push(match[1]);
+  }
+
+  return { deps, calls };
+}
+
+// Loose JS extractor
 function extractLooseJS(input: string): string[] {
   const result: string[] = [];
 
@@ -90,16 +133,7 @@ function extractLooseJS(input: string): string[] {
   return result;
 }
 
-/**
- * UNIVERSAL PARSER
- * Support:
- * - React / JSX
- * - Vue
- * - Svelte
- * - Astro
- * - HTML + JS
- * - SSR
- */
+// UNIVERSAL PARSER
 export function parseUniversal(
   content: string,
   file: string
@@ -138,7 +172,6 @@ export function parseUniversal(
   for (const m of scripts) {
     const attrs = m[1];
 
-    // skip JSON
     if (/type=["']application\/json/.test(attrs)) continue;
 
     if (m[2].trim()) {
@@ -146,11 +179,19 @@ export function parseUniversal(
     }
   }
 
-  // REMOVE SCRIPTS → TEMPLATE PART
+  // REMOVE scripts
   const noScripts = clean.replace(
     /<script[\s\S]*?<\/script>/g,
     ""
   );
+
+  // INLINE HANDLERS
+  parts.push(...extractInlineHandlers(noScripts));
+
+  // DYNAMIC IMPORTS
+  const dyn = extractDynamicImports(clean, file);
+  deps.push(...dyn.deps);
+  parts.push(...dyn.calls);
 
   // LOOSE JS
   parts.push(...extractLooseJS(noScripts));
@@ -161,7 +202,6 @@ export function parseUniversal(
     parts.push(e + ";");
   }
 
-  // RESULT
   return {
     code: [...new Set(parts)].join("\n"),
     deps: [...new Set(deps.filter(Boolean))],
