@@ -54,15 +54,27 @@ export function scanSource(
 
   // TRACK DETECTION
   function isTrackCall(expr: ts.Expression) {
-    if (ts.isIdentifier(expr)) {
-      return expr.text === "track";
+    const name = getCallName(expr);
+
+    // direct track()
+    if (name === "track") {
+      return true;
     }
 
-    if (ts.isPropertyAccessExpression(expr)) {
-      return expr.name.text === "track";
+    // configured wrappers
+    if (
+      config.functionWrappers?.some(
+        w => w.name === name
+      )
+    ) {
+      return true;
     }
 
-    return false;
+    // *.track()
+    return ts.isPropertyAccessExpression(expr) &&
+      expr.name.text === "track";
+
+
   }
 
   function extractTrackCall(
