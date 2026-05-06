@@ -59,15 +59,7 @@ export class TSService {
 
     const allFiles = ts.sys.readDirectory(
       root,
-      [
-        ".ts",
-        ".tsx",
-        ".js",
-        ".jsx",
-        ".vue",
-        ".svelte",
-        ".astro"
-      ],
+      [".ts", ".tsx", ".js", ".jsx"],
       undefined,
       undefined
     );
@@ -88,12 +80,7 @@ export class TSService {
       getScriptKind: (fileName) => {
         fileName = this.normalize(fileName);
 
-        if (
-          fileName.endsWith(".tsx") ||
-          fileName.endsWith(".vue") ||
-          fileName.endsWith(".svelte") ||
-          fileName.endsWith(".astro")
-        ) {
+        if (fileName.endsWith(".tsx")) {
           return ts.ScriptKind.TSX;
         }
 
@@ -131,7 +118,8 @@ export class TSService {
 
             return ts.ScriptSnapshot.fromString(content);
           }
-        } catch {}
+        } catch {
+        }
 
         return ts.ScriptSnapshot.fromString("");
       },

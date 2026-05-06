@@ -65,7 +65,7 @@ export async function sync() {
       const parsed = cache.get(file);
       if (!parsed) continue;
 
-      const res = engine.updateFile(
+      const res = engine.scanFile(
         getVirtualFile(file),
         parsed.content,
         config
