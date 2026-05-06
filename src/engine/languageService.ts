@@ -21,7 +21,7 @@ export class TSService {
     let compilerOptions: ts.CompilerOptions = {
       allowJs: true,
       allowNonTsExtensions: true,
-      jsx: ts.JsxEmit.React,
+      jsx: ts.JsxEmit.Preserve,
       jsxImportSource: "react",
       moduleResolution: ts.ModuleResolutionKind.Node16,
       target: ts.ScriptTarget.ESNext,
@@ -59,7 +59,15 @@ export class TSService {
 
     const allFiles = ts.sys.readDirectory(
       root,
-      [".ts", ".tsx", ".js", ".jsx"],
+      [
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+        ".vue",
+        ".svelte",
+        ".astro"
+      ],
       undefined,
       undefined
     );
@@ -77,32 +85,37 @@ export class TSService {
         file = this.normalize(file);
         return this.files.get(file)?.version.toString() ?? "0";
       },
+      getScriptKind: (fileName) => {
+        fileName = this.normalize(fileName);
 
+        if (
+          fileName.endsWith(".tsx") ||
+          fileName.endsWith(".vue") ||
+          fileName.endsWith(".svelte") ||
+          fileName.endsWith(".astro")
+        ) {
+          return ts.ScriptKind.TSX;
+        }
+
+        if (fileName.endsWith(".ts")) {
+          return ts.ScriptKind.TS;
+        }
+
+        if (fileName.endsWith(".jsx")) {
+          return ts.ScriptKind.JSX;
+        }
+
+        if (fileName.endsWith(".js")) {
+          return ts.ScriptKind.JS;
+        }
+
+        return ts.ScriptKind.Unknown;
+      },
       getScriptSnapshot: (file) => {
         file = this.normalize(file);
-
-        // из памяти
         const f = this.files.get(file);
         if (f) {
           return ts.ScriptSnapshot.fromString(f.content);
-        }
-
-        // virtual TSX (vue/svelte/astro)
-        if (file.endsWith(".tsx")) {
-          const original = file.replace(/\.tsx$/, "");
-
-          if (fs.existsSync(original)) {
-            const content = fs.readFileSync(original, "utf-8");
-
-            this.files.set(file, {
-              content,
-              version: 1,
-            });
-
-            this.fileNames.add(file);
-
-            return ts.ScriptSnapshot.fromString(content);
-          }
         }
 
         try {
@@ -148,12 +161,6 @@ export class TSService {
     return path.resolve(file).replace(/\\/g, "/");
   }
 
-  private ensureProgram() {
-    try {
-      this.service.getProgram();
-    } catch {}
-  }
-
   // PUBLIC API
   updateFile(file: string, content: string) {
     file = this.normalize(file);
@@ -166,8 +173,6 @@ export class TSService {
     });
 
     this.fileNames.add(file);
-
-    this.ensureProgram();
   }
 
   removeFile(file: string) {
@@ -175,8 +180,6 @@ export class TSService {
 
     this.files.delete(file);
     this.fileNames.delete(file);
-
-    this.ensureProgram();
   }
 
   getProgram() {
