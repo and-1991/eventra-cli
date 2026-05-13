@@ -9,17 +9,6 @@
 [![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
 [![License](https://img.shields.io/npm/l/@eventra_dev/eventra-cli)]()
 
-<p align="center">
-<img src="./assets/eventra-icon-animated.svg" width="120">
-</p>
-
-# Eventra CLI
-
-[![npm version](https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
-[![npm downloads](https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
-[![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/npm/l/@eventra_dev/eventra-cli)]()
-
 Eventra CLI automatically discovers and tracks event usage across your codebase — even through abstractions like wrappers, propagation chains, variables, and cross-file calls.
 
 ---
