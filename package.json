@@ -1,22 +1,32 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "0.2.4",
-  "description": "Eventra CLI",
+  "version": "0.3.1",
+  "description": "Static analytics event extraction CLI powered by the TypeScript compiler API",
+  "license": "MIT",
   "type": "commonjs",
   "bin": {
     "eventra": "./dist/index.js"
   },
-  "access": "public",
+  "main": "./dist/index.js",
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "repository": {
     "type": "git",
     "url": "https://github.com/and-1991/eventra-cli"
   },
+
   "homepage": "https://eventra.dev",
-  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  },
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "tsx tests/run.ts"
+    "test": "tsx tests/run.ts",
+    "clean": "rm -rf dist"
   },
   "dependencies": {
     "chalk": "^4.1.2",
@@ -25,14 +35,27 @@
     "fast-glob": "^3.3.3",
     "fs-extra": "^11.2.0",
     "inquirer": "^8.2.7",
-    "ts-morph": "^27.0.2"
+    "typescript": "^5.3.0"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
     "@types/inquirer": "^9.0.9",
     "@types/node": "^20.0.0",
     "cross-spawn": "^7.0.6",
-    "tsx": "^4.7.0",
-    "typescript": "^5.3.0"
+    "tsx": "^4.7.0"
+  },
+  "keywords": [
+    "analytics",
+    "event-tracking",
+    "static-analysis",
+    "typescript",
+    "compiler-api",
+    "ast",
+    "cli",
+    "telemetry",
+    "eventra"
+  ],
+  "publishConfig": {
+    "access": "public"
   }
 }
