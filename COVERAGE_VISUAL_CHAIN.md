@@ -399,7 +399,7 @@ These are intentionally NOT supported yet:
 - ❌ Dynamic eval()
 - ❌ Reflection 
 - ❌ Full control-flow graph 
-- ❌ Deep recursive interprocedural analysis 
+- ❌ Full recursive interprocedural graph traversal
 - ❌ Framework template analysis (currently disabled)
 
 ---
@@ -431,8 +431,8 @@ Runtime instrumentation SDK
 ✅ Incremental TS compiler
 ✅ Symbol-aware analysis
 ✅ Cross-file resolution
-✅ Wrapper propagation
-✅ Static evaluation
+✅ Semantic parameter propagation
+✅ Partial static value evaluation
 ✅ Cache-based extraction
 ✅ Dependency graph invalidation
 ✅ TypeChecker-powered resolution

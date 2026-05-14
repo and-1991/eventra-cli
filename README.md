@@ -17,7 +17,7 @@ Eventra CLI automatically discovers and tracks event usage across your codebase 
 
 Eventra scans your JavaScript and TypeScript codebase using a TypeScript-powered semantic engine and extracts analytics event usage statically.
 
-It supports wrapper propagation, return propagation, cross-file resolution, and incremental dependency-aware analysis.
+It supports semantic parameter propagation, return propagation, cross-file resolution, and incremental dependency-aware analysis.
 
 No runtime instrumentation required.
 
@@ -139,7 +139,7 @@ function trackFeature(name: string) {
 trackFeature("click")
 ```
 
-##### Wrapper propagation
+##### Semantic parameter propagation
 
 ```ts
 function trackEvent(props: {

@@ -198,7 +198,7 @@ track(buildEvent("signup"))
 
 ---
 
-# Wrapper Propagation
+# Semantic parameter propagation
 
 Eventra performs semantic propagation analysis instead of simple wrapper detection.
 

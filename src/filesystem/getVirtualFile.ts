@@ -1,6 +1,3 @@
-export function getVirtualFile(
-  file: string,
-): string {
-
+export function getVirtualFile(file: string): string {
   return file;
 }

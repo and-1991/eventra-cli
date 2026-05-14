@@ -1,39 +1,32 @@
 import fs from "fs-extra";
 import path from "path";
-import { EventraConfig } from "../types";
+
+import {EventraConfig,} from "../types";
 
 export const CONFIG_NAME = "eventra.json";
 
-export function normalizeConfig(
-  config: Partial<EventraConfig>
-): EventraConfig {
+const DEFAULT_INCLUDE = ["**/*.{ts,tsx,js,jsx}"];
+
+const DEFAULT_EXCLUDE = ["node_modules", "dist", ".next", ".git"];
+
+export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
+
   return {
     apiKey: config.apiKey ?? "",
-    events: config.events ?? [],
     endpoint: config.endpoint ?? "",
-    wrappers: config.wrappers ?? [],
-    functionWrappers: config.functionWrappers ?? [],
-    sync: config.sync ?? {
-      include: [
-        "**/*.{ts,tsx,js,jsx,vue,svelte,astro}"
-      ],
-      exclude: [
-        "node_modules",
-        "dist",
-        ".next",
-        ".git"
-      ]
-    }
+    events: config.events ?? [],
+    sync: {
+      include: config.sync?.include ?? DEFAULT_INCLUDE,
+      exclude: config.sync?.exclude ?? DEFAULT_EXCLUDE,
+    },
   };
 }
 
 export async function loadConfig(): Promise<EventraConfig | null> {
   const configPath = path.join(process.cwd(), CONFIG_NAME);
-
-  if (!(await fs.pathExists(configPath))) {
+  if (!await fs.pathExists(configPath)) {
     return null;
   }
-
   try {
     const config = await fs.readJSON(configPath);
     return normalizeConfig(config);
@@ -42,12 +35,8 @@ export async function loadConfig(): Promise<EventraConfig | null> {
   }
 }
 
-export async function saveConfig(config: EventraConfig) {
+export async function saveConfig(config: EventraConfig): Promise<void> {
   const configPath = path.join(process.cwd(), CONFIG_NAME);
 
-  const normalized = normalizeConfig(config);
-
-  await fs.writeJSON(configPath, normalized, {
-    spaces: 2
-  });
+  await fs.writeJSON(configPath, normalizeConfig(config), {spaces: 2});
 }
