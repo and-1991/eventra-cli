@@ -1,32 +1,19 @@
 import chalk from "chalk";
 import inquirer from "inquirer";
-import {
-  loadConfig,
-  saveConfig
-} from "../config/config";
 
+import {loadConfig, saveConfig} from "../config/config";
 import pkg from "../../package.json";
 
 const CLI_VERSION = pkg.version;
 
 export async function send() {
   const config = await loadConfig();
-
-  const endpoint =
-    config?.endpoint ||
-    process.env.EVENTRA_ENDPOINT;
-
+  const endpoint = config?.endpoint || process.env.EVENTRA_ENDPOINT;
   if (!config) {
-    console.log(
-      chalk.red(
-        "eventra.json not found. Run 'eventra init'"
-      )
-    );
+    console.log(chalk.red("eventra.json not found. Run 'eventra init'"));
     return;
   }
-
   let apiKey = config.apiKey;
-
   // ask api key
   if (!apiKey) {
     const answers =
@@ -34,56 +21,33 @@ export async function send() {
         {
           type: "input",
           name: "apiKey",
-          message:
-            "Enter your API key:"
+          message: "Enter your API key:"
         }
       ]);
-
     apiKey = answers.apiKey;
-
-    config.apiKey = apiKey;
-
-    await saveConfig(config);
-
-    console.log(
-      chalk.green("API key saved")
-    );
+    await saveConfig({
+      ...config,
+      apiKey,
+    });
+    console.log(chalk.green("API key saved"));
   }
-
   // no events
   if (!config.events?.length) {
-    console.log(
-      chalk.yellow(
-        "No events found. Run 'eventra sync'"
-      )
-    );
+    console.log(chalk.yellow("No events found. Run 'eventra sync'"));
     return;
   }
-
   if (!apiKey) {
-    console.log(
-      chalk.red("API key required")
-    );
+    console.log(chalk.red("API key required"));
     return;
   }
-
   if (!endpoint) {
-    console.log(
-      chalk.red("Endpoint not configured")
-    );
+    console.log(chalk.red("Endpoint not configured"));
     return;
   }
-
   console.log("");
-  console.log(
-    chalk.blue(
-      `Sending ${config.events.length} events...`
-    )
-  );
-
+  console.log(chalk.blue(`Sending ${config.events.length} events...`));
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 10000);
-
   try {
     const res = await fetch(
       endpoint,
@@ -97,8 +61,7 @@ export async function send() {
         body: JSON.stringify({
           events: config.events,
           cli: {
-            name:
-              "@eventra_dev/eventra-cli",
+            name: "@eventra_dev/eventra-cli",
             version: CLI_VERSION,
             runtime: "node"
           }
@@ -106,105 +69,41 @@ export async function send() {
         signal: controller.signal
       },
     );
-
     if (!res.ok) {
-      console.log(
-        chalk.red(
-          `Request failed (${res.status})`
-        )
-      );
-
+      console.log(chalk.red(`Request failed (${res.status})`));
       try {
-        const text =
-          await res.text();
-
-        console.log(
-          chalk.gray(text)
-        );
-      } catch {}
-
+        const text = await res.text();
+        console.log(chalk.gray(text));
+      } catch {
+      }
       return;
     }
-
-    const data =
-      await res.json();
-
-    console.log(
-      chalk.green(
-        "Events registered successfully"
-      )
+    const data = await res.json();
+    console.log(chalk.green("Events registered successfully")
     );
-
     // created
     if (data.created?.length) {
-      console.log(
-        chalk.green("\nNew events:")
-      );
-
-      data.created.forEach(
-        (e: string) =>
-          console.log(
-            chalk.green(
-              `+ ${e}`
-            )
-          )
-      );
+      console.log(chalk.green("\nNew events:"));
+      data.created.forEach((e: string) => console.log(chalk.green(`+ ${e}`)));
     }
-
     // existing
     if (data.existing?.length) {
-      console.log(
-        chalk.gray(
-          "\nExisting events:"
-        )
-      );
-
-      data.existing.forEach(
-        (e: string) =>
-          console.log(
-            chalk.gray(
-              `• ${e}`
-            )
-          )
-      );
+      console.log(chalk.gray("\nExisting events:"));
+      data.existing.forEach((e: string) => console.log(chalk.gray(`• ${e}`)));
     }
-
     // processing notice
     if (data.created?.length) {
       console.log("");
-      console.log(
-        chalk.yellow(
-          "Events queued for processing (~2 min)"
-        )
-      );
-
-      console.log(
-        chalk.gray(
-          "They will appear in dashboard shortly"
-        )
+      console.log(chalk.yellow("Events queued for processing (~2 min)"));
+      console.log(chalk.gray("They will appear in dashboard shortly")
       );
     }
-
     console.log("");
-
-    console.log(
-      chalk.gray(
-        `Sent ${config.events.length} events`
-      )
-    );
-
+    console.log(chalk.gray(`Sent ${config.events.length} events`));
   } catch (err) {
-    console.log(
-      chalk.red(
-        "Network error"
-      )
-    );
-
+    console.log(chalk.red("Network error"));
     if (err instanceof Error) {
-      console.log(
-        chalk.gray(
-          err.message
-        )
+      console.log(chalk.gray(err.message)
       );
     }
   } finally {
