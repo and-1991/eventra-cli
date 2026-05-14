@@ -1,353 +1,154 @@
-# Eventra CLI Architecture
+# Eventra CLI — System Architecture
 
-## High-Level Flow
+## Overview
 
-FILES → CompilerContext → scanSource → extractEvents → EventraEngine → CLI
+Eventra is an incremental semantic TypeScript analysis platform for static analytics event extraction.
+
+The system consists of:
+
+* semantic analysis core
+* incremental TypeScript compiler engine
+* propagation analysis layer
+* plugin-oriented extraction architecture
+* ingest and aggregation backend
+* workspace-isolated analytics infrastructure
+
+Eventra statically extracts analytics events from JavaScript and TypeScript codebases without runtime instrumentation.
 
 ---
 
-## Diagram
+# High-Level Architecture
 
-```
-                +-------------------+
-                |   Source Files    |
-                | ts/js             |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                |   ProcessedFile   |
-                | normalized TS AST |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                | CompilerContext   |
-                | TS Program/Types  |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                |    scanSource     |
-                | semantic indexing |
-                +----+------+-------+
-                     |      |
-                     |      |
-                     v      v
-          +----------------+----------------+
-          |                                 |
-+-------------------+            +-----------------------+
-| Function Wrappers |            | Return Propagation    |
-+-------------------+            +-----------------------+
-          |                                 |
-          +---------------+-----------------+
-                          |
-                          v
-                +-------------------+
-                |  extractEvents    |
-                | resolveNodeValue  |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                |  EventraEngine    |
-                | caching + graph   |
-                +---------+---------+
-                          |
-                          v
-                +-------------------+
-                | CLI Commands      |
-                | sync/check/watch  |
-                +-------------------+
+```text
+Source Files
+     |
+     v
+TypeScript Compiler API
+     |
+     v
+Incremental Compiler Context
+     |
+     v
+Semantic Scanner
+     |
+     +-----------------------------+
+     |                             |
+     v                             v
+Sink Detection              Wrapper Analysis
+     |                             |
+     +-------------+---------------+
+                   |
+                   v
+         Semantic Propagation
+                   |
+                   v
+         Static Value Resolver
+                   |
+                   v
+            Event Extraction
+                   |
+                   v
+             Final Event Set
 ```
 
 ---
 
-# Core Architecture
+# Core Analysis Engine
 
-## 1. Processing Layer
+## Engine Type
 
-Normalizes JS/TS source files into TypeScript AST-compatible sources.
+Eventra is:
 
-### Supported
+```text
+Incremental Semantic TypeScript Analysis Engine
+```
 
-* TypeScript
-* JavaScript
+NOT:
 
-### Components
+```text
+Regex scanner
+```
 
-* `processFile.ts`
+and NOT:
 
-### Output
+```text
+Runtime instrumentation SDK
+```
+
+---
+
+# Semantic Analysis Pipeline
+
+## Resolution Flow
+
+```text
+CallExpression
+      |
+      v
+resolveFunctionFromCall()
+      |
+      +-------------------+
+      |                   |
+      v                   v
+Alias Resolution   Export Resolution
+      |                   |
+      +---------+---------+
+                |
+                v
+Resolved Function
+                |
+                v
+WrapperRegistry
+                |
+                v
+Propagation Metadata
+                |
+                v
+resolveNodeValue()
+                |
+                v
+Final Static Values
+```
+
+---
+
+# Static Resolution Coverage
+
+## Supported
+
+### Direct tracking
 
 ```ts
-interface ProcessedFile {
-  fileName: string;
-  scriptKind: ts.ScriptKind;
-  content: string;
-  dependencies: string[];
-}
+track("signup")
+analytics.track("purchase")
+sdk?.track("checkout")
+sdk["track"]("login")
 ```
 
 ---
 
-# 2. Compiler Layer
-
-Provides incremental TypeScript infrastructure.
-
-## Responsibilities
-
-* Source file management
-* Incremental program rebuilds
-* Module resolution
-* Type checker access
-* Dependency graph updates
-* Incremental invalidation
-
-## Components
-
-### `compilerContext.ts`
-
-Main TypeScript orchestration layer.
-
-### `documentRegistry.ts`
-
-Stores snapshots and versions.
-
-### `importGraph.ts`
-
-Tracks file dependency graph.
-
-### `scheduler.ts`
-
-Batched async updates.
-
----
-
-# 3. Engine Layer
-
-Performs semantic analysis and extraction.
-
----
-
-## `scanSource`
-
-Builds semantic index from AST.
-
-### Detects
-
-* `track(...)`
-* `tracker.track(...)`
-* wrapper functions
-* propagation wrappers
-* imported wrappers
-* return propagation
-
-### Produces
-
-```ts
-interface FileSemanticIndex {
-  sinks: TrackSink[];
-  trackCalls: TrackCall[];
-  wrappers: WrapperSemanticInfo[];
-}
-```
-
----
-
-## `extractEvents`
-
-Extracts concrete event names from semantic index.
-
-Uses:
-
-* `resolveNodeValue`
-* caches
-* export resolution
-* propagation analysis
-* symbol analysis
-
----
-
-## `resolveNodeValue`
-
-Static evaluator capable of resolving:
-
-### Supported
-
-```ts
-track("click")
-
-const EVENT = "click"
-track(EVENT)
-
-track(`click_${type}`)
-
-track(condition ? "a" : "b")
-
-track(["a", "b"])
-
-track({
-  event: "click"
-})
-
-track(EVENTS.CLICK)
-
-track(buildEvent("signup"))
-```
-
----
-
-# Semantic parameter propagation
-
-Eventra performs semantic propagation analysis instead of simple wrapper detection.
-
-```ts
-function trackFeature(name: string) {
-  track(name)
-}
-
-trackFeature("signup")
-```
-
-Supports:
-
-* direct parameter propagation
-* object property propagation
-* destructuring propagation
-* nested propagation
-
----
-
-# Return Propagation
-
-Eventra resolves parameter propagation through returned values.
-
-```ts
-function buildEvent(name: string) {
-  return name
-}
-
-track(buildEvent("purchase"))
-```
-
-Powered by:
-
-```ts
-analyzeReturnPropagation()
-```
-
----
-
-# Caching
-
-### `EvaluationCache`
-
-Resolved value cache.
-
-### `ResolvedCallCache`
-
-Resolved function cache.
-
-### `ResolvedExportCache`
-
-Resolved export symbol cache.
-
-### `WrapperRegistry`
-
-Semantic wrapper registry.
-
----
-
-# 4. EventraEngine
-
-Central orchestration layer.
-
-## Responsibilities
-
-* Incremental analysis
-* File synchronization
-* Cache invalidation
-* Dependency propagation
-* Aggregation
-* Batched updates
-
-## Main APIs
-
-```ts
-preloadFile()
-updateFile()
-syncFile()
-removeFile()
-scanFile()
-getAllEvents()
-getDiagnostics()
-```
-
----
-
-# 5. CLI Layer
-
-User-facing commands.
-
-## Commands
-
-### `eventra init`
-
-Creates config.
-
-### `eventra sync`
-
-Scans project and updates:
-
-* events
-* wrappers
-* propagation metadata
-
-### `eventra check`
-
-Validates config against source.
-
-### `eventra watch`
-
-Realtime incremental scanning.
-
-### `eventra send`
-
-Uploads events to backend.
-
----
-
-# Detection Capabilities
-
-## Direct Tracking
-
-```ts
-track("event")
-tracker.track("event")
-```
-
----
-
-## Variables
+### Variables
 
 ```ts
 const EVENT = "signup"
-
 track(EVENT)
 ```
 
 ---
 
-## Enums
+### Enums
 
 ```ts
+enum EVENTS {
+  LOGIN = "login"
+}
+
 track(EVENTS.LOGIN)
 ```
 
 ---
 
-## Template Strings
+### Template literals
 
 ```ts
 track(`feature_${type}`)
@@ -355,15 +156,23 @@ track(`feature_${type}`)
 
 ---
 
-## Conditional Expressions
+### String concatenation
 
 ```ts
-track(isAdmin ? "admin" : "user")
+track("feature_" + type)
 ```
 
 ---
 
-## Arrays
+### Conditional expressions
+
+```ts
+track(flag ? "a" : "b")
+```
+
+---
+
+### Arrays
 
 ```ts
 track(["a", "b"])
@@ -371,70 +180,570 @@ track(["a", "b"])
 
 ---
 
-## Object Payloads
+### Object payloads
 
 ```ts
 track({
-  event: "checkout"
+  event: "signup"
 })
 ```
 
 ---
 
-## Function Wrappers
+### Shorthand payloads
 
 ```ts
-function trackFeature(name: string) {
-  track(name)
-}
-
-trackFeature("click")
+track({ event })
 ```
 
 ---
 
-## Return Propagation
+### Wrapper functions
 
 ```ts
-function build(name: string) {
-  return name
+function trackFeature(event) {
+  track(event)
 }
-
-track(build("purchase"))
 ```
 
 ---
 
-## Cross-file Resolution
+### Multiple wrapper arguments
+
+```ts
+function wrapper(a, b, event) {
+  track(event)
+}
+```
+
+---
+
+### Cross-file wrapper propagation
 
 ```ts
 import { trackFeature } from "./tracker"
-
-trackFeature("purchase")
 ```
 
 ---
 
-# Incremental Architecture
+### Return propagation
 
-Eventra does NOT rescan the whole project on every update.
+```ts
+function build(name) {
+  return name
+}
 
-Instead:
-
-1. Updates changed file
-2. Invalidates affected symbol caches
-3. Rebuilds TS incrementally
-4. Traverses dependency graph
-5. Re-analyzes affected files only
+track(build("signup"))
+```
 
 ---
 
-# Goal
+### Property propagation
 
-Static analytics extraction with:
+```ts
+track(payload.event)
+track(payload?.event)
+track(payload["event"])
+```
 
-* zero runtime overhead
-* semantic propagation analysis
-* cross-file resolution
-* incremental performance
-* CI/CD compatibility
+---
+
+### Destructured parameters
+
+```ts
+function wrapper({ event }) {
+  track(event)
+}
+```
+
+---
+
+### Aliased destructuring
+
+```ts
+function wrapper({ event: name }) {
+  track(name)
+}
+```
+
+---
+
+### Nested destructuring
+
+```ts
+function wrapper({
+  meta: { event }
+}) {
+  track(event)
+}
+```
+
+---
+
+# Incremental Analysis Engine
+
+## Core Components
+
+### CompilerContext
+
+Maintains incremental TypeScript program state.
+
+---
+
+### Scheduler
+
+Coordinates async file updates and incremental rebuilds.
+
+---
+
+### ImportGraph
+
+Tracks dependency relationships between files.
+
+Provides:
+
+* dependent collection
+* selective invalidation
+* incremental rescans
+
+---
+
+### FileSemanticIndex
+
+Stores:
+
+* sinks
+* wrappers
+* track calls
+* semantic metadata
+
+---
+
+# Cache Architecture
+
+## EvaluationCache
+
+Caches resolved identifier values.
+
+---
+
+## ResolvedCallCache
+
+Caches resolved call targets.
+
+---
+
+## ResolvedExportCache
+
+Caches normalized exported symbols.
+
+---
+
+## ReturnPropagationCache
+
+Caches return propagation analysis.
+
+---
+
+# Cache Invalidation
+
+Eventra invalidates only affected semantic state.
+
+```text
+Changed File
+      |
+      v
+Dependency Graph
+      |
+      v
+Affected Dependents
+      |
+      v
+Selective Cache Invalidation
+      |
+      v
+Incremental Re-analysis
+```
+
+---
+
+# Wrapper Propagation System
+
+## WrapperRegistry
+
+Stores semantic propagation metadata for wrappers.
+
+Supports:
+
+* local wrappers
+* imported wrappers
+* normalized exports
+* parameter propagation
+* property propagation
+
+---
+
+## Propagation Metadata
+
+```ts
+{
+  sourceParameter,
+  sourceParameterIndex,
+  propertyPath,
+  targetNode,
+}
+```
+
+---
+
+# Resolver Capabilities
+
+## Current Resolver Supports
+
+* identifier resolution
+* export normalization
+* enum resolution
+* object literal resolution
+* property access resolution
+* wrapper-aware resolution
+* return propagation
+* static string evaluation
+* partial interprocedural propagation
+
+---
+
+# Current Non-Goals
+
+These are intentionally NOT supported yet.
+
+## Runtime execution
+
+```ts
+fetch()
+localStorage
+process.env
+```
+
+---
+
+## Dynamic evaluation
+
+```ts
+eval()
+```
+
+---
+
+## Full control-flow graph
+
+---
+
+## Deep recursive interprocedural graph traversal
+
+---
+
+## Mutation tracking
+
+```ts
+payload.event = "x"
+```
+
+---
+
+## Full object graph evaluation
+
+---
+
+## Async semantic propagation
+
+```ts
+await
+Promise.then()
+```
+
+---
+
+## Framework template analysis
+
+Currently plugin-oriented and intentionally outside the core.
+
+---
+
+# Plugin-Oriented Architecture
+
+## Design Goal
+
+Eventra core is framework-agnostic.
+
+The core engine does NOT contain:
+
+* React-specific logic
+* Vue-specific logic
+* Svelte-specific logic
+* analytics SDK implementations
+
+Framework support is implemented via plugins.
+
+---
+
+# Planned Plugin Kernel
+
+## Core Responsibilities
+
+* AST traversal
+* semantic resolution
+* propagation analysis
+* incremental compilation
+* cache invalidation
+* symbol normalization
+
+---
+
+## Plugin Responsibilities
+
+* sink detection
+* framework adapters
+* SDK integrations
+* custom propagation rules
+* template extraction
+
+---
+
+# Planned Plugin API
+
+```ts
+export interface EventraPlugin {
+  name: string;
+
+  setup(
+    api: EventraPluginAPI,
+  ): void;
+}
+```
+
+---
+
+# Backend Architecture
+
+# Tenant Hierarchy
+
+```text
+Workspace
+   |
+   v
+Project
+   |
+   v
+Feature
+   |
+   v
+Event
+```
+
+Isolation enforced at:
+
+* guards
+* queries
+* billing layer
+* ingest pipeline
+
+---
+
+# Ingest Pipeline
+
+```text
+HTTP
+  |
+  v
+DTO Validation
+  |
+  v
+API Key Authentication
+  |
+  v
+Workspace Billing Guard
+  |
+  v
+Rate Limiter
+  |
+  v
+Memory Buffer
+  |
+  v
+Disk Buffer
+  |
+  v
+PostgreSQL COPY
+  |
+  v
+Partitioning
+  |
+  v
+Rollup Aggregation
+```
+
+---
+
+# Billing State Machine
+
+States:
+
+* active
+* grace
+* locked
+
+Transitions enforced via:
+
+```text
+BillingLifecycleService
+```
+
+---
+
+# Rollup Engine
+
+Runs every minute.
+
+Guarantees:
+
+* advisory-lock single worker
+* deterministic cursor progression
+* incremental aggregation
+* lag monitoring
+* crash-safe resumability
+
+---
+
+# Failure Model
+
+## Safe
+
+* process crash
+* DB restart
+* duplicate events
+* partial batch failure
+* incremental rebuild interruption
+* cache invalidation replay
+
+---
+
+## Future Work
+
+* multi-region ingest
+* cross-region clock reconciliation
+* distributed aggregation
+* multi-primary ingest
+
+---
+
+# Scaling Path
+
+## Phase 1
+
+Vertical PostgreSQL COPY scaling.
+
+---
+
+## Phase 2
+
+Read replicas for aggregates.
+
+---
+
+## Phase 3
+
+Workspace-level sharding.
+
+---
+
+## Phase 4
+
+Multi-region ingest.
+
+---
+
+# Design Philosophy
+
+## Core Principles
+
+```text
+Throughput first.
+Correctness always.
+Semantic analysis over regex matching.
+Framework-agnostic core.
+Incremental everything.
+Plugins over hardcoded integrations.
+```
+
+---
+
+# Current Strengths
+
+✅ Incremental TypeScript compiler
+
+✅ Semantic propagation engine
+
+✅ Wrapper-aware extraction
+
+✅ Cross-file resolution
+
+✅ Static value evaluation
+
+✅ Dependency-aware invalidation
+
+✅ Cache-based semantic analysis
+
+✅ TypeChecker-powered symbol resolution
+
+✅ Near-zero runtime overhead
+
+✅ Framework-agnostic architecture
+
+✅ Plugin-oriented evolution path
+
+---
+
+# Current Project State
+
+```text
+Phase 0
+Regex / AST scanning
+        ↓
+
+Phase 1
+Semantic propagation engine
+        ↓
+
+Phase 1.5
+Plugin kernel foundation
+        ↓
+
+Phase 2
+Framework + SDK plugin ecosystem
+        ↓
+
+Phase 3
+Semantic provenance graph
+        ↓
+
+Phase 4
+Advanced interprocedural analysis
+```
+
+---
+
+# Current Status
+
+Eventra already operates as:
+
+```text
+Lightweight semantic TypeScript analysis platform
+```
+
+rather than:
+
+```text
+Simple event scanner
+```
+
+The current architecture is intentionally designed to support long-term evolution toward a full semantic event intelligence platform.
