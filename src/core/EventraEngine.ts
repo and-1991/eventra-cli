@@ -10,9 +10,8 @@ import {ResolvedExportCache} from "../analysis/cache/resolvedExportCache";
 import {ReturnPropagationCache} from "../analysis/cache/returnPropagationCache";
 import {invalidateSourceFileSymbols} from "../analysis/cache/symbolInvalidation";
 import {EventraConfig, ScanResult} from "../types";
-import {scanSource} from "../analysis/scanner/scanner";
-import {extractEvents} from "../analysis/extractor/extractor";
 import {WrapperRegistry} from "../analysis/symbols/wrapperRegistry";
+import { analyzeFileRecursive } from "../analysis/engine/recursiveWrapperAnalyzer";
 
 const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
@@ -62,7 +61,7 @@ export class EventraEngine {
         }
         // RE-ANALYZE
         for (const file of affected) {
-          this.analyzeFile(file, this.lastConfig);
+          await this.analyzeFile(file, this.lastConfig);
         }
       },
     );
@@ -114,20 +113,6 @@ export class EventraEngine {
     this.importGraph.updateFile(normalized, imports);
   }
 
-  private analyzeFile(fileName: string, config: EventraConfig,): ScanResult {
-    const normalized = this.normalize(fileName);
-    const source = this.compiler.getSourceFile(normalized);
-    if (!source) {
-      this.fileResults.delete(normalized,);
-      return EMPTY_RESULT();
-    }
-    const checker = this.compiler.getChecker();
-    const index = scanSource(source, checker, this.wrapperRegistry);
-    const result = extractEvents(index, checker, config, this.evaluationCache, this.resolvedExportCache, this.resolvedCallCache, this.returnPropagationCache, this.wrapperRegistry);
-    this.fileResults.set(normalized, result,);
-    return result;
-  }
-
   async preloadFile(fileName: string, content: string): Promise<void> {
     if (!this.isPreloading) {
       throw new Error("preload phase not active",);
@@ -143,9 +128,9 @@ export class EventraEngine {
     await this.scheduler.enqueue(normalized, content,);
   }
 
-  scanFile(fileName: string, config: EventraConfig): ScanResult {
+  async scanFile(fileName: string, config: EventraConfig): Promise<ScanResult> {
     this.lastConfig = config;
-    return this.analyzeFile(fileName, config);
+    return await this.analyzeFile(fileName, config);
   }
 
   async removeFile(fileName: string, config?: EventraConfig): Promise<void> {
@@ -161,8 +146,31 @@ export class EventraEngine {
       if (file === normalized) {
         continue;
       }
-      this.analyzeFile(file, nextConfig);
+      await this.analyzeFile(file, nextConfig);
     }
+  }
+
+  private async analyzeFile(fileName: string, config: EventraConfig): Promise<ScanResult> {
+    const normalized = this.normalize(fileName);
+    const source = this.compiler.getSourceFile(normalized);
+
+    if (!source) {
+      this.fileResults.delete(normalized);
+      return EMPTY_RESULT();
+    }
+
+    const result = await analyzeFileRecursive(
+      source,
+      config,
+      this.wrapperRegistry,
+      this.evaluationCache,
+      this.resolvedCallCache,
+      this.returnPropagationCache,
+      this.resolvedExportCache
+    );
+
+    this.fileResults.set(normalized, result);
+    return result;
   }
 
   getAllEvents(): string[] {
