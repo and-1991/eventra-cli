@@ -70,7 +70,7 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
   const results = new Map<string, ScanResult>();
   for (const file of toScan) {
     try {
-      const result = engine.scanFile(getVirtualFile(file), config);
+      const result = await engine.scanFile(getVirtualFile(file), config);
       results.set(file, result);
     } catch {
     }
