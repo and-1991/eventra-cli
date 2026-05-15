@@ -2,10 +2,10 @@ import fg from "fast-glob";
 import fs from "fs/promises";
 import path from "path";
 
-import {EventraConfig, ScanResult} from "../types";
-import {EventraEngine} from "./EventraEngine";
-import {processFile} from "../filesystem/processFile";
-import {getVirtualFile} from "../filesystem/getVirtualFile";
+import { EventraConfig, ScanResult } from "../types";
+import { EventraEngine } from "./EventraEngine";
+import { processFile } from "../filesystem/processFile";
+import { getVirtualFile } from "../filesystem/getVirtualFile";
 
 interface CachedFile {
   readonly content: string;
@@ -20,9 +20,8 @@ export interface ProjectScanResult {
 
 async function getParsedFile(file: string, cache: Map<string, CachedFile>): Promise<CachedFile> {
   const existing = cache.get(file);
-  if (existing) {
-    return existing;
-  }
+  if (existing) return existing;
+
   const raw = await fs.readFile(file, "utf8");
   const parsed = await processFile(file, raw);
   cache.set(file, parsed);
@@ -30,22 +29,21 @@ async function getParsedFile(file: string, cache: Map<string, CachedFile>): Prom
 }
 
 export async function scanProject(config: EventraConfig): Promise<ProjectScanResult> {
-  const files = await fg(config.sync.include,
-    {
-      ignore: config.sync.exclude,
-      absolute: true,
-    }
-  );
+  const files = await fg(config.sync.include, {
+    ignore: config.sync.exclude,
+    absolute: true,
+  });
+
   const engine = new EventraEngine(process.cwd());
   const cache = new Map<string, CachedFile>();
   const toScan = new Set<string>();
+
   // COLLECT
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf8");
-      if (raw.length > 2_000_000) {
-        continue;
-      }
+      if (raw.length > 2_000_000) continue;
+
       const parsed = await processFile(file, raw);
       cache.set(file, parsed);
       toScan.add(file);
@@ -55,9 +53,9 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     } catch {
     }
   }
+
   // PRELOAD
   engine.beginPreload();
-
   for (const file of toScan) {
     try {
       const parsed = await getParsedFile(file, cache);
@@ -66,6 +64,7 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     }
   }
   engine.endPreload();
+
   // SCAN
   const results = new Map<string, ScanResult>();
   for (const file of toScan) {
@@ -75,6 +74,7 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     } catch {
     }
   }
+
   return {
     engine,
     results,
