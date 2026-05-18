@@ -38,7 +38,6 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
   const cache = new Map<string, CachedFile>();
   const toScan = new Set<string>();
 
-  // COLLECT
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf8");
@@ -50,29 +49,29 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
       for (const dep of parsed.dependencies) {
         toScan.add(path.resolve(path.dirname(file), dep));
       }
-    } catch {
+    } catch (err) {
+      console.error(`skip: ${file}`, err instanceof Error ? err.message : err);
     }
   }
 
-  // PRELOAD
+  const virtualFiles = [...toScan].map((f) => getVirtualFile(f));
+
   engine.beginPreload();
   for (const file of toScan) {
     try {
       const parsed = await getParsedFile(file, cache);
       await engine.preloadFile(getVirtualFile(file), parsed.content);
-    } catch {
+    } catch (err) {
+      console.error(`preload skip: ${file}`, err instanceof Error ? err.message : err);
     }
   }
   engine.endPreload();
 
-  // SCAN
+  await engine.runFullAnalysis(virtualFiles, config);
+
   const results = new Map<string, ScanResult>();
   for (const file of toScan) {
-    try {
-      const result = await engine.scanFile(getVirtualFile(file), config);
-      results.set(file, result);
-    } catch {
-    }
+    results.set(file, engine.getScanResult(getVirtualFile(file)));
   }
 
   return {

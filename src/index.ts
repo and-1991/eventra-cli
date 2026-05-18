@@ -1,13 +1,14 @@
 #!/usr/bin/env node
 
 import { Command } from "commander";
+import pkg from "../package.json";
 
 const program = new Command();
 
 program
   .name("eventra")
   .description("Eventra CLI")
-  .version("0.0.1");
+  .version(pkg.version);
 
 program
   .command("init")

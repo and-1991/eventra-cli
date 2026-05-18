@@ -1,7 +1,8 @@
 import chalk from "chalk";
 
-import {loadConfig, saveConfig} from "../config/config";
-import {scanProject} from "../core/projectScanner";
+import { loadConfig } from "../config/config";
+import { scanProject } from "../core/projectScanner";
+import { persistScanResults } from "../core/scanResults";
 
 export async function sync(): Promise<void> {
   const config = await loadConfig();
@@ -10,9 +11,9 @@ export async function sync(): Promise<void> {
     return;
   }
   console.log(chalk.blue("Scanning..."));
-  const {engine} = await scanProject(config);
-  const events = engine.getAllEvents().sort();
-  await saveConfig({...config, events});
-  console.log(chalk.green(`Found ${events.length} events`),
-  );
+  const { engine } = await scanProject(config);
+  await persistScanResults(config, engine);
+  const events = engine.getAllEvents();
+  const wrappers = engine.getAllFunctionWrappers();
+  console.log(chalk.green(`Found ${events.length} events, ${wrappers.length} function wrappers`));
 }

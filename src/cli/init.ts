@@ -31,6 +31,7 @@ export async function init(): Promise<void> {
     apiKey,
     endpoint,
     events: [],
+    functionWrappers: [],
     sync: {
       include: [
         "**/*.{ts,tsx,js,jsx}",

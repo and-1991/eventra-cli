@@ -12,9 +12,16 @@ export class WrapperRegistry {
   private wrappers = new WeakMap<ts.Symbol, WrapperSemanticInfo>();
 
   constructor(
-    private readonly checker: ts.TypeChecker,
+    private checker: ts.TypeChecker,
     private readonly exportCache: ResolvedExportCache,
-  ) {
+  ) {}
+
+  setChecker(checker: ts.TypeChecker): void {
+    this.checker = checker;
+  }
+
+  getChecker(): ts.TypeChecker {
+    return this.checker;
   }
 
   private normalize(symbol: ts.Symbol): ts.Symbol {
