@@ -33,9 +33,9 @@ export function extractFromIndex(
     checker,
     config,
     evaluationCache,
+    resolvedExportCache,
     resolvedCallCache,
     returnPropagationCache,
-    resolvedExportCache,
     wrapperRegistry,
   );
 }
