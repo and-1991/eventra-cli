@@ -1,7 +1,21 @@
 /* eslint-disable */
 
-declare function trackFeature(event: string): void;
-declare const analytics: any;
+declare function track(event: string): void;
+
+function trackFeature(event: string) {
+  track(event);
+}
+
+const analytics = {
+  trackFeature(event: string) {
+    track(event);
+  },
+  events: {
+    trackFeature(event: string) {
+      track(event);
+    },
+  },
+};
 
 const eventName = "variable_event";
 

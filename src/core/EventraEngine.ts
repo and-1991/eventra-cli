@@ -13,6 +13,7 @@ import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFil
 import { FileSemanticIndex } from "../analysis/shared/types";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
+import { processFile } from "../filesystem/processFile";
 
 const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
@@ -79,10 +80,6 @@ export class EventraEngine {
     this.isPreloading = true;
   }
 
-  endPreload(): void {
-    this.isPreloading = false;
-  }
-
   private normalize(fileName: string): string {
     const cached = this.normalizedPathCache.get(fileName);
     if (cached) {
@@ -126,8 +123,16 @@ export class EventraEngine {
       throw new Error("preload phase not active");
     }
     const normalized = this.normalize(fileName);
-    await this.compiler.updateFile(normalized, content);
-    this.updateImportGraph(normalized);
+    const processed = await processFile(normalized, content);
+    this.compiler.stageFile(processed.fileName, processed.content);
+  }
+
+  endPreload(): void {
+    this.isPreloading = false;
+    this.compiler.flushUpdates();
+    for (const sourceFile of this.compiler.getAllSourceFiles()) {
+      this.updateImportGraph(sourceFile.fileName);
+    }
   }
 
   async updateFile(fileName: string, content: string, config: EventraConfig): Promise<void> {

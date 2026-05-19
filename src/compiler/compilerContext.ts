@@ -2,18 +2,19 @@ import fs from "fs";
 import path from "path";
 import ts from "typescript";
 
-import {DocumentRegistry} from "./documentRegistry";
-import {processFile} from "../filesystem/processFile";
+import { DocumentRegistry } from "./documentRegistry";
+import { processFile } from "../filesystem/processFile";
 
 export class CompilerContext {
   private readonly registry = new DocumentRegistry();
   private readonly compilerOptions: ts.CompilerOptions;
   private readonly host: ts.CompilerHost;
-  private builder: ts.EmitAndSemanticDiagnosticsBuilderProgram;
+  private program: ts.Program = ts.createProgram([], {});
   private readonly rootNames = new Set<string>();
 
-  constructor(private readonly rootDir: string,) {
-    const configPath = ts.findConfigFile(rootDir, ts.sys.fileExists, "tsconfig.json");
+  constructor(private readonly rootDir: string) {
+    const localTsconfig = path.join(rootDir, "tsconfig.json");
+    const configPath = fs.existsSync(localTsconfig) ? localTsconfig : undefined;
     let compilerOptions: ts.CompilerOptions = {
       target: ts.ScriptTarget.ESNext,
       module: ts.ModuleKind.ESNext,
@@ -28,7 +29,7 @@ export class CompilerContext {
       esModuleInterop: true,
       resolveJsonModule: true,
       allowNonTsExtensions: true,
-      incremental: true,
+      incremental: false,
     };
 
     if (configPath) {
@@ -36,7 +37,11 @@ export class CompilerContext {
       if (config.error) {
         throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
       }
-      const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(configPath),);
+      const parsed = ts.parseJsonConfigFileContent(
+        config.config,
+        ts.sys,
+        path.dirname(configPath),
+      );
       compilerOptions = {
         ...compilerOptions,
         ...parsed.options,
@@ -45,40 +50,93 @@ export class CompilerContext {
         this.rootNames.add(this.normalize(file));
       }
     }
+
     this.compilerOptions = compilerOptions;
     this.host = ts.createCompilerHost(this.compilerOptions, true);
     this.patchCompilerHost();
-    this.builder = ts.createEmitAndSemanticDiagnosticsBuilderProgram([...this.rootNames], this.compilerOptions, this.host);
+    this.rebuildProgram();
   }
 
   private normalize(fileName: string): string {
     return this.registry.normalize(fileName);
   }
 
+  private resolveLanguageVersion(
+    languageVersionOrOptions: ts.ScriptTarget | ts.CreateSourceFileOptions,
+  ): ts.ScriptTarget {
+    if (typeof languageVersionOrOptions === "object") {
+      return languageVersionOrOptions.languageVersion;
+    }
+    return languageVersionOrOptions;
+  }
+
+  private attachVersion(sourceFile: ts.SourceFile, fileName: string): ts.SourceFile {
+    const normalized = this.normalize(fileName);
+    (sourceFile as ts.SourceFile & { version?: string }).version =
+      this.registry.getVersion(normalized);
+    return sourceFile;
+  }
+
+  private createSourceFileFromRegistry(
+    fileName: string,
+    languageVersion: ts.ScriptTarget,
+  ): ts.SourceFile | undefined {
+    const normalized = this.normalize(fileName);
+    const snapshot = this.registry.getSnapshot(normalized);
+    if (!snapshot) {
+      return undefined;
+    }
+    const sourceFile = ts.createSourceFile(
+      normalized,
+      snapshot.getText(0, snapshot.getLength()),
+      languageVersion,
+      true,
+      this.getScriptKind(normalized),
+    );
+    return this.attachVersion(sourceFile, normalized);
+  }
+
   private patchCompilerHost(): void {
-    const originalGetSourceFile = this.host.getSourceFile;
-    this.host.getSourceFile = (fileName, languageVersion, onError, shouldCreateNewSourceFile) => {
+    const originalGetSourceFile = this.host.getSourceFile.bind(this.host);
+    this.host.getSourceFile = (
+      fileName,
+      languageVersionOrOptions,
+      onError,
+      shouldCreateNewSourceFile,
+    ) => {
+      const languageVersion = this.resolveLanguageVersion(languageVersionOrOptions);
       const normalized = this.normalize(fileName);
-      this.registry.ensure(normalized,);
-      const snapshot = this.registry.getSnapshot(normalized);
-      if (!snapshot) {
-        return originalGetSourceFile(normalized, languageVersion, onError, shouldCreateNewSourceFile);
+      this.registry.ensure(normalized);
+      const fromRegistry = this.createSourceFileFromRegistry(normalized, languageVersion);
+      if (fromRegistry) {
+        return fromRegistry;
       }
-      return ts.createSourceFile(normalized, snapshot.getText(0, snapshot.getLength()), languageVersion, true, this.getScriptKind(normalized));
+      const fromDisk = originalGetSourceFile(
+        normalized,
+        languageVersionOrOptions,
+        onError,
+        shouldCreateNewSourceFile,
+      );
+      if (!fromDisk) {
+        return undefined;
+      }
+      if (!this.registry.has(normalized)) {
+        this.registry.update(normalized, fromDisk.getFullText());
+      }
+      return this.attachVersion(fromDisk, normalized);
     };
+
     this.host.readFile = (fileName) => {
       const normalized = this.normalize(fileName);
       this.registry.ensure(normalized);
-
-      return (
-        this.registry.getContent(normalized) ?? fs.readFileSync(normalized, "utf8")
-      );
+      return this.registry.getContent(normalized) ?? fs.readFileSync(normalized, "utf8");
     };
 
     this.host.fileExists = (fileName) => {
       const normalized = this.normalize(fileName);
-      return (this.registry.has(normalized) || fs.existsSync(normalized));
+      return this.registry.has(normalized) || fs.existsSync(normalized);
     };
+
     this.host.getCanonicalFileName = (f) => this.normalize(f);
     this.host.useCaseSensitiveFileNames = () => true;
     this.host.getCurrentDirectory = () => this.rootDir;
@@ -86,82 +144,76 @@ export class CompilerContext {
   }
 
   private getScriptKind(fileName: string): ts.ScriptKind {
-    if (fileName.endsWith(".tsx")) {
-      return ts.ScriptKind.TSX;
-    }
-    if (fileName.endsWith(".ts")) {
-      return ts.ScriptKind.TS;
-    }
-    if (fileName.endsWith(".jsx")) {
-      return ts.ScriptKind.JSX;
-    }
-    if (fileName.endsWith(".js")) {
-      return ts.ScriptKind.JS;
-    }
-    if (fileName.endsWith(".json")) {
-      return ts.ScriptKind.JSON;
-    }
+    if (fileName.endsWith(".tsx")) return ts.ScriptKind.TSX;
+    if (fileName.endsWith(".ts")) return ts.ScriptKind.TS;
+    if (fileName.endsWith(".jsx")) return ts.ScriptKind.JSX;
+    if (fileName.endsWith(".js")) return ts.ScriptKind.JS;
+    if (fileName.endsWith(".json")) return ts.ScriptKind.JSON;
     return ts.ScriptKind.Unknown;
   }
 
-  private rebuild(): void {
-    this.builder = ts.createEmitAndSemanticDiagnosticsBuilderProgram([...this.rootNames], this.compilerOptions, this.host, this.builder);
+  private rebuildProgram(): void {
+    this.program = ts.createProgram([...this.rootNames], this.compilerOptions, this.host);
   }
 
-  async updateFile(fileName: string, content: string,): Promise<void> {
+  /** Register file content without rebuilding the TS program (batch via {@link flushUpdates}). */
+  stageFile(fileName: string, content: string): void {
+    const normalized = this.normalize(fileName);
+    this.registry.update(normalized, content);
+    this.rootNames.add(normalized);
+  }
+
+  flushUpdates(): void {
+    this.rebuildProgram();
+  }
+
+  async updateFile(fileName: string, content: string): Promise<void> {
     const normalized = this.normalize(fileName);
     const processed = await processFile(normalized, content);
-    this.registry.update(processed.fileName, processed.content);
-    this.rootNames.add(processed.fileName);
-    this.rebuild();
+    this.stageFile(processed.fileName, processed.content);
+    this.rebuildProgram();
   }
 
-  removeFile(fileName: string,): void {
+  removeFile(fileName: string): void {
     const normalized = this.normalize(fileName);
     this.registry.remove(normalized);
     this.rootNames.delete(normalized);
-    this.rebuild();
-  }
-
-  invalidate(): void {
-    this.registry.invalidate();
-    this.rebuild();
+    this.rebuildProgram();
   }
 
   getProgram(): ts.Program {
-    return this.builder.getProgram();
+    return this.program;
   }
 
   getChecker(): ts.TypeChecker {
-    return this.builder.getProgram().getTypeChecker();
+    return this.program.getTypeChecker();
   }
 
   getSourceFile(fileName: string): ts.SourceFile | undefined {
-    return this.builder.getProgram().getSourceFile(this.normalize(fileName,),);
+    return this.program.getSourceFile(this.normalize(fileName));
   }
 
-  getSemanticDiagnostics(fileName?: string):
-    readonly ts.Diagnostic[] {
-    const program = this.builder.getProgram();
+  getSemanticDiagnostics(fileName?: string): readonly ts.Diagnostic[] {
     if (!fileName) {
-      return ts.getPreEmitDiagnostics(program);
+      return ts.getPreEmitDiagnostics(this.program);
     }
-    const sourceFile = this.getSourceFile(fileName,);
+    const sourceFile = this.getSourceFile(fileName);
     if (!sourceFile) {
       return [];
     }
     return [
-      ...program.getSemanticDiagnostics(
-        sourceFile,
-      ),
-      ...program.getSyntacticDiagnostics(
-        sourceFile,
-      ),
+      ...this.program.getSemanticDiagnostics(sourceFile),
+      ...this.program.getSyntacticDiagnostics(sourceFile),
     ];
   }
 
   resolveModule(moduleName: string, fromFile: string): string | undefined {
-    const resolved = ts.resolveModuleName(moduleName, this.normalize(fromFile), this.compilerOptions, this.host);
+    const resolved = ts.resolveModuleName(
+      moduleName,
+      this.normalize(fromFile),
+      this.compilerOptions,
+      this.host,
+    );
     return resolved.resolvedModule?.resolvedFileName;
   }
 
@@ -179,23 +231,15 @@ export class CompilerContext {
       if (!specifier || !ts.isStringLiteral(specifier)) {
         continue;
       }
-
       const resolved = this.resolveModule(specifier.text, source.fileName);
-      if (!resolved) {
-        continue;
+      if (resolved) {
+        modules.add(this.normalize(resolved));
       }
-      modules.add(this.normalize(resolved));
     }
-    return [
-      ...modules,
-    ];
+    return [...modules];
   }
 
   getAllSourceFiles(): ts.SourceFile[] {
-    return this.builder.getProgram().getSourceFiles().filter(sf => !sf.isDeclarationFile);
-  }
-
-  getRealFileName(fileName: string): string {
-    return fileName;
+    return this.program.getSourceFiles().filter((sf) => !sf.isDeclarationFile);
   }
 }

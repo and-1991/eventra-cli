@@ -3,9 +3,10 @@ import ts from "typescript";
 import {resolveExportedSymbol} from "../resolver/exportResolver";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {WrapperSemanticInfo} from "../shared/propagation";
+import {getFunctionSymbol} from "./symbolUtils";
 
-function isSymbol(value: ts.Symbol | ts.FunctionLikeDeclaration,): value is ts.Symbol {
-  return "flags" in value;
+function isSymbol(value: ts.Symbol | ts.FunctionLikeDeclaration): value is ts.Symbol {
+  return typeof (value as ts.Symbol).getDeclarations === "function";
 }
 
 export class WrapperRegistry {
@@ -39,14 +40,7 @@ export class WrapperRegistry {
       return this.wrappers.get(this.normalize(target));
     }
 
-    let symbol: ts.Symbol | undefined;
-    if (ts.isFunctionDeclaration(target) && target.name) {
-      symbol = this.checker.getSymbolAtLocation(target.name);
-    } else if (ts.isMethodDeclaration(target) && ts.isIdentifier(target.name)) {
-      symbol = this.checker.getSymbolAtLocation(target.name);
-    } else if (target.parent && ts.isVariableDeclaration(target.parent) && ts.isIdentifier(target.parent.name)) {
-      symbol = this.checker.getSymbolAtLocation(target.parent.name);
-    }
+    const symbol = getFunctionSymbol(target, this.checker);
     if (!symbol) {
       return undefined;
     }

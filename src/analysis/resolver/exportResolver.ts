@@ -16,6 +16,9 @@ function isConcreteDeclaration(node: ts.Node): boolean {
 }
 
 export function resolveExportedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker, cache: ResolvedExportCache, visited?: Set<ts.Symbol>): ts.Symbol | null {
+  if (typeof symbol.getDeclarations !== "function") {
+    return null;
+  }
   const seen = visited ?? new Set<ts.Symbol>();
   const cached = cache.get(symbol);
   if (cached !== undefined) {
