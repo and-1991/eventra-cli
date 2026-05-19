@@ -120,7 +120,7 @@ function runFixture(spec: (typeof fixtures)[number]) {
 }
 
 function run() {
-  const build = spawnSync("npm", ["run", "build"], { cwd: ROOT, encoding: "utf-8" });
+  const build = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, encoding: "utf-8" });
   if (build.status !== 0) {
     console.error(build.stdout, build.stderr);
     process.exit(1);

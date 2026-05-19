@@ -21,6 +21,10 @@ function resolveDeclaration(declaration: ts.Declaration): ts.FunctionLikeDeclara
   if (ts.isPropertyDeclaration(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
     return declaration.initializer;
   }
+  // { trackFeature() {} }
+  if (ts.isPropertyAssignment(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
+    return declaration.initializer;
+  }
   return null;
 }
 
