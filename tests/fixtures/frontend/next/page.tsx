@@ -1,7 +1,12 @@
+import { Eventra } from "@eventra_dev/eventra-sdk";
+
+const tracker = new Eventra({ apiKey: "test-fixture-key" });
+
 /* eslint-disable */
 
-declare function track(event: string): void;
-declare function trackFeature(event: string): void;
+function trackFeature(event: string) {
+  tracker.track(event);
+}
 
 declare const analytics: any;
 declare const Button: any;
@@ -12,52 +17,48 @@ const eventName = "variable_event";
 
 export default function Page() {
   // ===== direct =====
-  track("next_event");
+  tracker.track("next_event");
 
   // ===== multiline =====
-  track(
+  tracker.track(
     "multiline_event"
   );
 
   // ===== template string =====
-  track(`template_event`);
+  tracker.track(`template_event`);
 
   // ===== wrapper function =====
   trackFeature("wrapper_function");
 
-  // ===== object =====
-  analytics.track("object_track");
-
-  // ===== nested object =====
-  analytics.events.track("nested_track");
+  // non-SDK analytics calls are ignored by CLI
 
   // ===== variable =====
-  track(eventName);
+  tracker.track(eventName);
 
   // ===== conditional =====
   if (true) {
-    track("conditional_event");
+    tracker.track("conditional_event");
   }
 
   // ===== ternary =====
   true
-    ? track("ternary_a")
-    : track("ternary_b");
+    ? tracker.track("ternary_a")
+    : tracker.track("ternary_b");
 
   // ===== arrow function =====
   const run = () => {
-    track("arrow_event");
+    tracker.track("arrow_event");
   };
 
   // ===== function =====
   function test() {
-    track("function_event");
+    tracker.track("function_event");
   }
 
   // ===== class =====
   class Service {
     run() {
-      track("class_event");
+      tracker.track("class_event");
     }
   }
 

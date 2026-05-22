@@ -1,6 +1,9 @@
+import { Eventra } from "@eventra_dev/eventra-sdk";
+
+const tracker = new Eventra({ apiKey: "test-fixture-key" });
+
 /* eslint-disable */
 
-declare function track(event: string): void;
 
 function Injectable(): any {
   return () => {};
@@ -22,15 +25,15 @@ function Post(): any {
 @Injectable()
 export class TestService {
   run() {
-    track("nest_event");
+    tracker.track("nest_event");
   }
 
   async asyncRun() {
-    track("async_event");
+    tracker.track("async_event");
   }
 
   arrow = () => {
-    track("arrow_event");
+    tracker.track("arrow_event");
   };
 }
 
@@ -39,32 +42,32 @@ export class TestService {
 export class TestController {
   @Get()
   get() {
-    track("get_event");
+    tracker.track("get_event");
   }
 
   @Post()
   post() {
-    track("post_event");
+    tracker.track("post_event");
   }
 
   nested() {
     if (true) {
-      track("nested_event");
+      tracker.track("nested_event");
     }
   }
 }
 
 // ===== function =====
 function service() {
-  track("function_event");
+  tracker.track("function_event");
 }
 
 // ===== class =====
 class AnotherService {
   run() {
-    track("class_event");
+    tracker.track("class_event");
   }
 }
 
 // ===== direct =====
-track("direct_event");
+tracker.track("direct_event");

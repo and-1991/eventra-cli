@@ -9,10 +9,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {EvaluationCache} from "../cache/evaluationCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
-
-function isValidEvent(value: string): boolean {
-  return (value.length > 0 && value.length < 160 && /^[a-zA-Z0-9:_./-]+$/.test(value));
-}
+import {normalizeEventName} from "../shared/eventValidation";
 
 function resolveObjectPath(expression: ts.Expression, path: readonly string[],): ts.Expression | null {
   let current: ts.Expression = expression;
@@ -90,8 +87,9 @@ function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpres
   }
   const resolved = resolveNodeValue(propagation.targetNode, checker, context, new Set(), evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
   for (const value of resolved.values) {
-    if (isValidEvent(value)) {
-      events.add(value);
+    const normalized = normalizeEventName(value);
+    if (normalized) {
+      events.add(normalized);
     }
   }
 }

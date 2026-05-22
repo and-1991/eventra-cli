@@ -10,10 +10,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import {extractPropagationEvents} from "./propagationExtractor";
-
-function isValidEvent(value: string): boolean {
-  return (value.length > 0 && value.length < 160 && /^[a-zA-Z0-9:_./-]+$/.test(value));
-}
+import {normalizeEventName} from "../shared/eventValidation";
 
 export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker, _config: EventraConfig, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, wrapperRegistry: WrapperRegistry): ScanResult {
   const events = new Set<string>();
@@ -22,8 +19,9 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
     for (const argument of call.trackedArguments) {
       const resolved = resolveNodeValue(argument, checker, createEvaluationContext(), new Set(), evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
       for (const value of resolved.values) {
-        if (isValidEvent(value)) {
-          events.add(value);
+        const normalized = normalizeEventName(value);
+        if (normalized) {
+          events.add(normalized);
         }
       }
     }

@@ -10,15 +10,28 @@ const fixtures: Array<{
   minEvents: number;
   minWrappers: number;
   expectWrappers?: string[];
+  mustNotInclude?: string[];
 }> = [
   {
-    name: "frontend/react",
-    minEvents: 5,
+    name: "sdk/direct",
+    minEvents: 4,
     minWrappers: 0,
   },
   {
+    name: "frontend/react",
+    minEvents: 10,
+    minWrappers: 0,
+    mustNotInclude: ["object_track", "nested_track"],
+  },
+  {
     name: "wrappers/function",
-    minEvents: 5,
+    minEvents: 12,
+    minWrappers: 1,
+    expectWrappers: ["trackFeature"],
+  },
+  {
+    name: "frontend/next",
+    minEvents: 10,
     minWrappers: 1,
     expectWrappers: ["trackFeature"],
   },
@@ -28,23 +41,18 @@ const fixtures: Array<{
     minWrappers: 0,
   },
   {
-    name: "frontend/next",
-    minEvents: 0,
-    minWrappers: 0,
-  },
-  {
     name: "backend/node",
-    minEvents: 0,
+    minEvents: 10,
     minWrappers: 0,
   },
   {
     name: "backend/express",
-    minEvents: 0,
-    minWrappers: 0,
+    minEvents: 25,
+    minWrappers: 2,
   },
   {
     name: "backend/nest",
-    minEvents: 0,
+    minEvents: 8,
     minWrappers: 0,
   },
 ];
@@ -98,7 +106,7 @@ function runFixture(spec: (typeof fixtures)[number]) {
 
   if (events.length < spec.minEvents) {
     throw new Error(
-      `${spec.name}: expected >= ${spec.minEvents} events, got ${events.length}\n${stdout}`,
+      `${spec.name}: expected >= ${spec.minEvents} events, got ${events.length}\n${stdout}\nevents: ${events.join(", ")}`,
     );
   }
   if (wrappers.length < spec.minWrappers) {
@@ -112,6 +120,19 @@ function runFixture(spec: (typeof fixtures)[number]) {
       if (!names.has(expected)) {
         throw new Error(`${spec.name}: missing wrapper "${expected}" in ${[...names].join(", ")}`);
       }
+    }
+  }
+  if (spec.mustNotInclude) {
+    for (const forbidden of spec.mustNotInclude) {
+      if (events.includes(forbidden)) {
+        throw new Error(`${spec.name}: must not include non-SDK event "${forbidden}"`);
+      }
+    }
+  }
+
+  for (const event of events) {
+    if (event.length > 64) {
+      throw new Error(`${spec.name}: event name exceeds SDK limit (64): "${event}"`);
     }
   }
 

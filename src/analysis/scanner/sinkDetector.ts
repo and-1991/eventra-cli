@@ -1,60 +1,38 @@
 import ts from "typescript";
 
-import {TrackedArgument, TrackSink} from "../shared/propagation";
+import { TrackedArgument, TrackSink } from "../shared/propagation";
+import { isEventraSdkTrackCall } from "../sdk/isEventraTrackCall";
 
-function isElementTrackProperty(expr: ts.Expression): boolean {
-  return (ts.isElementAccessExpression(expr) && expr.argumentExpression && ts.isStringLiteral(expr.argumentExpression) && expr.argumentExpression.text === "track");
-}
-
-function isTrackIdentifier(expr: ts.Expression): boolean {
-  return (ts.isIdentifier(expr) && expr.text === "track");
-}
-
-function isTrackProperty(expr: ts.Expression): boolean {
-  return (ts.isPropertyAccessExpression(expr) && expr.name.text === "track");
-}
-
-function isOptionalTrackProperty(expr: ts.Expression): boolean {
-  return (ts.isPropertyAccessChain(expr) && expr.name.text === "track");
-}
-
+/** SDK: track(name: string, options?) — event name is always the first argument. */
 function extractTrackedArguments(call: ts.CallExpression): readonly TrackedArgument[] {
-  const result: TrackedArgument[] = [];
   if (call.arguments.length === 0) {
-    return result;
+    return [];
   }
   const first = call.arguments[0];
   if (ts.isObjectLiteralExpression(first)) {
-    for (const property of first.properties) {
-      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
-        continue;
-      }
-      const name = property.name.getText();
-      if (name !== "event" && name !== "name" && name !== "type") {
-        continue;
-      }
-      result.push({
-        index: 0,
-        propertyPath: [name],
-      });
-    }
-    return result;
+    return [];
   }
-  result.push({
-    index: 0,
-    propertyPath: [],
-  });
-
-  return result;
+  return [
+    {
+      index: 0,
+      propertyPath: [],
+    },
+  ];
 }
 
-export function detectTrackSink(call: ts.CallExpression): TrackSink | null {
-  const expression = call.expression;
-  if (!isTrackIdentifier(expression) && !isTrackProperty(expression) && !isOptionalTrackProperty(expression) && !isElementTrackProperty(expression)) {
+export function detectTrackSink(
+  call: ts.CallExpression,
+  checker: ts.TypeChecker,
+): TrackSink | null {
+  if (!isEventraSdkTrackCall(call, checker)) {
+    return null;
+  }
+  const trackedArguments = extractTrackedArguments(call);
+  if (trackedArguments.length === 0) {
     return null;
   }
   return {
     call,
-    trackedArguments: extractTrackedArguments(call),
+    trackedArguments,
   };
 }
