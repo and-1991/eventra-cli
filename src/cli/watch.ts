@@ -5,8 +5,11 @@ import fg from "fast-glob";
 import path from "path";
 
 import { loadConfig } from "../config/config";
+import { EVENTRA_SDK_SHIM } from "../analysis/sdk/eventraSdk";
 import { EventraEngine } from "../core/EventraEngine";
 import { persistScanResults } from "../core/scanResults";
+
+const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 import { processFile } from "../filesystem/processFile";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
 
@@ -39,6 +42,7 @@ export async function watch(): Promise<void> {
   });
 
   engine.beginPreload();
+  await engine.preloadFile(SDK_TYPES_FILE, EVENTRA_SDK_SHIM);
   for (const file of files) {
     try {
       const abs = normalize(file);
@@ -47,7 +51,14 @@ export async function watch(): Promise<void> {
       cache.set(abs, parsed);
       trackedFiles.add(abs);
       await engine.preloadFile(getVirtualFile(abs), parsed.content);
-      fileDeps.set(abs, new Set(parsed.dependencies.map((dep) => normalize(path.resolve(path.dirname(abs), dep)))));
+      fileDeps.set(
+        abs,
+        new Set(
+          parsed.dependencies
+            .filter((dep) => dep.startsWith(".") || dep.startsWith("/"))
+            .map((dep) => normalize(path.resolve(path.dirname(abs), dep))),
+        ),
+      );
     } catch {
       // ignore invalid files
     }
@@ -55,7 +66,7 @@ export async function watch(): Promise<void> {
   engine.endPreload();
 
   await engine.runFullAnalysis(
-    [...trackedFiles].map((f) => getVirtualFile(f)),
+    [SDK_TYPES_FILE, ...trackedFiles].map((f) => getVirtualFile(f)),
     config,
   );
   await persistScanResults(config, engine);
@@ -84,7 +95,9 @@ export async function watch(): Promise<void> {
         const abs = normalize(file);
         const prevDeps = fileDeps.get(abs) ?? new Set();
         const nextDeps = new Set(
-          parsed.dependencies.map((dep) => normalize(path.resolve(path.dirname(abs), dep))),
+          parsed.dependencies
+            .filter((dep) => dep.startsWith(".") || dep.startsWith("/"))
+            .map((dep) => normalize(path.resolve(path.dirname(abs), dep))),
         );
 
         for (const dep of nextDeps) {

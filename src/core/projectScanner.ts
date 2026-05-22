@@ -3,9 +3,12 @@ import fs from "fs/promises";
 import path from "path";
 
 import { EventraConfig, ScanResult } from "../types";
+import { EVENTRA_SDK_SHIM } from "../analysis/sdk/eventraSdk";
 import { EventraEngine } from "./EventraEngine";
 import { processFile } from "../filesystem/processFile";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
+
+const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 
 interface CachedFile {
   readonly content: string;
@@ -47,16 +50,19 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
       cache.set(file, parsed);
       toScan.add(file);
       for (const dep of parsed.dependencies) {
-        toScan.add(path.resolve(path.dirname(file), dep));
+        if (dep.startsWith(".") || dep.startsWith("/")) {
+          toScan.add(path.resolve(path.dirname(file), dep));
+        }
       }
     } catch (err) {
       console.error(`skip: ${file}`, err instanceof Error ? err.message : err);
     }
   }
 
-  const virtualFiles = [...toScan].map((f) => getVirtualFile(f));
+  const virtualFiles = [SDK_TYPES_FILE, ...toScan].map((f) => getVirtualFile(f));
 
   engine.beginPreload();
+  await engine.preloadFile(SDK_TYPES_FILE, EVENTRA_SDK_SHIM);
   for (const file of toScan) {
     try {
       const parsed = await getParsedFile(file, cache);

@@ -20,12 +20,10 @@ export async function init(): Promise<void> {
     },
   ]);
   console.log("");
-  console.log(chalk.gray("Eventra automatically detects:"));
-  console.log(chalk.gray("• track('event')"));
-  console.log(chalk.gray("• analytics.track('event')"),);
-  console.log(chalk.gray("• semantic parameter propagation"));
-  console.log(chalk.gray("• cross-file wrappers"));
-  console.log(chalk.gray("• parameter propagation"));
+  console.log(chalk.gray("Eventra detects @eventra_dev/eventra-sdk usage:"));
+  console.log(chalk.gray('• tracker.track("event.name")'));
+  console.log(chalk.gray("• function wrappers → Eventra.track()"));
+  console.log(chalk.gray("• cross-file propagation chains"));
   console.log("");
   const config: EventraConfig = {
     apiKey,

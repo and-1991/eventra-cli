@@ -1,6 +1,9 @@
+import { Eventra } from "@eventra_dev/eventra-sdk";
+
+const tracker = new Eventra({ apiKey: "test-fixture-key" });
+
 /* eslint-disable */
 
-declare function track(event: string): void;
 declare function trackFeature(event: string): void;
 
 declare const analytics: any;
@@ -11,58 +14,58 @@ declare const MyButton: any;
 const eventName = "variable_event";
 
 // ===== direct =====
-track("direct_event");
+tracker.track("direct_event");
 
 // ===== multiline =====
-track(
+tracker.track(
   "multiline_event"
 );
 
 // ===== template string =====
-track(`template_event`);
+tracker.track(`template_event`);
 
 // ===== conditional =====
 if (true) {
-  track("conditional_event");
+  tracker.track("conditional_event");
 }
 
 // ===== ternary =====
 true
-  ? track("ternary_a")
-  : track("ternary_b");
+  ? tracker.track("ternary_a")
+  : tracker.track("ternary_b");
 
 // ===== wrapper function =====
 trackFeature("wrapper_function");
 
 // ===== object function =====
-analytics.track("object_track");
+// analytics.track — not @eventra_dev/eventra-sdk (ignored by CLI)
 
 // ===== nested object =====
-analytics.events.track("nested_track");
+// analytics.events.track — ignored
 
 // ===== variable (optional support) =====
-track(eventName);
+tracker.track(eventName);
 
 // ===== function =====
 function test() {
-  track("function_event");
+  tracker.track("function_event");
 }
 
 // ===== arrow function =====
 const run = () => {
-  track("arrow_event");
+  tracker.track("arrow_event");
 };
 
 // ===== class =====
 class TestService {
   run() {
-    track("class_event");
+    tracker.track("class_event");
   }
 }
 
 // ===== component return =====
 export default function Page() {
-  track("page_event");
+  tracker.track("page_event");
 
   return (
     <>

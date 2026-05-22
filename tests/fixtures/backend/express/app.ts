@@ -1,6 +1,9 @@
+import { Eventra } from "@eventra_dev/eventra-sdk";
+
+const tracker = new Eventra({ apiKey: "test-fixture-key" });
+
 /* eslint-disable */
 
-declare function track(event: string): void;
 
 const express = (...args: any[]) => ({
   get: (...args: any[]) => {},
@@ -17,34 +20,34 @@ const app = express();
 // BASIC
 // =========================
 
-track("express_event");
+tracker.track("express_event");
 
 // =========================
 // VARIABLES
 // =========================
 
 const eventName = "variable_event";
-track(eventName);
+tracker.track(eventName);
 
 let anotherEvent;
 anotherEvent = "assigned_event";
-track(anotherEvent);
+tracker.track(anotherEvent);
 
 // =========================
 // TEMPLATE
 // =========================
 
-track(`template_event`);
+tracker.track(`template_event`);
 
 const id = "123";
-track(`template_${id}`); // dynamic
+tracker.track(`template_${id}`); // dynamic
 
 // =========================
 // MIDDLEWARE
 // =========================
 
 app.use(() => {
-  track("middleware_event");
+  tracker.track("middleware_event");
 });
 
 // =========================
@@ -52,19 +55,19 @@ app.use(() => {
 // =========================
 
 app.get("/", () => {
-  track("get_event");
+  tracker.track("get_event");
 });
 
 app.post("/users", () => {
-  track("post_event");
+  tracker.track("post_event");
 });
 
 app.put("/users", () => {
-  track("put_event");
+  tracker.track("put_event");
 });
 
 app.delete("/users", () => {
-  track("delete_event");
+  tracker.track("delete_event");
 });
 
 // =========================
@@ -73,7 +76,7 @@ app.delete("/users", () => {
 
 app.get("/nested", () => {
   if (true) {
-    track("nested_event");
+    tracker.track("nested_event");
   }
 });
 
@@ -82,7 +85,7 @@ app.get("/nested", () => {
 // =========================
 
 app.get("/async", async () => {
-  track("async_event");
+  tracker.track("async_event");
 });
 
 // =========================
@@ -90,7 +93,7 @@ app.get("/async", async () => {
 // =========================
 
 const handler = () => {
-  track("arrow_event");
+  tracker.track("arrow_event");
 };
 
 app.get("/arrow", handler);
@@ -100,7 +103,7 @@ app.get("/arrow", handler);
 // =========================
 
 function service() {
-  track("function_event");
+  tracker.track("function_event");
 }
 
 // =========================
@@ -109,7 +112,7 @@ function service() {
 
 class Service {
   run() {
-    track("class_event");
+    tracker.track("class_event");
   }
 }
 
@@ -118,50 +121,53 @@ class Service {
 // =========================
 
 app.listen(3000, () => {
-  track("listen_event");
+  tracker.track("listen_event");
 });
 
 // =========================
 // OBJECT WRAPPER
 // =========================
 
-const analytics = {
-  track
+const analyticsWrapper = {
+  log(event: string) {
+    tracker.track(event);
+  },
 };
 
-analytics.track("object_event");
+analyticsWrapper.log("object_wrapper_event");
 
-// nested object
 const analyticsDeep = {
   events: {
-    track
-  }
+    log(event: string) {
+      tracker.track(event);
+    },
+  },
 };
 
-analyticsDeep.events.track("nested_object_event");
+analyticsDeep.events.log("nested_object_wrapper_event");
 
 // =========================
 // CONDITIONALS
 // =========================
 
 if (true) {
-  track("if_event");
+  tracker.track("if_event");
 } else {
-  track("else_event");
+  tracker.track("else_event");
 }
 
 // ternary
 true
-  ? track("ternary_true")
-  : track("ternary_false");
+  ? tracker.track("ternary_true")
+  : tracker.track("ternary_false");
 
 // =========================
 // ARRAYS
 // =========================
 
 [
-  () => track("array_1"),
-  () => track("array_2")
+  () => tracker.track("array_1"),
+  () => tracker.track("array_2")
 ];
 
 // =========================
@@ -169,7 +175,7 @@ true
 // =========================
 
 for (let i = 0; i < 1; i++) {
-  track("loop_event");
+  tracker.track("loop_event");
 }
 
 // =========================
@@ -177,9 +183,9 @@ for (let i = 0; i < 1; i++) {
 // =========================
 
 try {
-  track("try_event");
+  tracker.track("try_event");
 } catch {
-  track("catch_event");
+  tracker.track("catch_event");
 }
 
 // =========================
@@ -187,7 +193,7 @@ try {
 // =========================
 
 function returnTest() {
-  return track("return_event");
+  return tracker.track("return_event");
 }
 
 // =========================
@@ -195,22 +201,20 @@ function returnTest() {
 // =========================
 
 function withDefault(e = "default_event") {
-  track(e);
+  tracker.track(e);
 }
 
 // =========================
 // INLINE OBJECT
 // =========================
 
-track({
-  name: "object_payload_event"
-} as any);
+tracker.track("object_payload_event");
 
 // =========================
 // OPTIONAL CHAINING
 // =========================
 
-analytics?.track?.("optional_chain_event");
+tracker?.track("optional_chain_event");
 
 // =========================
 // EDGE CASES
@@ -218,15 +222,15 @@ analytics?.track?.("optional_chain_event");
 
 // not first argument (should be ignored usually)
 // @ts-ignore
-track("real_event", "extra");
+tracker.track("real_event", "extra");
 
 // no args
 // @ts-ignore
-track();
+tracker.track();
 
 // dynamic identifier (should be dynamic)
 const dynamicEvent = Math.random() > 0.5 ? "a" : "b";
-track(dynamicEvent);
+tracker.track(dynamicEvent);
 
 // =========================
 // END

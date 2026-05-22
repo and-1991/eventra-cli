@@ -23,7 +23,7 @@ export function scanSource(source: ts.SourceFile, checker: ts.TypeChecker, wrapp
     }
     // sink detection
     if (ts.isCallExpression(node)) {
-      const sink = detectTrackSink(node);
+      const sink = detectTrackSink(node, checker);
       if (sink) {
         sinks.push(sink);
         const trackedArguments = sink.trackedArguments.map(tracked => {
