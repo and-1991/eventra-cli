@@ -1,29 +1,30 @@
-# Eventra CLI — System Architecture
+# Eventra CLI — Engine Architecture
 
-## Overview
+This document describes the **static analysis engine** that powers `@eventra_dev/eventra-cli`. For backend / ingest / billing architecture see [`../../ARCHITECTURE.md`](../../ARCHITECTURE.md).
 
-Eventra is an incremental semantic TypeScript analysis platform for static analytics event extraction.
+## What this engine is
 
-The system consists of:
+```
+Incremental Semantic TypeScript Analysis Engine
+```
 
-* semantic analysis core
-* incremental TypeScript compiler engine
-* propagation analysis layer
-* plugin-oriented extraction architecture
-* ingest and aggregation backend
-* workspace-isolated analytics infrastructure
+It is **not**:
 
-Eventra statically extracts analytics events from JavaScript and TypeScript codebases without runtime instrumentation.
+- a regex scanner
+- a runtime instrumentation SDK
+- a generic analytics-call extractor (it only resolves calls on `Eventra` instances imported from `@eventra_dev/eventra-sdk`)
+
+The CLI runs the TypeScript compiler API over the project, resolves symbols semantically, and extracts only the calls that statically map to `Eventra.prototype.track()`.
 
 ---
 
-# High-Level Architecture
+## High-level pipeline
 
 ```text
 Source Files
      |
      v
-TypeScript Compiler API
+TypeScript Compiler API   (incremental program)
      |
      v
 Incremental Compiler Context
@@ -49,37 +50,14 @@ Sink Detection              Wrapper Analysis
                    |
                    v
              Final Event Set
+                   |
+                   v
+            Write to eventra.json
 ```
 
 ---
 
-# Core Analysis Engine
-
-## Engine Type
-
-Eventra is:
-
-```text
-Incremental Semantic TypeScript Analysis Engine
-```
-
-NOT:
-
-```text
-Regex scanner
-```
-
-and NOT:
-
-```text
-Runtime instrumentation SDK
-```
-
----
-
-# Semantic Analysis Pipeline
-
-## Resolution Flow
+## Resolution flow
 
 ```text
 CallExpression
@@ -112,11 +90,11 @@ Final Static Values
 
 ---
 
-# Static Resolution Coverage
+## Static resolution coverage
 
-## Supported
+### Supported
 
-### Direct tracking
+Direct tracking:
 
 ```ts
 track("signup")
@@ -125,229 +103,105 @@ sdk?.track("checkout")
 sdk["track"]("login")
 ```
 
----
-
-### Variables
+Variables, enums, templates, concatenation, conditionals, arrays:
 
 ```ts
 const EVENT = "signup"
 track(EVENT)
-```
 
----
-
-### Enums
-
-```ts
-enum EVENTS {
-  LOGIN = "login"
-}
-
+enum EVENTS { LOGIN = "login" }
 track(EVENTS.LOGIN)
-```
 
----
-
-### Template literals
-
-```ts
 track(`feature_${type}`)
-```
-
----
-
-### String concatenation
-
-```ts
 track("feature_" + type)
-```
-
----
-
-### Conditional expressions
-
-```ts
 track(flag ? "a" : "b")
-```
-
----
-
-### Arrays
-
-```ts
 track(["a", "b"])
 ```
 
----
-
-### Object payloads
+Object / shorthand payloads:
 
 ```ts
-track({
-  event: "signup"
-})
-```
-
----
-
-### Shorthand payloads
-
-```ts
+track({ event: "signup" })
 track({ event })
 ```
 
----
-
-### Wrapper functions
+Wrapper functions and cross-file wrappers:
 
 ```ts
-function trackFeature(event) {
+function trackFeature(event: string) {
   track(event)
 }
-```
 
----
-
-### Multiple wrapper arguments
-
-```ts
-function wrapper(a, b, event) {
-  track(event)
-}
-```
-
----
-
-### Cross-file wrapper propagation
-
-```ts
+// other file
 import { trackFeature } from "./tracker"
+trackFeature("purchase")
 ```
 
----
-
-### Return propagation
+Multi-arg wrappers, return propagation, property propagation, destructuring (incl. aliased and nested):
 
 ```ts
-function build(name) {
-  return name
-}
+function wrapper(a: unknown, b: unknown, event: string) { track(event) }
 
+function build(name: string) { return name }
 track(build("signup"))
-```
 
----
-
-### Property propagation
-
-```ts
 track(payload.event)
 track(payload?.event)
 track(payload["event"])
+
+function w1({ event }: { event: string }) { track(event) }
+function w2({ event: name }: { event: string }) { track(name) }
+function w3({ meta: { event } }: { meta: { event: string } }) { track(event) }
 ```
+
+### Intentional non-goals (today)
+
+- Runtime execution (`fetch`, `localStorage`, `process.env`)
+- Dynamic evaluation (`eval`)
+- Full control-flow graph
+- Deep recursive interprocedural traversal
+- Mutation tracking (`payload.event = "x"`)
+- Full object graph evaluation
+- Async semantic propagation (`await`, `Promise.then`)
+- Framework template analysis (Vue SFC, Svelte) — outside the core, planned as plugins
 
 ---
 
-### Destructured parameters
-
-```ts
-function wrapper({ event }) {
-  track(event)
-}
-```
-
----
-
-### Aliased destructuring
-
-```ts
-function wrapper({ event: name }) {
-  track(name)
-}
-```
-
----
-
-### Nested destructuring
-
-```ts
-function wrapper({
-  meta: { event }
-}) {
-  track(event)
-}
-```
-
----
-
-# Incremental Analysis Engine
-
-## Core Components
+## Incremental engine
 
 ### CompilerContext
-
-Maintains incremental TypeScript program state.
-
----
+Maintains an incremental TypeScript program and reuses it across `sync` / `watch` runs.
 
 ### Scheduler
-
 Coordinates async file updates and incremental rebuilds.
 
----
-
 ### ImportGraph
+Tracks dependencies between files and provides:
 
-Tracks dependency relationships between files.
-
-Provides:
-
-* dependent collection
-* selective invalidation
-* incremental rescans
-
----
+- dependent collection
+- selective invalidation
+- incremental rescans
 
 ### FileSemanticIndex
+Per-file storage of:
 
-Stores:
-
-* sinks
-* wrappers
-* track calls
-* semantic metadata
-
----
-
-# Cache Architecture
-
-## EvaluationCache
-
-Caches resolved identifier values.
+- sinks
+- wrappers
+- track calls
+- semantic metadata
 
 ---
 
-## ResolvedCallCache
+## Cache architecture
 
-Caches resolved call targets.
+| Cache | What it stores |
+|-------|----------------|
+| `EvaluationCache` | Resolved identifier values |
+| `ResolvedCallCache` | Resolved call targets |
+| `ResolvedExportCache` | Normalized exported symbols |
+| `ReturnPropagationCache` | Return propagation analysis |
 
----
-
-## ResolvedExportCache
-
-Caches normalized exported symbols.
-
----
-
-## ReturnPropagationCache
-
-Caches return propagation analysis.
-
----
-
-# Cache Invalidation
-
-Eventra invalidates only affected semantic state.
+### Cache invalidation
 
 ```text
 Changed File
@@ -365,25 +219,23 @@ Selective Cache Invalidation
 Incremental Re-analysis
 ```
 
----
-
-# Wrapper Propagation System
-
-## WrapperRegistry
-
-Stores semantic propagation metadata for wrappers.
-
-Supports:
-
-* local wrappers
-* imported wrappers
-* normalized exports
-* parameter propagation
-* property propagation
+Only the affected slice is invalidated — unrelated files keep their cached analysis.
 
 ---
 
-## Propagation Metadata
+## Wrapper propagation system
+
+### WrapperRegistry
+
+Stores propagation metadata for wrappers. Supports:
+
+- local wrappers
+- imported wrappers
+- normalized exports
+- parameter propagation
+- property propagation
+
+### Propagation metadata shape
 
 ```ts
 {
@@ -396,354 +248,126 @@ Supports:
 
 ---
 
-# Resolver Capabilities
+## Resolver capabilities
 
-## Current Resolver Supports
+Current resolver supports:
 
-* identifier resolution
-* export normalization
-* enum resolution
-* object literal resolution
-* property access resolution
-* wrapper-aware resolution
-* return propagation
-* static string evaluation
-* partial interprocedural propagation
-
----
-
-# Current Non-Goals
-
-These are intentionally NOT supported yet.
-
-## Runtime execution
-
-```ts
-fetch()
-localStorage
-process.env
-```
+- identifier resolution
+- export normalization
+- enum resolution
+- object literal resolution
+- property access resolution
+- wrapper-aware resolution
+- return propagation
+- static string evaluation
+- partial interprocedural propagation
 
 ---
 
-## Dynamic evaluation
+## Plugin-oriented design (planned)
 
-```ts
-eval()
-```
+The core engine intentionally does not contain:
 
----
+- React-specific logic
+- Vue-specific logic
+- Svelte-specific logic
+- analytics-SDK-specific logic beyond `@eventra_dev/eventra-sdk`
 
-## Full control-flow graph
+Framework / SDK support is planned via a plugin kernel:
 
----
+| Layer | Responsibility |
+|-------|----------------|
+| Core | AST traversal, semantic resolution, propagation analysis, incremental compilation, cache invalidation, symbol normalization |
+| Plugin | Sink detection, framework adapters, SDK integrations, custom propagation rules, template extraction |
 
-## Deep recursive interprocedural graph traversal
-
----
-
-## Mutation tracking
-
-```ts
-payload.event = "x"
-```
-
----
-
-## Full object graph evaluation
-
----
-
-## Async semantic propagation
-
-```ts
-await
-Promise.then()
-```
-
----
-
-## Framework template analysis
-
-Currently plugin-oriented and intentionally outside the core.
-
----
-
-# Plugin-Oriented Architecture
-
-## Design Goal
-
-Eventra core is framework-agnostic.
-
-The core engine does NOT contain:
-
-* React-specific logic
-* Vue-specific logic
-* Svelte-specific logic
-* analytics SDK implementations
-
-Framework support is implemented via plugins.
-
----
-
-# Planned Plugin Kernel
-
-## Core Responsibilities
-
-* AST traversal
-* semantic resolution
-* propagation analysis
-* incremental compilation
-* cache invalidation
-* symbol normalization
-
----
-
-## Plugin Responsibilities
-
-* sink detection
-* framework adapters
-* SDK integrations
-* custom propagation rules
-* template extraction
-
----
-
-# Planned Plugin API
+Planned plugin API sketch:
 
 ```ts
 export interface EventraPlugin {
   name: string;
-
-  setup(
-    api: EventraPluginAPI,
-  ): void;
+  setup(api: EventraPluginAPI): void;
 }
 ```
 
 ---
 
-# Backend Architecture
+## Output
 
-# Tenant Hierarchy
+The engine writes results into `eventra.json` at the project root:
 
-```text
-Workspace
-   |
-   v
-Project
-   |
-   v
-Feature
-   |
-   v
-Event
+```json
+{
+  "apiKey": "",
+  "endpoint": "",
+  "events": ["checkout.completed", "..."],
+  "functionWrappers": ["trackFeature"],
+  "sync": {
+    "include": ["**/*.{ts,tsx,js,jsx}"],
+    "exclude": ["node_modules", "dist", ".next", ".git"]
+  }
+}
 ```
 
-Isolation enforced at:
-
-* guards
-* queries
-* billing layer
-* ingest pipeline
+`eventra check` compares the current scan against this config; `eventra sync` rewrites it.
+`eventra send` uploads `events` to the Eventra API using `apiKey` from this config.
 
 ---
 
-# Ingest Pipeline
+## Failure model
+
+Safe to handle:
+
+- process crash mid-scan (incremental rebuild on next run)
+- partial cache state (selective invalidation replays)
+- duplicate scans over the same set
+- transient file system errors
+
+---
+
+## Roadmap
 
 ```text
-HTTP
-  |
-  v
-DTO Validation
-  |
-  v
-API Key Authentication
-  |
-  v
-Workspace Billing Guard
-  |
-  v
-Rate Limiter
-  |
-  v
-Memory Buffer
-  |
-  v
-Disk Buffer
-  |
-  v
-PostgreSQL COPY
-  |
-  v
-Partitioning
-  |
-  v
-Rollup Aggregation
+Phase 0   Regex / AST scanning              (done — legacy baseline)
+   ↓
+Phase 1   Semantic propagation engine       (current)
+   ↓
+Phase 1.5 Plugin kernel foundation
+   ↓
+Phase 2   Framework + SDK plugin ecosystem
+   ↓
+Phase 3   Semantic provenance graph
+   ↓
+Phase 4   Advanced interprocedural analysis
 ```
 
 ---
 
-# Billing State Machine
-
-States:
-
-* active
-* grace
-* locked
-
-Transitions enforced via:
+## Design philosophy
 
 ```text
-BillingLifecycleService
-```
-
----
-
-# Rollup Engine
-
-Runs every minute.
-
-Guarantees:
-
-* advisory-lock single worker
-* deterministic cursor progression
-* incremental aggregation
-* lag monitoring
-* crash-safe resumability
-
----
-
-# Failure Model
-
-## Safe
-
-* process crash
-* DB restart
-* duplicate events
-* partial batch failure
-* incremental rebuild interruption
-* cache invalidation replay
-
----
-
-## Future Work
-
-* multi-region ingest
-* cross-region clock reconciliation
-* distributed aggregation
-* multi-primary ingest
-
----
-
-# Scaling Path
-
-## Phase 1
-
-Vertical PostgreSQL COPY scaling.
-
----
-
-## Phase 2
-
-Read replicas for aggregates.
-
----
-
-## Phase 3
-
-Workspace-level sharding.
-
----
-
-## Phase 4
-
-Multi-region ingest.
-
----
-
-# Design Philosophy
-
-## Core Principles
-
-```text
-Throughput first.
-Correctness always.
 Semantic analysis over regex matching.
 Framework-agnostic core.
 Incremental everything.
 Plugins over hardcoded integrations.
+Near-zero runtime overhead.
 ```
 
 ---
 
-# Current Strengths
+## Current strengths
 
-✅ Incremental TypeScript compiler
-
-✅ Semantic propagation engine
-
-✅ Wrapper-aware extraction
-
-✅ Cross-file resolution
-
-✅ Static value evaluation
-
-✅ Dependency-aware invalidation
-
-✅ Cache-based semantic analysis
-
-✅ TypeChecker-powered symbol resolution
-
-✅ Near-zero runtime overhead
-
-✅ Framework-agnostic architecture
-
-✅ Plugin-oriented evolution path
+- Incremental TypeScript compiler reuse
+- Semantic propagation engine
+- Wrapper-aware extraction (incl. cross-file)
+- TypeChecker-powered symbol resolution
+- Static value evaluation (strings, enums, templates, conditionals, property paths)
+- Dependency-aware cache invalidation
+- Framework-agnostic core, plugin-ready evolution path
 
 ---
 
-# Current Project State
+## Related docs
 
-```text
-Phase 0
-Regex / AST scanning
-        ↓
-
-Phase 1
-Semantic propagation engine
-        ↓
-
-Phase 1.5
-Plugin kernel foundation
-        ↓
-
-Phase 2
-Framework + SDK plugin ecosystem
-        ↓
-
-Phase 3
-Semantic provenance graph
-        ↓
-
-Phase 4
-Advanced interprocedural analysis
-```
-
----
-
-# Current Status
-
-Eventra already operates as:
-
-```text
-Lightweight semantic TypeScript analysis platform
-```
-
-rather than:
-
-```text
-Simple event scanner
-```
-
-The current architecture is intentionally designed to support long-term evolution toward a full semantic event intelligence platform.
+- [README.md](./README.md) — usage and commands
+- [../../ARCHITECTURE.md](../../ARCHITECTURE.md) — backend system architecture (ingest, billing, rollup)
+- [../../apps/ingest-api/README.md](../../apps/ingest-api/README.md) — the API the CLI uploads to (`POST /api/v1/cli/events`)

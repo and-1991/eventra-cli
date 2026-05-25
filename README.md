@@ -149,7 +149,7 @@ Incremental scan with the same rules as `sync`.
 
 ### `eventra send`
 
-Uploads `events` from config to the Eventra API.
+Uploads `events` from config to the Eventra API. Requires `apiKey` (and optionally `endpoint`) in `eventra.json`. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
 
 ---
 
