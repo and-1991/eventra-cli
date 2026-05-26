@@ -61,6 +61,24 @@ const fixtures: Array<{
     minWrappers: 1,
     expectWrappers: ["trackFeature"],
   },
+  {
+    name: "wrappers/barrel",
+    minEvents: 3,
+    minWrappers: 1,
+    expectWrappers: ["trackFeature"],
+  },
+  {
+    name: "wrappers/default-export",
+    minEvents: 3,
+    minWrappers: 1,
+    expectWrappers: ["trackFeature"],
+  },
+  {
+    name: "wrappers/path-aliases",
+    minEvents: 3,
+    minWrappers: 1,
+    expectWrappers: ["trackFeature"],
+  },
 ];
 
 function runCLI(args: string[], cwd: string): { stdout: string; status: number } {
@@ -147,6 +165,46 @@ function runFixture(spec: (typeof fixtures)[number]) {
   cleanup(dir);
 }
 
+function runCheckExitCodes() {
+  // exercises `eventra check` exit semantics on a known fixture
+  const dir = path.resolve(__dirname, "fixtures", "wrappers/function");
+
+  // 1. drift case: empty config → sync finds events → check must exit 1
+  console.log(`\nRunning: check exit codes (drift)`);
+  ensureTestConfig(dir);
+  const drift = runCLI(["check"], dir);
+  if (drift.status !== 1) {
+    throw new Error(
+      `check (drift): expected exit 1, got ${drift.status}\n${drift.stdout}`,
+    );
+  }
+  console.log(`✓ check drift returns exit code 1`);
+
+  // 2. --fix writes events into config
+  console.log(`\nRunning: check --fix (writes config)`);
+  const fix = runCLI(["check", "--fix"], dir);
+  if (fix.status !== 0) {
+    throw new Error(`check --fix: expected exit 0, got ${fix.status}\n${fix.stdout}`);
+  }
+  const fixed = JSON.parse(fs.readFileSync(path.join(dir, "eventra.json"), "utf-8"));
+  if (!Array.isArray(fixed.events) || fixed.events.length === 0) {
+    throw new Error(`check --fix: events should be populated`);
+  }
+  console.log(`✓ check --fix writes ${fixed.events.length} events`);
+
+  // 3. parity: re-running check on the updated config should exit 0
+  console.log(`\nRunning: check exit codes (parity)`);
+  const parity = runCLI(["check"], dir);
+  if (parity.status !== 0) {
+    throw new Error(
+      `check (parity): expected exit 0, got ${parity.status}\n${parity.stdout}`,
+    );
+  }
+  console.log(`✓ check parity returns exit code 0`);
+
+  cleanup(dir);
+}
+
 function run() {
   const build = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, encoding: "utf-8" });
   if (build.status !== 0) {
@@ -157,6 +215,8 @@ function run() {
   for (const fixture of fixtures) {
     runFixture(fixture);
   }
+
+  runCheckExitCodes();
 
   console.log("\nAll fixtures passed");
 }

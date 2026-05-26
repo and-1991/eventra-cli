@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "0.3.13",
+  "version": "0.4.0",
   "description": "Static analytics event extraction CLI powered by the TypeScript compiler API",
   "license": "MIT",
   "type": "commonjs",
@@ -17,7 +17,6 @@
     "type": "git",
     "url": "https://github.com/and-1991/eventra-cli"
   },
-
   "homepage": "https://eventra.dev",
   "engines": {
     "node": ">=18"
@@ -25,7 +24,9 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx src/index.ts",
-    "test": "pnpm run clean && pnpm run build && tsx tests/run.ts",
+    "test": "pnpm run clean && pnpm run build && pnpm run test:unit && tsx tests/run.ts",
+    "test:unit": "vitest run",
+    "test:e2e": "pnpm run clean && pnpm run build && tsx tests/run.ts",
     "clean": "rm -rf dist"
   },
   "dependencies": {
@@ -42,18 +43,39 @@
     "@types/inquirer": "^9.0.9",
     "@types/node": "^20.0.0",
     "cross-spawn": "^7.0.6",
-    "tsx": "^4.7.0"
+    "tsx": "^4.7.0",
+    "vitest": "^4.1.7"
   },
   "keywords": [
     "analytics",
+    "analytics-cli",
     "event-tracking",
+    "feature-usage",
+    "feature-tracking",
+    "product-analytics",
+    "telemetry",
+    "tracking",
+    "events",
+    "event-catalog",
+    "event-discovery",
     "static-analysis",
+    "static-code-analysis",
     "typescript",
+    "typescript-compiler",
     "compiler-api",
     "ast",
+    "code-analysis",
+    "drift-detection",
+    "ci",
+    "ci-cd",
+    "lint",
+    "watch-mode",
     "cli",
-    "telemetry",
-    "eventra"
+    "command-line",
+    "developer-tools",
+    "devtools",
+    "eventra",
+    "eventra-cli"
   ],
   "publishConfig": {
     "access": "public"

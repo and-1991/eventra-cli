@@ -4,10 +4,16 @@
 
 # Eventra CLI
 
-[![npm version](https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
-[![npm downloads](https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg)](https://www.npmjs.com/package/@eventra_dev/eventra-cli)
-[![TypeScript](https://img.shields.io/badge/typescript-ready-blue.svg)](https://www.typescriptlang.org/)
-[![License](https://img.shields.io/npm/l/@eventra_dev/eventra-cli)]()
+<p align="center">
+  <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
+  <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
+  <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-52%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
+  <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
+  <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
+  <img alt="license" src="https://img.shields.io/npm/l/@eventra_dev/eventra-cli?style=flat-square&color=lightgrey">
+</p>
 
 Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-sdk**](https://www.npmjs.com/package/@eventra_dev/eventra-sdk) usage in your codebase — including function wrappers and cross-file propagation chains.
 
@@ -151,6 +157,13 @@ Incremental scan with the same rules as `sync`.
 
 Uploads `events` from config to the Eventra API. Requires `apiKey` (and optionally `endpoint`) in `eventra.json`. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
 
+Network resilience:
+
+- Up to 4 attempts with exponential backoff + jitter (capped at 8 s)
+- Retries on 429 and 5xx responses, and on transport errors (timeout / DNS / connection reset)
+- Permanent failure (4xx other than 429) surfaces immediately without retry
+- 10 s timeout per attempt via `AbortController`
+
 ---
 
 ## Configuration
@@ -185,6 +198,54 @@ No runtime execution. No monkey-patching.
 
 - Node.js 18+
 - TypeScript/JavaScript source using `@eventra_dev/eventra-sdk`
+
+---
+
+## Test Coverage
+
+Two test layers, **52 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
+
+**Unit tests (vitest)** — 10 suites covering core modules:
+
+| Module | Covers |
+|---|---|
+| `ImportGraph` | Forward/reverse edges, cycles, stale-edge cleanup, file removal |
+| `Scheduler` | Batch coalescing, last-write-wins per file, sequential bursts, error propagation |
+| `DocumentRegistry` | Path normalization, version bumping, no-op on identical content, `ensure()` from disk |
+| `CompilerContext` | Stage/update/remove files, `resolveModule` with `tsconfig.json` `paths`, source-file enumeration |
+| `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
+| `processFile` | Script-kind detection, import/export specifier extraction |
+| `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
+| `normalizeConfig` | Sort events, dedupe wrappers, defaults, preserve `apiKey` / `endpoint` / `sync` |
+| `buildConfigFromScan` | Replace events + wrappers, preserve everything else |
+| `hash` | Stability and uniqueness |
+
+**End-to-end fixtures** — 12 isolated TS projects scanned via `eventra sync`:
+
+| Fixture | Covers |
+|---|---|
+| `sdk/direct` | Plain `tracker.track()` calls |
+| `frontend/react`, `frontend/next`, `frontend/vue` | Framework-specific code shapes |
+| `backend/node`, `backend/express`, `backend/nest` | Backend wrappers and middleware chains |
+| `wrappers/function` | Local wrapper functions, methods, objects, ternaries, templates |
+| `wrappers/barrel` | `export * from "./tracker"` re-exports |
+| `wrappers/default-export` | `export default function trackFeature` propagation |
+| `wrappers/path-aliases` | `tsconfig.json` `paths` mapping (`@app/*`) |
+| `watch-incremental` | Engine state across sequential file updates (matches `sync` output) |
+
+**`eventra check` exit-code scenarios:**
+
+- Drift → exit `1`
+- `--fix` writes scan results into `eventra.json` → exit `0`
+- Parity (no drift) → exit `0`
+
+Run locally:
+
+```bash
+pnpm --filter @eventra_dev/eventra-cli test       # unit + e2e + exit codes
+pnpm --filter @eventra_dev/eventra-cli test:unit  # vitest only
+pnpm --filter @eventra_dev/eventra-cli test:e2e   # fixtures + check exit codes
+```
 
 ---
 
