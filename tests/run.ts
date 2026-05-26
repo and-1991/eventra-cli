@@ -124,6 +124,7 @@ function runFixture(spec: (typeof fixtures)[number]) {
     const names = new Set(wrappers.map((w) => w.name));
     for (const expected of spec.expectWrappers) {
       if (!names.has(expected)) {
+        // @ts-ignore
         throw new Error(`${spec.name}: missing wrapper "${expected}" in ${[...names].join(", ")}`);
       }
     }
