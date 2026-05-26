@@ -367,7 +367,4 @@ Near-zero runtime overhead.
 ---
 
 ## Related docs
-
 - [README.md](./README.md) — usage and commands
-- [../../ARCHITECTURE.md](../../ARCHITECTURE.md) — backend system architecture (ingest, billing, rollup)
-- [../../apps/ingest-api/README.md](../../apps/ingest-api/README.md) — the API the CLI uploads to (`POST /api/v1/cli/events`)

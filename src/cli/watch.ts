@@ -47,10 +47,12 @@ export async function watch(): Promise<void> {
     try {
       const abs = normalize(file);
       const raw = await fs.readFile(abs, "utf-8");
+      // processFile extracts import specifiers for chokidar tracking;
+      // the engine itself receives raw file content.
       const parsed = await processFile(abs, raw);
       cache.set(abs, parsed);
       trackedFiles.add(abs);
-      await engine.preloadFile(getVirtualFile(abs), parsed.content);
+      await engine.preloadFile(getVirtualFile(abs), raw);
       fileDeps.set(
         abs,
         new Set(
@@ -87,10 +89,13 @@ export async function watch(): Promise<void> {
     for (const file of batch) {
       try {
         const raw = await fs.readFile(file, "utf-8");
+        // processFile here is used ONLY to extract import specifiers for
+        // chokidar's dependency tracking. The engine receives raw content
+        // and parses it itself.
         const parsed = await processFile(file, raw);
         cache.set(file, parsed);
         trackedFiles.add(file);
-        await engine.updateFile(getVirtualFile(file), parsed.content, config);
+        await engine.updateFile(getVirtualFile(file), raw, config);
 
         const abs = normalize(file);
         const prevDeps = fileDeps.get(abs) ?? new Set();

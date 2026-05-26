@@ -55,6 +55,12 @@ const fixtures: Array<{
     minEvents: 8,
     minWrappers: 0,
   },
+  {
+    name: "watch-incremental",
+    minEvents: 2,
+    minWrappers: 1,
+    expectWrappers: ["trackFeature"],
+  },
 ];
 
 function runCLI(args: string[], cwd: string): { stdout: string; status: number } {

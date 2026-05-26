@@ -3,7 +3,6 @@ import path from "path";
 import ts from "typescript";
 
 import { DocumentRegistry } from "./documentRegistry";
-import { processFile } from "../filesystem/processFile";
 
 export class CompilerContext {
   private readonly registry = new DocumentRegistry();
@@ -167,10 +166,10 @@ export class CompilerContext {
     this.rebuildProgram();
   }
 
-  async updateFile(fileName: string, content: string): Promise<void> {
+  // accept content as-is; the engine layer is responsible for parsing via processFile
+  updateFile(fileName: string, content: string): void {
     const normalized = this.normalize(fileName);
-    const processed = await processFile(normalized, content);
-    this.stageFile(processed.fileName, processed.content);
+    this.stageFile(normalized, content);
     this.rebuildProgram();
   }
 
