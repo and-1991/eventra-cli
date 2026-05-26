@@ -8,7 +8,6 @@ import { EvaluationCache } from "../analysis/cache/evaluationCache";
 import { ResolvedCallCache } from "../analysis/cache/resolvedCallCache";
 import { ResolvedExportCache } from "../analysis/cache/resolvedExportCache";
 import { ReturnPropagationCache } from "../analysis/cache/returnPropagationCache";
-import { invalidateSourceFileSymbols } from "../analysis/cache/symbolInvalidation";
 import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFile";
 import { FileSemanticIndex } from "../analysis/shared/types";
 import { EventraConfig, ScanResult } from "../types";
@@ -49,31 +48,57 @@ export class EventraEngine {
       this.resolvedExportCache,
     );
     this.scheduler = new Scheduler(async (updates) => {
-      const affected = new Set<string>();
+      const changedFiles = new Set<string>();
 
       for (const [file, content] of updates) {
-        const existing = this.compiler.getSourceFile(file);
-        if (existing) {
-          invalidateSourceFileSymbols(
-            existing,
-            this.compiler.getChecker(),
-            this.evaluationCache,
-            this.resolvedCallCache,
-            this.resolvedExportCache,
-            this.returnPropagationCache,
-            this.wrapperRegistry,
-          );
-        }
         await this.compiler.updateFile(file, content);
         this.updateImportGraph(file);
+        changedFiles.add(file);
+      }
+
+      // Program was rebuilt → every ts.Symbol from the previous program is now
+      // dead. WeakMap-keyed caches (incl. WrapperRegistry) must be dropped before
+      // we touch any NEW symbols, otherwise cross-file wrapper lookups miss.
+      this.resetCaches();
+      this.refreshChecker();
+
+      // Full re-index: WrapperRegistry must contain entries keyed by NEW
+      // symbols for every file, otherwise affected files cannot resolve
+      // wrappers defined in unaffected files (this is the watch-corruption bug).
+      this.reindexAll(this.lastConfig);
+
+      // Incremental extract: only re-extract changed files + their dependents.
+      // Unaffected files keep their previously-computed Set<string> events,
+      // which is safe (just strings, no AST refs).
+      const affected = new Set<string>();
+      for (const file of changedFiles) {
         affected.add(file);
         for (const dependent of this.importGraph.collectDependents(file)) {
           affected.add(dependent);
         }
       }
-
-      await this.reanalyzeFiles([...affected], this.lastConfig);
+      for (const file of affected) {
+        this.extractFile(file, this.lastConfig);
+      }
     });
+  }
+
+  // drop every symbol-keyed cache; call after a program rebuild
+  private resetCaches(): void {
+    this.evaluationCache.clear();
+    this.resolvedCallCache.clear();
+    this.resolvedExportCache.clear();
+    this.returnPropagationCache.clear();
+    this.wrapperRegistry.clear();
+  }
+
+  // re-index every source file in the current program (skips .d.ts)
+  private reindexAll(config: EventraConfig): void {
+    const sources = this.compiler.getAllSourceFiles();
+    this.fileIndices.clear();
+    for (const sf of sources) {
+      this.indexFile(sf.fileName, config);
+    }
   }
 
   beginPreload(): void {
@@ -159,11 +184,15 @@ export class EventraEngine {
 
   async reanalyzeFiles(fileNames: readonly string[], config: EventraConfig): Promise<void> {
     this.lastConfig = config;
+
+    // Same correctness contract as the scheduler flush: the program may have
+    // just been rebuilt (e.g. via removeFile), so clear symbol caches and
+    // re-index every file before re-extracting the requested slice.
+    this.resetCaches();
     this.refreshChecker();
+    this.reindexAll(config);
+
     const normalized = fileNames.map((f) => this.normalize(f));
-    for (const file of normalized) {
-      this.indexFile(file, config);
-    }
     for (const file of normalized) {
       this.extractFile(file, config);
     }
@@ -214,18 +243,6 @@ export class EventraEngine {
 
   async removeFile(fileName: string, config?: EventraConfig): Promise<void> {
     const normalized = this.normalize(fileName);
-    const existing = this.compiler.getSourceFile(normalized);
-    if (existing) {
-      invalidateSourceFileSymbols(
-        existing,
-        this.compiler.getChecker(),
-        this.evaluationCache,
-        this.resolvedCallCache,
-        this.resolvedExportCache,
-        this.returnPropagationCache,
-        this.wrapperRegistry,
-      );
-    }
     const affected = this.importGraph.collectDependents(normalized);
     this.importGraph.removeFile(normalized);
     this.compiler.removeFile(normalized);
@@ -236,8 +253,15 @@ export class EventraEngine {
 
     const nextConfig = config ?? this.lastConfig;
     const toReanalyze = [...affected].filter((f) => f !== normalized);
+    // reanalyzeFiles already resets caches + reindexes all sources,
+    // which is what we need after compiler.removeFile rebuilds the program.
     if (toReanalyze.length > 0) {
       await this.reanalyzeFiles(toReanalyze, nextConfig);
+    } else {
+      // Even without dependents, the program changed → caches must be reset
+      // so the next call (e.g. runFullAnalysis) sees a clean slate.
+      this.resetCaches();
+      this.refreshChecker();
     }
   }
 
