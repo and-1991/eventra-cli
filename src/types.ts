@@ -12,6 +12,8 @@ export interface EventraConfig {
   readonly endpoint?: string;
   readonly events: string[];
   functionWrappers?: FunctionWrapperConfig[];
+  /** Module specifiers for CLI plugins (e.g. "@eventra_dev/cli-plugin-vue"). */
+  readonly plugins?: readonly string[];
   readonly sync: {
     readonly include: string[];
     readonly exclude: string[];

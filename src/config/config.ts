@@ -26,6 +26,7 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
     endpoint: config.endpoint ?? "",
     events: [...(config.events ?? [])].sort(),
     functionWrappers: uniqueWrappers.sort((a, b) => a.name.localeCompare(b.name)),
+    plugins: [...(config.plugins ?? [])],
     sync: {
       include: config.sync?.include ?? DEFAULT_INCLUDE,
       exclude: config.sync?.exclude ?? DEFAULT_EXCLUDE,

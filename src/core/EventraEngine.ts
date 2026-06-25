@@ -13,6 +13,8 @@ import { FileSemanticIndex } from "../analysis/shared/types";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
 import { processFile } from "../filesystem/processFile";
+import { createBuiltinPluginRegistry } from "../plugin/loadPlugins";
+import type { PluginRegistry } from "../plugin/registry";
 
 const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
@@ -31,6 +33,7 @@ export class EventraEngine {
   private readonly fileIndices = new Map<string, FileSemanticIndex>();
   private readonly fileResults = new Map<string, ScanResult>();
   private readonly normalizedPathCache = new Map<string, string>();
+  private readonly plugins: PluginRegistry;
   private isPreloading = false;
   private lastConfig: EventraConfig = {
     events: [],
@@ -41,7 +44,8 @@ export class EventraEngine {
     },
   };
 
-  constructor(rootDir: string) {
+  constructor(rootDir: string, plugins: PluginRegistry = createBuiltinPluginRegistry()) {
+    this.plugins = plugins;
     this.compiler = new CompilerContext(rootDir);
     this.wrapperRegistry = new WrapperRegistry(
       this.compiler.getChecker(),
@@ -209,6 +213,7 @@ export class EventraEngine {
       source,
       this.compiler.getChecker(),
       this.wrapperRegistry,
+      this.plugins,
     );
     this.fileIndices.set(normalized, index);
   }
