@@ -21,7 +21,10 @@ The CLI runs the TypeScript compiler API over the project, resolves symbols sema
 ## High-level pipeline
 
 ```text
-Source Files
+Source Files (disk)
+     |
+     v
+Plugin preprocessors          (.vue → virtual .ts, …)
      |
      v
 TypeScript Compiler API   (incremental program)
@@ -163,7 +166,7 @@ function w3({ meta: { event } }: { meta: { event: string } }) { track(event) }
 - Mutation tracking (`payload.event = "x"`)
 - Full object graph evaluation
 - Async semantic propagation (`await`, `Promise.then`)
-- Framework template analysis (Vue SFC, Svelte) — outside the core, planned as plugins
+- Framework template analysis in the core (Vue SFC via `@eventra_dev/cli-plugin-vue`; Svelte still planned)
 
 ---
 
@@ -264,30 +267,88 @@ Current resolver supports:
 
 ---
 
-## Plugin-oriented design (planned)
+## Plugin kernel (Phase 1.5 — foundation shipped)
 
-The core engine intentionally does not contain:
-
-- React-specific logic
-- Vue-specific logic
-- Svelte-specific logic
-- analytics-SDK-specific logic beyond `@eventra_dev/eventra-sdk`
-
-Framework / SDK support is planned via a plugin kernel:
+Built-in SDK detection is implemented as the first plugin (`eventra-sdk`). The core engine stays framework-agnostic; extensions are separate packages loaded at startup.
 
 | Layer | Responsibility |
 |-------|----------------|
-| Core | AST traversal, semantic resolution, propagation analysis, incremental compilation, cache invalidation, symbol normalization |
-| Plugin | Sink detection, framework adapters, SDK integrations, custom propagation rules, template extraction |
+| **Core** | TS program, propagation, resolver, incremental graph, cache invalidation |
+| **Plugin adapter** | Duck-type external contract → internal `FilePreprocessor` / `SinkDetector` |
+| **External plugin** | Own types, no dependency on `@eventra_dev/eventra-cli` |
 
-Planned plugin API sketch:
+### External plugin contract
+
+Plugins are separate packages. The CLI validates and adapts them in `src/plugin/adapters/external.ts`.
 
 ```ts
-export interface EventraPlugin {
-  name: string;
-  setup(api: EventraPluginAPI): void;
+// Contract defined by the plugin package (example: @eventra_dev/cli-plugin-vue)
+export interface CliPluginVue {
+  readonly id: string;
+  readonly version: string;
+  readonly includeGlobs: readonly string[];
+  readonly staticSinks?: readonly CliPluginStaticCalleeSink[];
+  match(path: string): boolean;
+  transform(input: { path: string; source: string }): Promise<{
+    modules: Array<{ path: string; content: string }>;
+  }>;
+}
+
+export interface CliPluginStaticCalleeSink {
+  readonly id: string;
+  readonly callee: string;              // CallExpression callee identifier
+  readonly eventNameArgumentIndex: number;
 }
 ```
+
+CLI internal mapping:
+
+| Plugin returns | CLI uses |
+|----------------|----------|
+| `modules[].path` | `VirtualFile.fileName` |
+| `modules[].content` | `VirtualFile.content` |
+| `includeGlobs` | merged into `sync.include` for the run |
+| `staticSinks` | `SinkDetector` (string-literal arg at index) |
+
+### Loading
+
+```json
+{
+  "plugins": ["@eventra_dev/cli-plugin-vue"]
+}
+```
+
+- Built-ins load first (`eventra-sdk` sink detector).
+- Each entry in `plugins` is dynamically `import()`-ed from the **user project's** `node_modules`.
+- Export must be a plugin object or a factory (`default`, or `createCliPluginVue()` — sync or async).
+- `createPluginRegistry(config)` runs at the start of `sync` / `watch`.
+- Empty specifiers are skipped. Load failures throw with a clear message (including a hint when `@eventra_dev/plugin-vue` is used instead of `cli-plugin-vue`).
+
+Unpublished plugins work via `file:`, `link:`, or git URL in `package.json` — the plugin must be installed and built (`dist/`) in the consumer project.
+
+### Hook execution order
+
+```text
+disk file
+  → FilePreprocessor (first matching plugin; empty result → next / passthrough)
+  → TypeScript program + WrapperRegistry + propagation (core)
+  → SinkDetector chain (built-in eventra-sdk, then plugin staticSinks)
+  → event names
+```
+
+### Watch mode
+
+`watch` observes **disk source paths** from the glob (e.g. `App.vue`), not virtual modules (`App.vue.ts`). On change:
+
+1. Re-run `preprocessFile` for the source file
+2. Push updated virtual content into `EventraEngine`
+3. On `unlink`, remove all virtual paths recorded for that source (`PluginRegistry.getVirtualPathsForSource`)
+
+### Planned hooks (not implemented yet)
+
+- `registerDynamicEventReporter` — surface unresolved `dynamic: true` names in CLI output
+- `registerWrapperDetector` — custom wrapper propagation rules
+- Plugin config block in `eventra.json` per plugin id
 
 ---
 
@@ -301,6 +362,7 @@ The engine writes results into `eventra.json` at the project root:
   "endpoint": "",
   "events": ["checkout.completed", "..."],
   "functionWrappers": ["trackFeature"],
+  "plugins": ["@eventra_dev/cli-plugin-vue"],
   "sync": {
     "include": ["**/*.{ts,tsx,js,jsx}"],
     "exclude": ["node_modules", "dist", ".next", ".git"]
@@ -331,9 +393,10 @@ Phase 0   Regex / AST scanning              (done — legacy baseline)
    ↓
 Phase 1   Semantic propagation engine       (current)
    ↓
-Phase 1.5 Plugin kernel foundation
+Phase 1.5 Plugin kernel foundation          (shipped — registry, adapter, watch)
    ↓
-Phase 2   Framework + SDK plugin ecosystem
+Phase 2   More framework plugins (Svelte) + dynamic event reporting
+          Vue shipped as @eventra_dev/cli-plugin-vue (separate package)
    ↓
 Phase 3   Semantic provenance graph
    ↓
@@ -362,7 +425,7 @@ Near-zero runtime overhead.
 - TypeChecker-powered symbol resolution
 - Static value evaluation (strings, enums, templates, conditionals, property paths)
 - Dependency-aware cache invalidation
-- Framework-agnostic core, plugin-ready evolution path
+- Plugin kernel with external-package contract (`cli-plugin-vue` for Vue SFC)
 
 ---
 

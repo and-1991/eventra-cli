@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-52%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-59%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
@@ -23,7 +23,7 @@ Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-s
 
 The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`.
 
-It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries.
+It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`) require an optional [plugin](#plugins).
 
 ---
 
@@ -166,6 +166,66 @@ Network resilience:
 
 ---
 
+## Plugins
+
+The CLI core is framework-agnostic. Extensions are **separate npm packages** with their own types — the CLI loads them from `eventra.json` and adapts their output internally.
+
+### Vue (`.vue` SFC)
+
+Install the official Vue plugin and enable it in config:
+
+```bash
+pnpm add -D @eventra_dev/cli-plugin-vue
+```
+
+```json
+{
+  "plugins": ["@eventra_dev/cli-plugin-vue"],
+  "sync": {
+    "include": ["**/*.{ts,tsx,js,jsx}"],
+    "exclude": ["node_modules", "dist", ".next", ".git"]
+  }
+}
+```
+
+The plugin:
+
+- splits each `.vue` file into virtual TypeScript modules (`App.vue.ts`, `App.vue.template.ts`)
+- extracts `track()` calls from `<script>` blocks
+- detects static `event="feature_name"` attributes in `<template>` (literals only)
+
+`sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`.
+
+### Before publishing / local development
+
+Plugins are resolved from your project's `node_modules` (same as any dependency):
+
+```json
+{
+  "devDependencies": {
+    "@eventra_dev/cli-plugin-vue": "file:../cli-plugin-vue"
+  }
+}
+```
+
+The plugin package must be built (`dist/`) before use. Unpublished plugins work the same way — only the install source differs.
+
+### Plugin contract (for authors)
+
+External plugins export an object (or factory) with:
+
+| Field | Purpose |
+|-------|---------|
+| `id` | Unique preprocessor name |
+| `includeGlobs` | Extra glob patterns merged into the scan |
+| `match(path)` | Whether this plugin handles a file |
+| `transform({ path, source })` | Returns `{ modules: [{ path, content }] }` |
+| `staticSinks?` | Declarative callee-based sink rules (CLI converts to internal detectors) |
+
+No dependency on `@eventra_dev/eventra-cli` is required. See [`ARCHITECTURE.md`](./ARCHITECTURE.md#plugin-kernel-phase-15--foundation-shipped) for details.
+
+---
+
 ## Configuration
 
 ```json
@@ -174,6 +234,7 @@ Network resilience:
   "endpoint": "",
   "events": [],
   "functionWrappers": [],
+  "plugins": [],
   "sync": {
     "include": ["**/*.{ts,tsx,js,jsx}"],
     "exclude": ["node_modules", "dist", ".next", ".git"]
@@ -181,14 +242,25 @@ Network resilience:
 }
 ```
 
+| Field | Description |
+|-------|-------------|
+| `plugins` | Module specifiers to `import()` at startup (e.g. `@eventra_dev/cli-plugin-vue`) |
+| `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
+| `sync.exclude` | Paths skipped during scan |
+
 ---
 
 ## How it works
 
-1. Load project files into an incremental TypeScript program (with SDK type shim).
-2. **Phase 1** — find `Eventra` instances from `@eventra_dev/eventra-sdk` and register function wrappers that call `.track()`.
-3. **Phase 2** — resolve static event names and wrapper propagation chains.
-4. Write results to `eventra.json`.
+1. Load built-in plugins (`eventra-sdk` sink detector) and any packages listed in `plugins`.
+2. Glob project files (`sync.include` + plugin `includeGlobs`).
+3. Run file preprocessors (e.g. `.vue` → virtual `.ts` modules).
+4. Load sources into an incremental TypeScript program (with SDK type shim).
+5. **Phase 1** — find `Eventra` instances from `@eventra_dev/eventra-sdk` and register function wrappers that call `.track()`.
+6. **Phase 2** — resolve static event names and wrapper propagation chains (sink detector chain includes plugin sinks).
+7. Write results to `eventra.json`.
+
+`watch` tracks **disk source files** (including `.vue`), re-runs preprocessors on change, and incrementally updates the engine.
 
 No runtime execution. No monkey-patching.
 
@@ -203,9 +275,9 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **52 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
+Two test layers, **59 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
 
-**Unit tests (vitest)** — 10 suites covering core modules:
+**Unit tests (vitest)** — 13 suites covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -214,9 +286,12 @@ Two test layers, **52 unit tests + 12 e2e fixtures + 3 `check` exit-code scenari
 | `DocumentRegistry` | Path normalization, version bumping, no-op on identical content, `ensure()` from disk |
 | `CompilerContext` | Stage/update/remove files, `resolveModule` with `tsconfig.json` `paths`, source-file enumeration |
 | `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
+| `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |
+| `external plugin adapter` | Transform output mapping, static sink registration, invalid result rejection |
+| `cli-plugin-vue integration` | End-to-end adapter path for `@eventra_dev/cli-plugin-vue` |
 | `processFile` | Script-kind detection, import/export specifier extraction |
 | `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
-| `normalizeConfig` | Sort events, dedupe wrappers, defaults, preserve `apiKey` / `endpoint` / `sync` |
+| `normalizeConfig` | Sort events, dedupe wrappers, defaults, preserve `apiKey` / `endpoint` / `sync` / `plugins` |
 | `buildConfigFromScan` | Replace events + wrappers, preserve everything else |
 | `hash` | Stability and uniqueness |
 

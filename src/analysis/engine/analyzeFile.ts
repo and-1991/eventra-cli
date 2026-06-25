@@ -9,13 +9,15 @@ import { EvaluationCache } from "../cache/evaluationCache";
 import { ResolvedCallCache } from "../cache/resolvedCallCache";
 import { ReturnPropagationCache } from "../cache/returnPropagationCache";
 import { ResolvedExportCache } from "../cache/resolvedExportCache";
+import type { PluginRegistry } from "../../plugin/registry";
 
 export function indexSourceFile(
   source: ts.SourceFile,
   checker: ts.TypeChecker,
   wrapperRegistry: WrapperRegistry,
+  plugins: PluginRegistry,
 ): FileSemanticIndex {
-  return scanSource(source, checker, wrapperRegistry);
+  return scanSource(source, checker, wrapperRegistry, plugins);
 }
 
 export function extractFromIndex(

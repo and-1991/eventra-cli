@@ -7,6 +7,7 @@ import { EVENTRA_SDK_SHIM } from "../analysis/sdk/eventraSdk";
 import { EventraEngine } from "./EventraEngine";
 import { processFile } from "../filesystem/processFile";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
+import { createPluginRegistry } from "../plugin/loadPlugins";
 
 const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 
@@ -32,12 +33,15 @@ async function getParsedFile(file: string, cache: Map<string, CachedFile>): Prom
 }
 
 export async function scanProject(config: EventraConfig): Promise<ProjectScanResult> {
-  const files = await fg(config.sync.include, {
+  const plugins = await createPluginRegistry(config);
+  const include = [...config.sync.include, ...plugins.getIncludePatterns()];
+
+  const files = await fg(include, {
     ignore: config.sync.exclude,
     absolute: true,
   });
 
-  const engine = new EventraEngine(process.cwd());
+  const engine = new EventraEngine(process.cwd(), plugins);
   const cache = new Map<string, CachedFile>();
   const toScan = new Set<string>();
 
@@ -46,12 +50,17 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
       const raw = await fs.readFile(file, "utf8");
       if (raw.length > 2_000_000) continue;
 
-      const parsed = await processFile(file, raw);
-      cache.set(file, parsed);
-      toScan.add(file);
-      for (const dep of parsed.dependencies) {
-        if (dep.startsWith(".") || dep.startsWith("/")) {
-          toScan.add(path.resolve(path.dirname(file), dep));
+      const virtualFiles = await plugins.preprocessFile({ fileName: file, content: raw });
+
+      for (const virtualFile of virtualFiles) {
+        const parsed = await processFile(virtualFile.fileName, virtualFile.content);
+        const scanPath = path.resolve(virtualFile.fileName);
+        cache.set(scanPath, parsed);
+        toScan.add(scanPath);
+        for (const dep of parsed.dependencies) {
+          if (dep.startsWith(".") || dep.startsWith("/")) {
+            toScan.add(path.resolve(path.dirname(scanPath), dep));
+          }
         }
       }
     } catch (err) {

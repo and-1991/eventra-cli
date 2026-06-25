@@ -8,6 +8,7 @@ describe("normalizeConfig", () => {
     expect(out.endpoint).toBe("");
     expect(out.events).toEqual([]);
     expect(out.functionWrappers).toEqual([]);
+    expect(out.plugins).toEqual([]);
     expect(out.sync.include).toEqual(["**/*.{ts,tsx,js,jsx}"]);
     expect(out.sync.exclude).toEqual(["node_modules", "dist", ".next", ".git"]);
   });

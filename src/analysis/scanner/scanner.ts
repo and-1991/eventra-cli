@@ -5,8 +5,14 @@ import {TrackSink, WrapperSemanticInfo} from "../shared/propagation";
 import {detectTrackSink} from "./sinkDetector";
 import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
+import type { PluginRegistry } from "../../plugin/registry";
 
-export function scanSource(source: ts.SourceFile, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry,): FileSemanticIndex {
+export function scanSource(
+  source: ts.SourceFile,
+  checker: ts.TypeChecker,
+  wrapperRegistry: WrapperRegistry,
+  plugins: PluginRegistry,
+): FileSemanticIndex {
   const sinks: TrackSink[] = [];
   const wrappers: WrapperSemanticInfo[] = [];
   const trackCalls: TrackCall[] = [];
@@ -23,7 +29,7 @@ export function scanSource(source: ts.SourceFile, checker: ts.TypeChecker, wrapp
     }
     // sink detection
     if (ts.isCallExpression(node)) {
-      const sink = detectTrackSink(node, checker);
+      const sink = detectTrackSink(node, checker, plugins);
       if (sink) {
         sinks.push(sink);
         const trackedArguments = sink.trackedArguments.map(tracked => {

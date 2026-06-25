@@ -301,7 +301,7 @@ These are intentionally NOT supported yet:
 * ❌ Full recursive interprocedural graph traversal
 * ❌ Mutation tracking
 * ❌ Full object graph evaluation
-* ❌ Framework template analysis (moved to plugins)
+* ❌ Framework template analysis in core (Vue via `@eventra_dev/cli-plugin-vue`; Svelte planned)
 
 ---
 
@@ -822,7 +822,7 @@ Currently plugin-oriented and intentionally outside the core.
 
 ---
 
-# Plugin-Oriented Architecture
+# Plugin-Oriented Architecture (shipped — Phase 1.5)
 
 ## Design Goal
 
@@ -835,11 +835,9 @@ The core engine does NOT contain:
 * Svelte-specific logic
 * analytics SDK implementations
 
-Framework support is implemented via plugins.
+Framework support is implemented via **separate plugin packages**. The CLI adapts plugin output to internal preprocessors and sink detectors (`src/plugin/adapters/external.ts`).
 
 ---
-
-# Planned Plugin Kernel
 
 ## Core Responsibilities
 
@@ -852,27 +850,43 @@ Framework support is implemented via plugins.
 
 ---
 
-## Plugin Responsibilities
+## Plugin Responsibilities (external packages)
 
-* sink detection
-* framework adapters
-* SDK integrations
-* custom propagation rules
-* template extraction
+* file preprocessing (e.g. `.vue` → virtual `.ts`)
+* extra glob patterns (`includeGlobs`)
+* declarative static callee sinks (`staticSinks`)
+* SDK integrations beyond built-in `eventra-sdk` (future)
 
 ---
 
-# Planned Plugin API
+## External Plugin Contract
+
+Plugins do **not** import `@eventra_dev/eventra-cli`. They export their own types; the CLI duck-types at load time.
 
 ```ts
-export interface EventraPlugin {
-  name: string;
-
-  setup(
-    api: EventraPluginAPI,
-  ): void;
+export interface CliPlugin {
+  readonly id: string;
+  readonly version?: string;
+  readonly includeGlobs: readonly string[];
+  readonly staticSinks?: readonly {
+    readonly id: string;
+    readonly callee: string;
+    readonly eventNameArgumentIndex: number;
+  }[];
+  match(path: string): boolean;
+  transform(input: { path: string; source: string }): Promise<{
+    modules: Array<{ path: string; content: string }>;
+  }>;
 }
 ```
+
+Reference implementation: `@eventra_dev/cli-plugin-vue` (separate package).
+
+```json
+{ "plugins": ["@eventra_dev/cli-plugin-vue"] }
+```
+
+Built-in (always on): `eventra-sdk` sink detector — not configured via `plugins`.
 
 ---
 
@@ -1052,7 +1066,7 @@ Plugins over hardcoded integrations.
 
 ✅ Framework-agnostic architecture
 
-✅ Plugin-oriented evolution path
+✅ Plugin kernel with external-package contract (cli-plugin-vue)
 
 ---
 
@@ -1068,11 +1082,12 @@ Semantic propagation engine
         ↓
 
 Phase 1.5
-Plugin kernel foundation
+Plugin kernel + external adapter (shipped)
         ↓
 
 Phase 2
-Framework + SDK plugin ecosystem
+More framework plugins (Svelte) + dynamic event reporting
+(Vue: @eventra_dev/cli-plugin-vue — separate package)
         ↓
 
 Phase 3
