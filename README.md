@@ -288,7 +288,7 @@ Two test layers, **59 unit tests + 12 e2e fixtures + 3 `check` exit-code scenari
 | `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
 | `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |
 | `external plugin adapter` | Transform output mapping, static sink registration, invalid result rejection |
-| `cli-plugin-vue integration` | End-to-end adapter path for `@eventra_dev/cli-plugin-vue` |
+| `vue-shaped external plugin` | Adapter path for script + template virtual modules and `staticSinks` |
 | `processFile` | Script-kind detection, import/export specifier extraction |
 | `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
 | `normalizeConfig` | Sort events, dedupe wrappers, defaults, preserve `apiKey` / `endpoint` / `sync` / `plugins` |
