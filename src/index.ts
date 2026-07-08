@@ -42,9 +42,10 @@ program
 
 program
   .command("send")
-  .action(async () => {
+  .option("--trust-endpoint", "approve the current eventra.json endpoint for local use")
+  .action(async (opts) => {
     const { send } = await import("./cli/send");
-    await send();
+    await send({ trustEndpoint: opts.trustEndpoint });
   });
 
 program.parse();

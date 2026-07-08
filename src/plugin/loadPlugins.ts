@@ -3,6 +3,20 @@ import { registerExternalCliPlugin, isExternalCliPlugin } from "./adapters/exter
 import { registerEventraSdkPlugin } from "./builtins/eventra-sdk";
 import { PluginRegistry } from "./registry";
 
+/**
+ * Only packages published under the `@eventra_dev` npm scope can ever be
+ * `import()`-ed as a plugin. `eventra.json` (and its `plugins` array) is meant
+ * to be committed to git, so anything else listed there is attacker-editable
+ * via a plain PR — restricting to a scope only the maintainers can publish to
+ * turns "arbitrary code execution via a one-line JSON edit" into "not possible
+ * without also compromising the @eventra_dev npm account."
+ */
+const TRUSTED_PLUGIN_RE = /^@eventra_dev\/cli-plugin-[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+export function isTrustedPluginSpecifier(spec: string): boolean {
+  return TRUSTED_PLUGIN_RE.test(spec);
+}
+
 async function resolvePluginExport(mod: unknown): Promise<unknown> {
   let candidate = (mod as { default?: unknown }).default ?? mod;
   if (typeof candidate === "function") {
@@ -53,7 +67,17 @@ export function createBuiltinPluginRegistry(): PluginRegistry {
 export async function createPluginRegistry(config: EventraConfig): Promise<PluginRegistry> {
   const registry = createBuiltinPluginRegistry();
   for (const spec of config.plugins ?? []) {
-    await loadExternalPlugin(registry, spec);
+    const trimmed = spec.trim();
+    if (!trimmed) continue;
+
+    if (!isTrustedPluginSpecifier(trimmed)) {
+      console.warn(
+        `Eventra: skipping plugin "${trimmed}" — only official @eventra_dev/cli-plugin-* packages can be loaded.${pluginLoadHint(trimmed)}`,
+      );
+      continue;
+    }
+
+    await loadExternalPlugin(registry, trimmed);
   }
   return registry;
 }

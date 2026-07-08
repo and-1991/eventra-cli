@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-59%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-74%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
@@ -155,7 +155,23 @@ Incremental scan with the same rules as `sync`.
 
 ### `eventra send`
 
-Uploads `events` from config to the Eventra API. Requires `apiKey` (and optionally `endpoint`) in `eventra.json`. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
+Uploads `events` from config to the Eventra API. Requires an API key and (optionally) an `endpoint`. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
+
+**API key resolution** (checked in this order, never written to `eventra.json`):
+
+1. `EVENTRA_API_KEY` environment variable — recommended for CI
+2. `eventra.local.json` (created by `eventra init`/`eventra send`, automatically gitignored)
+3. legacy inline `apiKey` in `eventra.json` (deprecated — avoid committing real keys here)
+
+`eventra.json` is meant to be committed so CI can diff it via `eventra check`; keeping the key out of it avoids leaking it into source control. In a non-interactive shell (no TTY), `send` fails fast with a message pointing at `EVENTRA_API_KEY` instead of hanging on a prompt.
+
+**Endpoint trust.** The default production endpoint is always used with no extra step. A *custom* `endpoint` is only trusted without approval when it comes from the `EVENTRA_ENDPOINT` environment variable (setting an env var is already a local/CI action). A custom `endpoint` committed inline in `eventra.json` is trust-on-first-use: `send` refuses to run until it's approved once with:
+
+```bash
+eventra send --trust-endpoint
+```
+
+This records the endpoint in `eventra.local.json` (gitignored). If `eventra.json`'s `endpoint` later changes to a different value — e.g. a PR silently pointing it at another host — `send` blocks again until re-approved, so a committed config change alone can't redirect where your API key and events get sent.
 
 Network resilience:
 
@@ -224,6 +240,8 @@ External plugins export an object (or factory) with:
 
 No dependency on `@eventra_dev/eventra-cli` is required. See [`ARCHITECTURE.md`](./ARCHITECTURE.md#plugin-kernel-phase-15--foundation-shipped) for details.
 
+**Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, restricting to `@eventra_dev/cli-plugin-*` means nothing outside that scope can ever be loaded this way. Any other entry in `plugins` is skipped with a console warning instead of being imported — third-party/community plugins aren't supported today.
+
 ---
 
 ## Configuration
@@ -244,9 +262,13 @@ No dependency on `@eventra_dev/eventra-cli` is required. See [`ARCHITECTURE.md`]
 
 | Field | Description |
 |-------|-------------|
-| `plugins` | Module specifiers to `import()` at startup (e.g. `@eventra_dev/cli-plugin-vue`) |
+| `apiKey` | Legacy inline API key — leave empty. Use `EVENTRA_API_KEY` or `eventra.local.json` instead (see [`eventra send`](#eventra-send)) so a real key never ends up in this committed file |
+| `endpoint` | Custom `eventra send` target (e.g. self-hosted). Non-default values from this file need one-time local approval — see [`eventra send`](#eventra-send) |
+| `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
 | `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
 | `sync.exclude` | Paths skipped during scan |
+
+`eventra init`/`eventra send` never write a real key into this file — they write to `eventra.local.json` instead, which is automatically added to `.gitignore`.
 
 ---
 
@@ -275,7 +297,7 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **59 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
+Two test layers, **74 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
 
 **Unit tests (vitest)** — 13 suites covering core modules:
 
@@ -321,6 +343,8 @@ pnpm --filter @eventra_dev/eventra-cli test       # unit + e2e + exit codes
 pnpm --filter @eventra_dev/eventra-cli test:unit  # vitest only
 pnpm --filter @eventra_dev/eventra-cli test:e2e   # fixtures + check exit codes
 ```
+
+> **Node version note:** the CLI itself supports Node 18+ (see `engines`), but `vitest@4` depends on `node:util`'s `styleText`, which requires Node **≥ 20.12** — running the test suite on an older Node 20.x patch (or Node 18) fails to start. CI runs the matrix on Node 20 and 22; locally, use the version pinned in the repo's `.nvmrc`.
 
 ---
 

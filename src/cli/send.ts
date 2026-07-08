@@ -1,10 +1,13 @@
 import chalk from "chalk";
 import inquirer from "inquirer";
 
-import {loadConfig, saveConfig} from "../config/config";
+import {getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint} from "../config/config";
 import pkg from "../../package.json";
 
 const CLI_VERSION = pkg.version;
+
+// Always trusted, no local approval needed — matches `eventra init`'s prompt default.
+const DEFAULT_SEND_ENDPOINT = "https://api.eventra.dev/api/v1/cli/events";
 
 // retry/backoff tuning (mirrors SDK defaults)
 const MAX_ATTEMPTS = 4;
@@ -68,16 +71,53 @@ type SendResponse = {
   existing?: string[];
 };
 
-export async function send() {
+export async function send(opts: { trustEndpoint?: boolean } = {}) {
   const config = await loadConfig();
-  const endpoint = config?.endpoint || process.env.EVENTRA_ENDPOINT;
   if (!config) {
     console.log(chalk.red("eventra.json not found. Run 'eventra init'"));
     return;
   }
-  let apiKey = config.apiKey;
-  // ask api key
+
+  const endpoint = config.endpoint || process.env.EVENTRA_ENDPOINT || undefined;
+
+  // A non-default endpoint sourced from the committed eventra.json (not from
+  // EVENTRA_ENDPOINT, which already requires a local/CI env-var change) needs
+  // one-time local approval — otherwise a PR silently editing `endpoint` could
+  // redirect send (and the API key) to an attacker's server.
+  if (
+    endpoint &&
+    endpoint !== DEFAULT_SEND_ENDPOINT &&
+    endpoint === config.endpoint &&
+    !process.env.EVENTRA_ENDPOINT
+  ) {
+    const trusted = await getTrustedEndpoint();
+    if (endpoint !== trusted) {
+      if (!opts.trustEndpoint) {
+        console.log(chalk.red(`Endpoint "${endpoint}" from eventra.json is not locally approved.`));
+        console.log(
+          chalk.gray(
+            "If this is expected (e.g. a self-hosted ingest URL), approve it once with:",
+          ),
+        );
+        console.log(chalk.gray("  eventra send --trust-endpoint"));
+        return;
+      }
+      await trustEndpoint(endpoint);
+      console.log(chalk.green(`Endpoint "${endpoint}" approved and saved to eventra.local.json`));
+    }
+  }
+
+  let apiKey = await resolveApiKey(config);
+  // ask for the key only when interactive — never hang a CI/non-TTY run on a prompt
   if (!apiKey) {
+    if (!process.stdin.isTTY) {
+      console.log(
+        chalk.red(
+          "API key required. Set the EVENTRA_API_KEY environment variable (recommended for CI) or run 'eventra init'.",
+        ),
+      );
+      return;
+    }
     const answers =
       await inquirer.prompt([
         {
@@ -87,11 +127,12 @@ export async function send() {
         }
       ]);
     apiKey = answers.apiKey;
-    await saveConfig({
-      ...config,
-      apiKey,
-    });
-    console.log(chalk.green("API key saved"));
+    if (apiKey) {
+      // Saved to the gitignored local secrets file, never to eventra.json —
+      // that file is meant to be committed for `eventra check` drift detection.
+      await saveLocalApiKey(apiKey);
+      console.log(chalk.green("API key saved to eventra.local.json (added to .gitignore)"));
+    }
   }
   // no events
   if (!config.events?.length) {
