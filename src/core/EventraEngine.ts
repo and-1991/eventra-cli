@@ -10,6 +10,7 @@ import { ResolvedExportCache } from "../analysis/cache/resolvedExportCache";
 import { ReturnPropagationCache } from "../analysis/cache/returnPropagationCache";
 import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFile";
 import { FileSemanticIndex } from "../analysis/shared/types";
+import { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
 import { processFile } from "../filesystem/processFile";
@@ -19,6 +20,7 @@ import type { PluginRegistry } from "../plugin/registry";
 const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
   detectedFunctionWrappers: new Set(),
+  dynamicOccurrences: [],
 });
 
 export class EventraEngine {
@@ -294,5 +296,13 @@ export class EventraEngine {
 
   getScanResult(fileName: string): ScanResult {
     return this.fileResults.get(this.normalize(fileName)) ?? EMPTY_RESULT();
+  }
+
+  getAllDynamicOccurrences(): DynamicOccurrence[] {
+    const occurrences: DynamicOccurrence[] = [];
+    for (const result of this.fileResults.values()) {
+      occurrences.push(...result.dynamicOccurrences);
+    }
+    return occurrences.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.line - b.line);
   }
 }

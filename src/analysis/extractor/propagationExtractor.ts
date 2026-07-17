@@ -10,6 +10,7 @@ import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {EvaluationCache} from "../cache/evaluationCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {normalizeEventName} from "../shared/eventValidation";
+import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
 
 function resolveObjectPath(expression: ts.Expression, path: readonly string[],): ts.Expression | null {
   let current: ts.Expression = expression;
@@ -37,7 +38,7 @@ function resolveObjectPath(expression: ts.Expression, path: readonly string[],):
   return current;
 }
 
-export function extractPropagationEvents(call: ts.CallExpression, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>): void {
+export function extractPropagationEvents(call: ts.CallExpression, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>, dynamicOccurrences: DynamicOccurrence[]): void {
   const resolved = resolveFunctionFromCall(call.expression, checker, resolvedCallCache, exportCache);
   if (!resolved) {
     return;
@@ -56,14 +57,14 @@ export function extractPropagationEvents(call: ts.CallExpression, checker: ts.Ty
   visited.add(signature);
   try {
     for (const propagation of semantic.propagations) {
-      extractPropagation(propagation, call, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events);
+      extractPropagation(propagation, call, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events, dynamicOccurrences);
     }
   } finally {
     visited.delete(signature);
   }
 }
 
-function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpression, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>): void {
+function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpression, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[]): void {
   let argument = call.arguments[propagation.sourceParameterIndex];
   if (!argument) {
     return;
@@ -91,5 +92,8 @@ function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpres
     if (normalized) {
       events.add(normalized);
     }
+  }
+  if (resolved.dynamic) {
+    recordDynamicOccurrence(call, resolved.values, dynamicOccurrences);
   }
 }

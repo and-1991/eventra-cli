@@ -11,9 +11,11 @@ import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import {extractPropagationEvents} from "./propagationExtractor";
 import {normalizeEventName} from "../shared/eventValidation";
+import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
 
 export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker, _config: EventraConfig, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, wrapperRegistry: WrapperRegistry): ScanResult {
   const events = new Set<string>();
+  const dynamicOccurrences: DynamicOccurrence[] = [];
   // direct track sinks
   for (const call of index.trackCalls) {
     for (const argument of call.trackedArguments) {
@@ -24,13 +26,16 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
           events.add(normalized);
         }
       }
+      if (resolved.dynamic) {
+        recordDynamicOccurrence(call.node, resolved.values, dynamicOccurrences);
+      }
     }
   }
   const propagationVisited = new Set<ts.Signature>();
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node)) {
-      extractPropagationEvents(node, checker, wrapperRegistry, resolvedCallCache, returnPropagationCache, evaluationCache, exportCache, events, propagationVisited);
+      extractPropagationEvents(node, checker, wrapperRegistry, resolvedCallCache, returnPropagationCache, evaluationCache, exportCache, events, propagationVisited, dynamicOccurrences);
     }
     ts.forEachChild(node, visit);
   }
@@ -40,5 +45,6 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
   return {
     events,
     detectedFunctionWrappers: new Set(index.wrappers.map(wrapper => wrapper.symbol.getName())),
+    dynamicOccurrences,
   };
 }

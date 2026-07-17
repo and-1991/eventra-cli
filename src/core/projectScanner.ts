@@ -8,6 +8,7 @@ import { EventraEngine } from "./EventraEngine";
 import { processFile } from "../filesystem/processFile";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
 import { createPluginRegistry } from "../plugin/loadPlugins";
+import type { PluginRegistry } from "../plugin/registry";
 
 const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 
@@ -20,6 +21,7 @@ export interface ProjectScanResult {
   readonly engine: EventraEngine;
   readonly results: Map<string, ScanResult>;
   readonly files: readonly string[];
+  readonly plugins: PluginRegistry;
 }
 
 async function getParsedFile(file: string, cache: Map<string, CachedFile>): Promise<CachedFile> {
@@ -93,5 +95,6 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     engine,
     results,
     files,
+    plugins,
   };
 }

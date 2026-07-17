@@ -1,16 +1,22 @@
 import path from "path";
 
 import type {
+  DynamicEventReporter,
   FilePreprocessor,
   FilePreprocessInput,
   SinkDetector,
   SinkDetectorContext,
   VirtualFile,
+  WrapperDetector,
+  WrapperDetectorContext,
 } from "./types";
+import type { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 
 export class PluginRegistry {
   private readonly preprocessors: FilePreprocessor[] = [];
   private readonly sinkDetectors: SinkDetector[] = [];
+  private readonly wrapperDetectors: WrapperDetector[] = [];
+  private readonly dynamicEventReporters: DynamicEventReporter[] = [];
   private readonly includePatterns: string[] = [];
   private readonly sourceToVirtuals = new Map<string, string[]>();
 
@@ -28,6 +34,20 @@ export class PluginRegistry {
     this.sinkDetectors.push(detector);
   }
 
+  registerWrapperDetector(detector: WrapperDetector): void {
+    if (this.wrapperDetectors.some((d) => d.name === detector.name)) {
+      throw new Error(`Wrapper detector already registered: ${detector.name}`);
+    }
+    this.wrapperDetectors.push(detector);
+  }
+
+  registerDynamicEventReporter(reporter: DynamicEventReporter): void {
+    if (this.dynamicEventReporters.some((r) => r.name === reporter.name)) {
+      throw new Error(`Dynamic event reporter already registered: ${reporter.name}`);
+    }
+    this.dynamicEventReporters.push(reporter);
+  }
+
   registerIncludePattern(pattern: string): void {
     const trimmed = pattern.trim();
     if (!trimmed) return;
@@ -41,6 +61,14 @@ export class PluginRegistry {
 
   getSinkDetectors(): readonly SinkDetector[] {
     return this.sinkDetectors;
+  }
+
+  getWrapperDetectors(): readonly WrapperDetector[] {
+    return this.wrapperDetectors;
+  }
+
+  getDynamicEventReporters(): readonly DynamicEventReporter[] {
+    return this.dynamicEventReporters;
   }
 
   getFilePreprocessors(): readonly FilePreprocessor[] {
@@ -85,6 +113,22 @@ export class PluginRegistry {
       }
     }
     return null;
+  }
+
+  detectWrapper(context: WrapperDetectorContext) {
+    for (const detector of this.wrapperDetectors) {
+      const wrapper = detector.detect(context);
+      if (wrapper) {
+        return wrapper;
+      }
+    }
+    return null;
+  }
+
+  async runDynamicEventReporters(occurrences: readonly DynamicOccurrence[]): Promise<void> {
+    for (const reporter of this.dynamicEventReporters) {
+      await reporter.report({ occurrences });
+    }
   }
 
   private normalizePath(fileName: string): string {
