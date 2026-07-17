@@ -332,8 +332,10 @@ Unpublished plugins work via `file:`, `link:`, or git URL in `package.json` — 
 disk file
   → FilePreprocessor (first matching plugin; empty result → next / passthrough)
   → TypeScript program + WrapperRegistry + propagation (core)
+      → WrapperDetector (first matching plugin) ?? built-in analyzeWrapperPropagation (always-on fallback)
   → SinkDetector chain (built-in eventra-sdk, then plugin staticSinks)
   → event names
+      → dynamic (unresolved) occurrences → DynamicEventReporter (every registered reporter, in registration order)
 ```
 
 ### Watch mode
@@ -344,10 +346,20 @@ disk file
 2. Push updated virtual content into `EventraEngine`
 3. On `unlink`, remove all virtual paths recorded for that source (`PluginRegistry.getVirtualPathsForSource`)
 
-### Planned hooks (not implemented yet)
+### `registerWrapperDetector`
 
-- `registerDynamicEventReporter` — surface unresolved `dynamic: true` names in CLI output
-- `registerWrapperDetector` — custom wrapper propagation rules
+Lets a plugin recognize a framework's non-standard wrapper convention — the built-in `analyzeWrapperPropagation` only understands 3 fixed shapes (direct identifier, property access, object-literal/destructuring), and e.g. a template-literal sink argument (`` sdk.track(`checkout:${name}`) ``) falls outside all three.
+
+`PluginRegistry.detectWrapper({ fn, checker, sinks })` runs a first-match loop over registered `WrapperDetector`s. **Unlike `SinkDetector`, this deliberately diverges from the `eventra-sdk` idiom**: the built-in analyzer is never itself registered in the chain — it's an unconditional JS fallback (`plugins.detectWrapper(...) ?? analyzeWrapperPropagation(...)` at the scanner's call site) that always runs when no plugin claims the function. There's no case where "skip the built-in, defer to another handler" is meaningful — it must always be available as the backstop.
+
+### `registerDynamicEventReporter`
+
+`resolveNodeValue`'s `ResolveResult.dynamic` flag (set whenever a track() argument isn't a plain string/no-substitution-template literal) is now surfaced instead of silently discarded. Every dynamic occurrence — direct sink calls and wrapper-propagated calls alike — is collected into `ScanResult.dynamicOccurrences` / `EventraEngine.getAllDynamicOccurrences()`.
+
+`PluginRegistry.runDynamicEventReporters(occurrences)` **deliberately invokes every registered `DynamicEventReporter`**, not first-match — this hook is a terminal side-effecting notification ("here's the final list, do something"), not a resolver with competing candidates, so multiple reporters (console output, a future file/CI writer) coexisting is the expected case. The built-in `console` reporter is registered by default and prints a "Dynamic event names:" block after `sync`/`check` scans, only when at least one occurrence was found. This is informational only — it does not affect `check`'s exit code.
+
+### Not implemented yet
+
 - Plugin config block in `eventra.json` per plugin id
 
 ---
@@ -395,8 +407,9 @@ Phase 1   Semantic propagation engine       (current)
    ↓
 Phase 1.5 Plugin kernel foundation          (shipped — registry, adapter, watch)
    ↓
-Phase 2   More framework plugins (Svelte) + dynamic event reporting
-          Vue shipped as @eventra_dev/cli-plugin-vue (separate package)
+Phase 2   More framework plugins (Svelte)
+          Vue shipped as @eventra_dev/cli-plugin-vue (separate package, hardening in progress)
+          registerWrapperDetector + registerDynamicEventReporter (shipped)
    ↓
 Phase 3   Semantic provenance graph
    ↓
@@ -426,6 +439,7 @@ Near-zero runtime overhead.
 - Static value evaluation (strings, enums, templates, conditionals, property paths)
 - Dependency-aware cache invalidation
 - Plugin kernel with external-package contract (`cli-plugin-vue` for Vue SFC)
+- Pluggable wrapper detection (`registerWrapperDetector`) and dynamic/unresolved event reporting (`registerDynamicEventReporter`)
 
 ---
 

@@ -1,6 +1,9 @@
+import type { DynamicOccurrence } from "./analysis/shared/dynamicOccurrence";
+
 export interface ScanResult {
   readonly events: Set<string>;
   readonly detectedFunctionWrappers: Set<string>;
+  readonly dynamicOccurrences: readonly DynamicOccurrence[];
 }
 
 export interface FunctionWrapperConfig {

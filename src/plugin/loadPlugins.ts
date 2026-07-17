@@ -1,6 +1,7 @@
 import type { EventraConfig } from "../types";
 import { registerExternalCliPlugin, isExternalCliPlugin } from "./adapters/external";
 import { registerEventraSdkPlugin } from "./builtins/eventra-sdk";
+import { registerConsoleDynamicEventReporterPlugin } from "./builtins/consoleDynamicEventReporter";
 import { PluginRegistry } from "./registry";
 
 /**
@@ -60,6 +61,7 @@ async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promi
 export function createBuiltinPluginRegistry(): PluginRegistry {
   const registry = new PluginRegistry();
   registerEventraSdkPlugin(registry);
+  registerConsoleDynamicEventReporterPlugin(registry);
   return registry;
 }
 

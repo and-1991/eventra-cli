@@ -18,7 +18,8 @@ export async function check({ fix = false }: { fix?: boolean }) {
     process.exit(1);
   }
   console.log(chalk.blue("Checking events and function wrappers..."));
-  const { engine } = await scanProject(config);
+  const { engine, plugins } = await scanProject(config);
+  await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
 
   const foundEvents = new Set(engine.getAllEvents());
   const knownEvents = new Set(config.events ?? []);

@@ -86,7 +86,9 @@ export function scanSource(
         return false;
       },
     );
-    const wrapper = analyzeWrapperPropagation(fn, checker, localSinks);
+    const wrapper =
+      plugins.detectWrapper({ fn, checker, sinks: localSinks }) ??
+      analyzeWrapperPropagation(fn, checker, localSinks);
     if (!wrapper) {
       continue;
     }
