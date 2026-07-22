@@ -7,6 +7,7 @@ declare function trackFeature(event: string): void
 declare const analytics: any
 
 const eventName = "variable_event"
+const dynamicButtonEvent = "computed_button_event"
 
 // ===== direct =====
 track("vue_event")
@@ -80,4 +81,10 @@ class Service {
   <!-- array -->
   <Button event="array_1" />
   <Button event="array_2" />
+
+  <!-- dynamic binding, but resolves to a single literal through the merged script scope -->
+  <Button :event="dynamicButtonEvent" />
+
+  <!-- dynamic binding, resolves to both branches (still flagged as a dynamic occurrence) -->
+  <Button :event="true ? 'ternary_a_button' : 'ternary_b_button'" />
 </template>

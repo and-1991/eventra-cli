@@ -206,11 +206,12 @@ pnpm add -D @eventra_dev/cli-plugin-vue
 
 The plugin:
 
-- splits each `.vue` file into virtual TypeScript modules (`App.vue.ts`, `App.vue.template.ts`)
-- extracts `track()` calls from `<script>` blocks
-- detects static `event="feature_name"` attributes in `<template>` (literals only)
+- parses each `.vue` file with the real Vue compiler (`@vue/compiler-sfc`) into a single virtual TypeScript module combining `<script>`/`<script setup>`
+- extracts `track()` calls from the script exactly like a regular `.ts` file (direct calls, wrappers, propagation)
+- detects `event="feature_name"` attributes in `<template>` — both literal and dynamic (`:event="expr"`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
+- Nuxt `.vue` files (pages/layouts/components) are handled the same way; auto-imported composables resolve once the project has run `nuxt prepare`/`nuxt dev`
 
-`sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`.
+`sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`. See [`@eventra_dev/cli-plugin-vue`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-vue) for details.
 
 ### Before publishing / local development
 

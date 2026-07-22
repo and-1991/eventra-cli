@@ -73,10 +73,6 @@ function createStaticCalleeSinkDetector(
       if (call.arguments.length <= argIndex) {
         return null;
       }
-      const arg = call.arguments[argIndex];
-      if (!ts.isStringLiteral(arg)) {
-        return null;
-      }
       return {
         call,
         trackedArguments: [{ index: argIndex, propertyPath: [] }],
