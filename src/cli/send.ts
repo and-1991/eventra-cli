@@ -75,6 +75,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   const config = await loadConfig();
   if (!config) {
     console.log(chalk.red("eventra.json not found. Run 'eventra init'"));
+    process.exitCode = 1;
     return;
   }
 
@@ -100,6 +101,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
           ),
         );
         console.log(chalk.gray("  eventra send --trust-endpoint"));
+        process.exitCode = 1;
         return;
       }
       await trustEndpoint(endpoint);
@@ -116,6 +118,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
           "API key required. Set the EVENTRA_API_KEY environment variable (recommended for CI) or run 'eventra init'.",
         ),
       );
+      process.exitCode = 1;
       return;
     }
     const answers =
@@ -137,14 +140,17 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   // no events
   if (!config.events?.length) {
     console.log(chalk.yellow("No events found. Run 'eventra sync'"));
+    process.exitCode = 1;
     return;
   }
   if (!apiKey) {
     console.log(chalk.red("API key required"));
+    process.exitCode = 1;
     return;
   }
   if (!endpoint) {
     console.log(chalk.red("Endpoint not configured"));
+    process.exitCode = 1;
     return;
   }
   console.log("");
@@ -176,6 +182,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
         // permanent failure — surface immediately
         console.log(chalk.red(`Request failed (${outcome.status})`));
         if (outcome.body) console.log(chalk.gray(outcome.body));
+        process.exitCode = 1;
         return;
       }
 
@@ -213,6 +220,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     } else if (lastFailure?.error instanceof Error) {
       console.log(chalk.gray(lastFailure.error.message));
     }
+    process.exitCode = 1;
     return;
   }
 

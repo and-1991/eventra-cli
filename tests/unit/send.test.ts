@@ -21,6 +21,7 @@ describe("send() — endpoint trust-on-first-use", () => {
     process.chdir(tmp);
     process.env.EVENTRA_API_KEY = "test-key";
     delete process.env.EVENTRA_ENDPOINT;
+    process.exitCode = 0;
 
     fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -37,6 +38,7 @@ describe("send() — endpoint trust-on-first-use", () => {
     fs.removeSync(tmp);
     globalThis.fetch = originalFetch;
     process.env = { ...originalEnv };
+    process.exitCode = 0;
     vi.restoreAllMocks();
   });
 
@@ -51,9 +53,10 @@ describe("send() — endpoint trust-on-first-use", () => {
     await send();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(DEFAULT_ENDPOINT);
+    expect(process.exitCode).toBe(0);
   });
 
-  it("blocks an unapproved custom endpoint from eventra.json instead of sending", async () => {
+  it("blocks an unapproved custom endpoint from eventra.json instead of sending, and fails the process", async () => {
     await setEndpoint(CUSTOM_ENDPOINT);
 
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
@@ -62,6 +65,7 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("not locally approved");
     expect(await fs.pathExists(path.join(tmp, LOCAL_CONFIG_NAME))).toBe(false);
+    expect(process.exitCode).toBe(1);
   });
 
   it("approves and sends with --trust-endpoint, then sends without it on the next run", async () => {
@@ -82,6 +86,7 @@ describe("send() — endpoint trust-on-first-use", () => {
     await send();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(CUSTOM_ENDPOINT);
+    expect(process.exitCode).toBe(0);
   });
 
   it("re-blocks when eventra.json's endpoint changes again after being trusted", async () => {
@@ -95,6 +100,7 @@ describe("send() — endpoint trust-on-first-use", () => {
 
     expect(fetchMock).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("not locally approved");
+    expect(process.exitCode).toBe(1);
   });
 
   it("does not require approval for an endpoint supplied via EVENTRA_ENDPOINT", async () => {
@@ -104,5 +110,62 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(CUSTOM_ENDPOINT);
     expect(await fs.pathExists(path.join(tmp, LOCAL_CONFIG_NAME))).toBe(false);
+    expect(process.exitCode).toBe(0);
   });
+
+  it("fails the process when no API key can be resolved in a non-interactive shell", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    delete process.env.EVENTRA_API_KEY;
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("API key required");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("fails the process when there are no events to send", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    await saveConfig(normalizeConfig({ events: [] }));
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("No events found");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("fails the process on a definitive non-retryable failure (e.g. 401)", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => "unauthorized",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Request failed (401)");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("fails the process once retries are exhausted on a retryable failure (e.g. 500)", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => "server error",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("All retries exhausted");
+    expect(process.exitCode).toBe(1);
+  }, 20_000);
 });

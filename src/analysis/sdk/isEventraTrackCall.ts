@@ -17,21 +17,6 @@ function isTrackCallee(expr: ts.Expression): boolean {
   return false;
 }
 
-function fileImportsEventraSdk(sourceFile: ts.SourceFile): boolean {
-  for (const stmt of sourceFile.statements) {
-    if (!ts.isImportDeclaration(stmt) || !stmt.moduleSpecifier) {
-      continue;
-    }
-    if (!ts.isStringLiteral(stmt.moduleSpecifier)) {
-      continue;
-    }
-    if (isEventraSdkModuleSpecifier(stmt.moduleSpecifier.text)) {
-      return true;
-    }
-  }
-  return false;
-}
-
 function getImportDeclarationForSpecifier(decl: ts.Node): ts.ImportDeclaration | null {
   let current: ts.Node | undefined = decl;
   while (current) {
@@ -180,11 +165,6 @@ export function isEventraSdkTrackCall(
 ): boolean {
   const expr = call.expression;
   if (!isTrackCallee(expr)) {
-    return false;
-  }
-
-  const sourceFile = call.getSourceFile();
-  if (!fileImportsEventraSdk(sourceFile)) {
     return false;
   }
 

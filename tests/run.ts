@@ -1,6 +1,7 @@
-import { spawnSync } from "child_process";
+import { spawn, spawnSync } from "child_process";
 import * as path from "path";
 import * as fs from "fs";
+import * as os from "os";
 
 const ROOT = path.resolve(__dirname, "..");
 const CLI = path.resolve(ROOT, "dist/index.js");
@@ -205,7 +206,77 @@ function runCheckExitCodes() {
   cleanup(dir);
 }
 
-function run() {
+function waitFor(condition: () => boolean, timeoutMs: number, intervalMs = 100): Promise<boolean> {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    const check = () => {
+      if (condition()) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() - start >= timeoutMs) {
+        resolve(false);
+        return;
+      }
+      setTimeout(check, intervalMs);
+    };
+    check();
+  });
+}
+
+// `eventra watch` must notice brand-new files matching `sync.include`, not just
+// edits to files it already knew about at startup — regression coverage for a
+// bug where chokidar was handed a fixed file list instead of watching the
+// project directory.
+async function runWatchNewFileDetection(): Promise<void> {
+  console.log(`\nRunning: watch (new file detection)`);
+  const src = path.resolve(__dirname, "fixtures", "watch-incremental");
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-watch-"));
+  fs.cpSync(src, dir, { recursive: true });
+  ensureTestConfig(dir);
+
+  const child = spawn(process.execPath, [CLI, "watch"], { cwd: dir });
+  let output = "";
+  child.stdout?.on("data", (chunk) => (output += chunk.toString()));
+  child.stderr?.on("data", (chunk) => (output += chunk.toString()));
+
+  try {
+    const started = await waitFor(() => output.includes("Initial:"), 10_000);
+    if (!started) {
+      throw new Error(`watch: did not start within timeout\noutput:\n${output}`);
+    }
+
+    fs.mkdirSync(path.join(dir, "routes"), { recursive: true });
+    fs.writeFileSync(
+      path.join(dir, "routes", "newFeature.ts"),
+      [
+        `import { trackFeature } from "../middleware/tracking.middleware";`,
+        `trackFeature("user.signup");`,
+        "",
+      ].join("\n"),
+    );
+
+    const detected = await waitFor(() => {
+      try {
+        const config = JSON.parse(fs.readFileSync(path.join(dir, "eventra.json"), "utf-8"));
+        return (config.events ?? []).includes("user.signup");
+      } catch {
+        return false;
+      }
+    }, 10_000);
+
+    if (!detected) {
+      throw new Error(`watch: new file's event was not detected within timeout\noutput:\n${output}`);
+    }
+    console.log(`✓ watch detects newly created files`);
+  } finally {
+    child.kill("SIGINT");
+    await waitFor(() => child.exitCode !== null, 2_000);
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function run() {
   const build = spawnSync("pnpm", ["run", "build"], { cwd: ROOT, encoding: "utf-8" });
   if (build.status !== 0) {
     console.error(build.stdout, build.stderr);
@@ -217,8 +288,12 @@ function run() {
   }
 
   runCheckExitCodes();
+  await runWatchNewFileDetection();
 
   console.log("\nAll fixtures passed");
 }
 
-run();
+run().catch((err) => {
+  console.error(err);
+  process.exit(1);
+});

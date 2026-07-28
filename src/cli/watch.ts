@@ -40,6 +40,15 @@ export async function watch(): Promise<void> {
     return path.resolve(file).replace(/\\/g, "/");
   };
 
+  // chokidar's `ignored` receives absolute, normalized paths — reject any path
+  // with an excluded directory name as one of its segments (matches how
+  // `fast-glob`'s own `ignore` option is applied during the initial scan).
+  const excludedDirs = new Set(config.sync.exclude);
+  const isExcludedPath = (file: string): boolean => {
+    const segments = normalize(file).split("/");
+    return segments.some((segment) => excludedDirs.has(segment));
+  };
+
   const files = await fg(include, {
     ignore: config.sync.exclude,
     absolute: true,
@@ -87,7 +96,15 @@ export async function watch(): Promise<void> {
     chalk.gray(`Initial: ${initialEvents.length} events, ${initialWrappers.length} wrappers\n`),
   );
 
-  const watcher = chokidar.watch([...sourceFiles, ...watchedDeps], { ignoreInitial: true });
+  // Watch the project root (not just the files found by the initial scan) so
+  // that brand-new files matching `include` are noticed as they're created —
+  // a fixed file list only ever detects edits to files chokidar already knows
+  // about. Dependency files outside the root (added below via `watcher.add`)
+  // are unaffected by this and keep working the same way.
+  const watcher = chokidar.watch(process.cwd(), {
+    ignoreInitial: true,
+    ignored: isExcludedPath,
+  });
   const queue = new Map<string, boolean>();
   let timer: NodeJS.Timeout | null = null;
 
