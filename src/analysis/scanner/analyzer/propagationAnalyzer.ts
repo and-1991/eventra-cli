@@ -2,18 +2,27 @@ import ts from "typescript";
 
 import {TrackSink, WrapperPropagation, WrapperSemanticInfo} from "../../shared/propagation";
 import {getFunctionSymbol} from "../../symbols/symbolUtils";
+import {unwrapExpression, getPropertyName} from "../../shared/utils";
 
 interface ResolvedParameterBinding {
   readonly parameter: ts.ParameterDeclaration;
   readonly propertyPath: readonly string[];
 }
 
+function isPropertyAccessLike(node: ts.Expression): node is ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression {
+  return ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node);
+}
+
 function extractPropertyPath(expression: ts.Expression): readonly string[] | null {
   const result: string[] = [];
-  let current: ts.Expression = expression;
-  while (ts.isPropertyAccessExpression(current) || ts.isPropertyAccessChain(current)) {
-    result.unshift(current.name.text);
-    current = current.expression;
+  let current: ts.Expression = unwrapExpression(expression);
+  while (isPropertyAccessLike(current)) {
+    const propertyName = getPropertyName(current);
+    if (!propertyName) {
+      return null;
+    }
+    result.unshift(propertyName);
+    current = unwrapExpression(current.expression);
   }
   if (!ts.isIdentifier(current)) {
     return null;
@@ -83,15 +92,18 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
   const result: WrapperPropagation[] = [];
   for (const sink of sinks) {
     for (const tracked of sink.trackedArguments) {
-      const argument = sink.call.arguments[tracked.index];
-      if (!argument) {
+      const rawArgument = sink.call.arguments[tracked.index];
+      if (!rawArgument) {
         continue;
       }
+      const argument = unwrapExpression(rawArgument);
       // direct parameter
       // track(name)
       // track(props.event)
       // track(props?.event)
-      if (ts.isIdentifier(argument) || ts.isPropertyAccessExpression(argument) || ts.isPropertyAccessChain(argument)) {
+      // track(props?.event as string)
+      // track(props["event"])
+      if (ts.isIdentifier(argument) || isPropertyAccessLike(argument)) {
         let identifier: ts.Identifier | null = null;
         let propertyPath: readonly string[] = [];
         if (ts.isIdentifier(argument,)) {
@@ -99,8 +111,8 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
         } else {
           propertyPath = extractPropertyPath(argument) ?? [];
           let root: ts.Expression = argument;
-          while (ts.isPropertyAccessExpression(root) || ts.isPropertyAccessChain(root)) {
-            root = root.expression;
+          while (isPropertyAccessLike(root)) {
+            root = unwrapExpression(root.expression);
           }
           if (ts.isIdentifier(root)) {
             identifier = root;

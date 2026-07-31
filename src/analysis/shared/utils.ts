@@ -2,6 +2,35 @@
 
 import ts from "typescript";
 
+// track(payload?.event as string)
+// track((payload.event))
+// track(payload!.event)
+export function unwrapExpression(expression: ts.Expression): ts.Expression {
+  let current = expression;
+  while (
+    ts.isAsExpression(current) ||
+    ts.isTypeAssertionExpression(current) ||
+    ts.isNonNullExpression(current) ||
+    ts.isParenthesizedExpression(current) ||
+    ts.isSatisfiesExpression(current)
+  ) {
+    current = current.expression;
+  }
+  return current;
+}
+
+// payload.event -> "event"
+// payload["event"] -> "event"
+export function getPropertyName(node: ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression): string | null {
+  if (ts.isElementAccessExpression(node)) {
+    if (!node.argumentExpression || !ts.isStringLiteral(node.argumentExpression)) {
+      return null;
+    }
+    return node.argumentExpression.text;
+  }
+  return node.name.text;
+}
+
 export function getCallName(
   expression:
   ts.Expression,
