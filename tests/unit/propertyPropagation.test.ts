@@ -258,3 +258,72 @@ describe("wrapper detection through type assertions", () => {
     expect(events).toContain("checkout_nonnull");
   });
 });
+
+// Regression coverage for a gap where `track(EVENTS.LOGIN)` never resolved:
+// resolvePropertyAccess's only "look up a property on a global const" fallback
+// handled `const EVENTS = { LOGIN: "login" }` (an object literal), never
+// `enum EVENTS { LOGIN = "login" }` (an EnumDeclaration with EnumMembers) —
+// despite both being documented as supported.
+describe("enum member property access", () => {
+  it("resolves a string enum member accessed directly", async () => {
+    const { events } = await run({
+      "app.ts": `
+        import { Eventra } from "@eventra_dev/eventra-sdk";
+        const sdk = new Eventra({ apiKey: "k" });
+        enum EVENTS {
+          LOGIN = "enum_login",
+        }
+        sdk.track(EVENTS.LOGIN);
+      `,
+    });
+    expect(events).toContain("enum_login");
+  });
+
+  it("resolves a string enum member imported from another file", async () => {
+    const { events } = await run({
+      "events.ts": `
+        export enum EVENTS {
+          LOGIN = "enum_login_cross_file",
+        }
+      `,
+      "app.ts": `
+        import { Eventra } from "@eventra_dev/eventra-sdk";
+        import { EVENTS } from "./events";
+        const sdk = new Eventra({ apiKey: "k" });
+        sdk.track(EVENTS.LOGIN);
+      `,
+    });
+    expect(events).toContain("enum_login_cross_file");
+  });
+});
+
+// Regression coverage for a gap where a cast/non-null/parens around a
+// misused object-literal argument to track() itself (not a wrapper) defeated
+// the sink detector's "wrong API shape" guard (`extractTrackedArguments`
+// checked `ts.isObjectLiteralExpression` on the raw, un-unwrapped argument),
+// letting it slip through and resolve via the generic object-literal
+// fallback in resolveNodeValue — which grabs every property value
+// indiscriminately, not just one matching a real API shape.
+describe("direct object-literal payloads to track() stay ignored", () => {
+  it("ignores a bare object literal", async () => {
+    const { events } = await run({
+      "app.ts": `
+        import { Eventra } from "@eventra_dev/eventra-sdk";
+        const sdk = new Eventra({ apiKey: "k" });
+        sdk.track({ event: "should_be_ignored_direct_object" });
+      `,
+    });
+    expect(events).not.toContain("should_be_ignored_direct_object");
+  });
+
+  it("ignores an object literal wrapped in a type assertion", async () => {
+    const { events } = await run({
+      "app.ts": `
+        import { Eventra } from "@eventra_dev/eventra-sdk";
+        const sdk = new Eventra({ apiKey: "k" });
+        sdk.track({ event: "should_be_ignored_cast_object" } as any);
+      `,
+    });
+    expect(events).not.toContain("should_be_ignored_cast_object");
+  });
+});

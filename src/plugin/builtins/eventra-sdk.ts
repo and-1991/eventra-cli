@@ -2,6 +2,7 @@ import ts from "typescript";
 
 import { isEventraSdkTrackCall } from "../../analysis/sdk/isEventraTrackCall";
 import type { TrackedArgument, TrackSink } from "../../analysis/shared/propagation";
+import { unwrapExpression } from "../../analysis/shared/utils";
 import type { PluginRegistry } from "../registry";
 import type { SinkDetector } from "../types";
 
@@ -11,7 +12,10 @@ function extractTrackedArguments(call: ts.CallExpression): readonly TrackedArgum
     return [];
   }
   const first = call.arguments[0];
-  if (ts.isObjectLiteralExpression(first)) {
+  // A cast/non-null/parens around a misused object literal (e.g.
+  // `track({ event: "x" } as any)`) must not defeat this guard — it's still
+  // the wrong API shape for `track(name: string, options?)`.
+  if (ts.isObjectLiteralExpression(unwrapExpression(first))) {
     return [];
   }
   return [{ index: 0, propertyPath: [] }];

@@ -101,7 +101,28 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
     }
   }
   if (ts.isIdentifier(targetExpression)) {
-    const symbol = checker.getSymbolAtLocation(targetExpression);
+    let symbol = checker.getSymbolAtLocation(targetExpression);
+    if (symbol) {
+      symbol = resolveExportedSymbol(symbol, checker, exportCache) ?? symbol;
+    }
+    // enum EVENTS {
+    //   LOGIN = "login"
+    // }
+    if (symbol) {
+      const declarations = symbol.getDeclarations() ?? [];
+      for (const declaration of declarations) {
+        if (!ts.isEnumDeclaration(declaration)) {
+          continue;
+        }
+        for (const member of declaration.members) {
+          const memberName = ts.isIdentifier(member.name) ? member.name.text : ts.isStringLiteral(member.name) ? member.name.text : null;
+          if (memberName !== propertyName || !member.initializer) {
+            continue;
+          }
+          return resolveNodeValue(member.initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+        }
+      }
+    }
     // const EVENTS = {
     //   LOGIN: "login"
     // }
