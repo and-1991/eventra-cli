@@ -8,6 +8,7 @@ import {analyzeReturnPropagation} from "../scanner/analyzer/returnPropagationAna
 import {resolveFunctionFromCall} from "./callResolver";
 import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
+import {unwrapExpression, getPropertyName} from "../shared/utils";
 
 export interface ResolveResult {
   readonly values: readonly string[];
@@ -37,14 +38,41 @@ function concat(left: readonly string[], right: readonly string[],): string[] {
   return unique(result);
 }
 
-function getPropertyName(node: ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression): string | null {
-  if (ts.isElementAccessExpression(node)) {
-    if (!node.argumentExpression || !ts.isStringLiteral(node.argumentExpression)) {
+// Walks a chain rooted at a parameter-bound identifier — e.g. `payload.nested`
+// inside `payload.nested.event` — down to the object literal it refers to, so
+// resolvePropertyAccess can pick the final property off a nested payload, not
+// just a one-level-deep one.
+function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker, context: EvaluationContext): ts.Expression | null {
+  const node = unwrapExpression(rawNode);
+  if (ts.isIdentifier(node)) {
+    const symbol = checker.getSymbolAtLocation(node);
+    if (!symbol || !context.parameterBindings.has(symbol)) {
       return null;
     }
-    return node.argumentExpression.text;
+    return context.parameterBindings.get(symbol) ?? null;
   }
-  return node.name.text;
+  if (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node)) {
+    const propertyName = getPropertyName(node);
+    if (!propertyName) {
+      return null;
+    }
+    const base = resolveBoundObjectNode(node.expression, checker, context);
+    if (!base || !ts.isObjectLiteralExpression(base)) {
+      return null;
+    }
+    for (const property of base.properties) {
+      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+        continue;
+      }
+      const objectPropertyName = ts.isIdentifier(property.name) ? property.name.text : property.name.getText();
+      if (objectPropertyName !== propertyName) {
+        continue;
+      }
+      return ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+    }
+    return null;
+  }
+  return null;
 }
 
 function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression, checker: ts.TypeChecker, context: EvaluationContext, visited: Set<ts.Node>, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache | undefined, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache): ResolveResult {
@@ -54,26 +82,26 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
   }
   // payload.event
   // payload["event"]
+  // payload.nested.event
   const targetExpression = ts.isElementAccessExpression(node) ? node.expression : node.expression;
-  if (ts.isIdentifier(targetExpression)) {
-    const symbol = checker.getSymbolAtLocation(targetExpression);
-    // parameter binding
-    if (symbol && context.parameterBindings.has(symbol)) {
-      const bound = context.parameterBindings.get(symbol);
-      if (bound && ts.isObjectLiteralExpression(bound)) {
-        for (const property of bound.properties) {
-          if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
-            continue;
-          }
-          const objectPropertyName = ts.isIdentifier(property.name) ? property.name.text : property.name.getText();
-          if (objectPropertyName !== propertyName) {
-            continue;
-          }
-          const initializer = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
-          return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+  {
+    const bound = resolveBoundObjectNode(targetExpression, checker, context);
+    if (bound && ts.isObjectLiteralExpression(bound)) {
+      for (const property of bound.properties) {
+        if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
+          continue;
         }
+        const objectPropertyName = ts.isIdentifier(property.name) ? property.name.text : property.name.getText();
+        if (objectPropertyName !== propertyName) {
+          continue;
+        }
+        const initializer = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+        return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
       }
     }
+  }
+  if (ts.isIdentifier(targetExpression)) {
+    const symbol = checker.getSymbolAtLocation(targetExpression);
     // const EVENTS = {
     //   LOGIN: "login"
     // }
@@ -240,10 +268,13 @@ export function resolveNodeValue(node: ts.Node, checker: ts.TypeChecker, context
         dynamic: true,
       };
     }
-    if (ts.isParenthesizedExpression(node)) {
-      return resolveNodeValue(node.expression, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
-    }
-    if (ts.isAsExpression(node) || ts.isTypeAssertionExpression(node)) {
+    if (
+      ts.isParenthesizedExpression(node) ||
+      ts.isAsExpression(node) ||
+      ts.isTypeAssertionExpression(node) ||
+      ts.isNonNullExpression(node) ||
+      ts.isSatisfiesExpression(node)
+    ) {
       return resolveNodeValue(node.expression, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
     }
     if (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node)) {

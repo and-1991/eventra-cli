@@ -65,26 +65,39 @@ export function extractPropagationEvents(call: ts.CallExpression, checker: ts.Ty
 }
 
 function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpression, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[]): void {
-  let argument = call.arguments[propagation.sourceParameterIndex];
+  const argument = call.arguments[propagation.sourceParameterIndex];
   if (!argument) {
     return;
   }
-  // wrapper({
-  //   nested: {
-  //     event: "x"
-  //   }
-  // })
-  if (propagation.propertyPath.length > 0) {
+  const context = createEvaluationContext();
+  if (ts.isIdentifier(propagation.sourceParameter.name)) {
+    // sourceParameter is a plain identifier (`function f(payload)`), so
+    // propagation.targetNode — `payload`, `payload.event`, or any expression
+    // a plugin builds from it (e.g. a template literal) — can resolve its own
+    // propertyPath by evaluating targetNode with `payload` substituted for
+    // the *raw*, un-narrowed call-site argument.
+    const parameterSymbol = checker.getSymbolAtLocation(propagation.sourceParameter.name);
+    if (parameterSymbol) {
+      context.parameterBindings.set(parameterSymbol, argument);
+    }
+  } else {
+    // sourceParameter is a destructuring pattern (`function f({ event })`),
+    // which has no symbol of its own — `getSymbolAtLocation` on the pattern
+    // returns nothing. Narrow to the leaf value ourselves via propertyPath,
+    // then bind it to the destructured binding's own symbol (targetNode is
+    // that binding's reference, e.g. `event` in `sdk.track(event)`).
+    if (propagation.propertyPath.length === 0 || !ts.isIdentifier(propagation.targetNode)) {
+      return;
+    }
     const resolvedPath = resolveObjectPath(argument, propagation.propertyPath);
     if (!resolvedPath) {
       return;
     }
-    argument = resolvedPath;
-  }
-  const context = createEvaluationContext();
-  const parameterSymbol = checker.getSymbolAtLocation(propagation.sourceParameter.name);
-  if (parameterSymbol) {
-    context.parameterBindings.set(parameterSymbol, argument);
+    const bindingSymbol = checker.getSymbolAtLocation(propagation.targetNode);
+    if (!bindingSymbol) {
+      return;
+    }
+    context.parameterBindings.set(bindingSymbol, resolvedPath);
   }
   const resolved = resolveNodeValue(propagation.targetNode, checker, context, new Set(), evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
   for (const value of resolved.values) {

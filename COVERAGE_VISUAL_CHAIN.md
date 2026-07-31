@@ -91,7 +91,11 @@ track({
 })
 ```
 
-✅ Supported
+❌ Not Supported (direct sink call)
+
+`track(name: string, options?)` is the real SDK signature — an object literal as the first argument to `track()` itself is a wrong API shape and is silently ignored (0 events, no dynamic-occurrence warning), same as documented in the CLI README's "What is ignored" section.
+
+Object payloads *are* resolved when they're passed to a **wrapper function** that pulls the event name back out via property access or destructuring — see #10/#13/#14/#15 below, e.g. `trackWrapper({ event: "checkout" })` where `trackWrapper(payload) { track(payload.event) }`.
 
 ---
 
@@ -533,7 +537,7 @@ track(["a", "b"])
 
 ---
 
-### Object payloads
+### Object payloads (only via wrapper propagation, not a direct sink call)
 
 ```ts
 track({
@@ -541,13 +545,17 @@ track({
 })
 ```
 
+A bare object literal handed directly to `track()` is **not** resolved — see "Object Payloads" above. This shape only resolves when the object literal is the *call-site argument to a wrapper function* that extracts the event name via property access or destructuring.
+
 ---
 
-### Shorthand payloads
+### Shorthand payloads (only via wrapper propagation, not a direct sink call)
 
 ```ts
 track({ event })
 ```
+
+Same caveat as object payloads: not resolved as a direct `track()` argument, only when passed into a wrapper.
 
 ---
 

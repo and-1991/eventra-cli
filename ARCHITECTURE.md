@@ -121,11 +121,13 @@ track(flag ? "a" : "b")
 track(["a", "b"])
 ```
 
-Object / shorthand payloads:
+Object / shorthand payloads **passed through a wrapper**, not as a direct `track()` argument (see "What is ignored" in the README — an object literal as `track()`'s own first argument is a wrong API shape and is silently ignored):
 
 ```ts
-track({ event: "signup" })
-track({ event })
+function trackWrapper(payload: { event: string }) {
+  track(payload.event)
+}
+trackWrapper({ event: "signup" })
 ```
 
 Wrapper functions and cross-file wrappers:

@@ -80,6 +80,20 @@ function trackFeature(name: string) {
 trackFeature("purchase");
 ```
 
+The event name can also come from a property on the wrapper's parameter — plain access, optional chaining, element access, or destructuring (including aliased and nested):
+
+```ts
+function trackWrapper(payload: { event: string }) {
+  sdk.track(payload.event);        // also: payload?.event, payload["event"]
+}
+trackWrapper({ event: "checkout" });
+
+function trackDestructured({ event: name }: { event: string }) {
+  sdk.track(name);
+}
+trackDestructured({ event: "checkout" });
+```
+
 ### Variables, templates, conditionals
 
 ```ts
