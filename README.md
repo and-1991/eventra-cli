@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-74%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-110%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
@@ -312,9 +312,9 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **74 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios**.
+Two test layers, **110 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
-**Unit tests (vitest)** — 13 suites covering core modules:
+**Unit tests (vitest)** — 21 suites covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -325,12 +325,20 @@ Two test layers, **74 unit tests + 12 e2e fixtures + 3 `check` exit-code scenari
 | `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
 | `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |
 | `external plugin adapter` | Transform output mapping, static sink registration, invalid result rejection |
+| `external plugin dynamic sink` | A non-literal argument at a plugin-declared static sink surfaces as a dynamic occurrence instead of being silently dropped |
 | `vue-shaped external plugin` | Adapter path for script + template virtual modules and `staticSinks` |
 | `processFile` | Script-kind detection, import/export specifier extraction |
 | `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
-| `normalizeConfig` | Sort events, dedupe wrappers, defaults, preserve `apiKey` / `endpoint` / `sync` / `plugins` |
-| `buildConfigFromScan` | Replace events + wrappers, preserve everything else |
+| `config` | `normalizeConfig` (sort events, dedupe wrappers, defaults, preserve `apiKey`/`endpoint`/`sync`/`plugins`); `resolveApiKey` env-var > `eventra.local.json` > legacy-inline priority, `saveLocalApiKey`'s gitignore-append |
+| `scanResults` (`buildConfigFromScan`) | Replace events + wrappers, preserve everything else |
 | `hash` | Stability and uniqueness |
+| `cross-file SDK detection` | Direct `.track()` and wrapper calls resolve across files even when the call-site file never imports the SDK package itself |
+| `dynamic event reporter` | Dynamic vs. static call classification, end-to-end `registerDynamicEventReporter` invocation |
+| `load plugins` | Trusted-specifier allowlist (`^@eventra_dev/cli-plugin-[a-z0-9-]+$`), accepted/rejected plugin shapes |
+| `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution — a hand-written fixture, not a real `nuxt build` (see `packages/cli-plugin-vue`'s README) |
+| `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
+| `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval |
+| `wrapper detector plugin` | A custom `WrapperDetector` (e.g. a template-literal wrapper shape the built-in analyzer can't cover) alongside the built-in fallback |
 
 **End-to-end fixtures** — 12 isolated TS projects scanned via `eventra sync`:
 
@@ -350,6 +358,8 @@ Two test layers, **74 unit tests + 12 e2e fixtures + 3 `check` exit-code scenari
 - Drift → exit `1`
 - `--fix` writes scan results into `eventra.json` → exit `0`
 - Parity (no drift) → exit `0`
+
+**`eventra watch` scenario:** a real `watch` process detects a brand-new file (created after startup) and its `.track()` call lands in `eventra.json`.
 
 Run locally:
 
