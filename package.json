@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Static analytics event extraction CLI powered by the TypeScript compiler API",
   "license": "MIT",
   "type": "commonjs",
@@ -29,6 +29,7 @@
     "dev": "tsx src/index.ts",
     "test": "pnpm run clean && pnpm run build && pnpm run test:unit && tsx tests/run.ts",
     "test:unit": "vitest run",
+    "test:coverage": "vitest run --coverage",
     "test:e2e": "pnpm run clean && pnpm run build && tsx tests/run.ts",
     "clean": "rm -rf dist"
   },
@@ -45,6 +46,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/inquirer": "^9.0.9",
     "@types/node": "^20.0.0",
+    "@vitest/coverage-v8": "^4.1.7",
     "cross-spawn": "^7.0.6",
     "tsx": "^4.7.0",
     "vitest": "^4.1.7"

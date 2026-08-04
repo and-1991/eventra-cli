@@ -10,6 +10,7 @@
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
   <img alt="unit tests" src="https://img.shields.io/badge/unit-110%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
+  <img alt="coverage" src="https://img.shields.io/badge/coverage-73.5%25%20(unit)-yellow?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
   <img alt="license" src="https://img.shields.io/npm/l/@eventra_dev/eventra-cli?style=flat-square&color=lightgrey">
@@ -313,6 +314,8 @@ No runtime execution. No monkey-patching.
 ## Test Coverage
 
 Two test layers, **110 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+
+**73.5% statement coverage** (58.1% branch, 83.1% function, 73.8% line — v8 provider, `pnpm test:coverage`). This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented.
 
 **Unit tests (vitest)** — 21 suites covering core modules:
 
