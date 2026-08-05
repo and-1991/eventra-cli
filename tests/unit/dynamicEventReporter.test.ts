@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -7,6 +7,8 @@ import { EventraEngine } from "../../src/core/EventraEngine";
 import { EVENTRA_SDK_SHIM } from "../../src/analysis/sdk/eventraSdk";
 import { EventraConfig } from "../../src/types";
 import { createBuiltinPluginRegistry } from "../../src/plugin/loadPlugins";
+import { PluginRegistry } from "../../src/plugin/registry";
+import { registerConsoleDynamicEventReporterPlugin } from "../../src/plugin/builtins/consoleDynamicEventReporter";
 import type { DynamicEventReporter } from "../../src/plugin/types";
 
 const SDK_TYPES = "__eventra_sdk_types__.d.ts";
@@ -127,6 +129,57 @@ describe("registerDynamicEventReporter end-to-end", () => {
       expect(seen).toEqual(["sdk.track"]);
     } finally {
       cleanup();
+    }
+  });
+});
+
+describe("built-in console dynamic event reporter", () => {
+  it("prints nothing when there are no dynamic occurrences", async () => {
+    const registry = new PluginRegistry();
+    registerConsoleDynamicEventReporterPlugin(registry);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await registry.runDynamicEventReporters([]);
+      expect(log).not.toHaveBeenCalled();
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("prints a header and one line per occurrence when there are dynamic occurrences", async () => {
+    const registry = new PluginRegistry();
+    registerConsoleDynamicEventReporterPlugin(registry);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await registry.runDynamicEventReporters([
+        {
+          fileName: "/app/checkout.ts",
+          line: 10,
+          character: 4,
+          calleeText: "sdk.track",
+          callText: "sdk.track(`checkout:${name}`)",
+          resolvedValues: ["checkout:done"],
+        },
+        {
+          fileName: "/app/other.ts",
+          line: 3,
+          character: 1,
+          calleeText: "sdk.track",
+          callText: "sdk.track(name)",
+          resolvedValues: [],
+        },
+      ]);
+
+      expect(log).toHaveBeenCalledTimes(3);
+      expect(log.mock.calls[0]?.[0]).toContain("Dynamic event names:");
+      expect(log.mock.calls[1]?.[0]).toContain("/app/checkout.ts:10");
+      expect(log.mock.calls[1]?.[0]).toContain("resolved: checkout:done");
+      expect(log.mock.calls[2]?.[0]).toContain("/app/other.ts:3");
+      expect(log.mock.calls[2]?.[0]).not.toContain("resolved:");
+    } finally {
+      log.mockRestore();
     }
   });
 });

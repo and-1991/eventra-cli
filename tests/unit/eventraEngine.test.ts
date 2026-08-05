@@ -246,6 +246,224 @@ describe("EventraEngine", () => {
     }
   });
 
+  it("preloadFile throws when called outside a beginPreload()/endPreload() phase", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      await expect(engine.preloadFile(path.join(root, "a.ts"), "export const a = 1;")).rejects.toThrow(
+        "preload phase not active",
+      );
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("scanFile analyzes a single file directly, without runFullAnalysis", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "app.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          const sdk = new Eventra({ apiKey: "k" });
+          sdk.track("direct.scan.event");
+        `,
+      });
+      const appFile = files[files.length - 1]!;
+
+      const result = await engine.scanFile(appFile, CONFIG);
+      expect(result.events).toEqual(new Set(["direct.scan.event"]));
+      expect(engine.getAllEvents()).toEqual(["direct.scan.event"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("indexFile and extractFile are no-ops (index deleted / EMPTY_RESULT) for a file outside the program", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const missing = path.join(root, "missing.ts");
+
+      // Not staged/preloaded at all — compiler.getSourceFile() returns undefined.
+      expect(() => engine.indexFile(missing, CONFIG)).not.toThrow();
+      const result = engine.extractFile(missing, CONFIG);
+      expect(result.events.size).toBe(0);
+      expect(result.detectedFunctionWrappers.size).toBe(0);
+      expect(result.dynamicOccurrences).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("getScanResult returns the stored result for a known file and an empty result for an unknown one", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "app.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          const sdk = new Eventra({ apiKey: "k" });
+          sdk.track("scoped.event");
+        `,
+      });
+      const appFile = files[files.length - 1]!;
+
+      await engine.runFullAnalysis(files, CONFIG);
+      expect(engine.getScanResult(appFile).events).toEqual(new Set(["scoped.event"]));
+
+      const empty = engine.getScanResult(path.join(root, "never-scanned.ts"));
+      expect(empty.events.size).toBe(0);
+      expect(empty.detectedFunctionWrappers.size).toBe(0);
+      expect(empty.dynamicOccurrences).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("getAllDynamicOccurrences aggregates across files and sorts by fileName then line", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "b.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          declare function dyn(): string;
+          const sdk = new Eventra({ apiKey: "k" });
+          sdk.track(dyn());
+        `,
+        "a.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          declare function dyn(): string;
+          const sdk = new Eventra({ apiKey: "k" });
+          sdk.track("static.one");
+          sdk.track(dyn());
+          sdk.track(dyn());
+        `,
+      });
+
+      await engine.runFullAnalysis(files, CONFIG);
+      const occurrences = engine.getAllDynamicOccurrences();
+      expect(occurrences).toHaveLength(3);
+
+      const fileNames = occurrences.map((o) => o.fileName);
+      const sorted = [...fileNames].sort();
+      expect(fileNames.filter((f) => f.endsWith("a.ts"))).toHaveLength(2);
+      expect(fileNames.filter((f) => f.endsWith("b.ts"))).toHaveLength(1);
+      // a.ts sorts before b.ts; within a.ts, the two occurrences must be
+      // ordered by ascending line number.
+      expect(fileNames).toEqual(sorted);
+      const aOccurrences = occurrences.filter((o) => o.fileName.endsWith("a.ts"));
+      expect(aOccurrences[0]!.line).toBeLessThan(aOccurrences[1]!.line);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("updateImportGraph skips export-assignment statements and bare (no-specifier) exports", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "dep.ts": `
+          export const dep = 1;
+        `,
+        // export-assignment (CommonJS-style "export =") — must be skipped by
+        // updateImportGraph's isExportAssignment guard before the
+        // import/export-declaration check even runs.
+        "cjsStyle.ts": `
+          const value = 1;
+          export = value;
+        `,
+        "app.ts": `
+          import { dep } from "./dep";
+          const value = dep;
+          export { value }; // bare export, no module specifier -> continue
+        `,
+      });
+      const appFile = files.find((f) => f.endsWith("app.ts"))!;
+      const cjsFile = files.find((f) => f.endsWith("cjsStyle.ts"))!;
+
+      await engine.runFullAnalysis(files, CONFIG);
+      // updateFile() re-runs the scheduler flush -> updateImportGraph() on
+      // both files, walking the export-assignment and bare-export statements.
+      await engine.updateFile(cjsFile, "const value = 2;\nexport = value;", CONFIG);
+      await engine.updateFile(
+        appFile,
+        `
+          import { dep } from "./dep";
+          const value = dep + 1;
+          export { value };
+        `,
+        CONFIG,
+      );
+
+      expect(engine.getAllEvents()).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("removeFile() falls back to the last-used config when no config argument is passed", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "standalone.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          const local = new Eventra({ apiKey: "k" });
+          local.track("standalone.event");
+        `,
+      });
+
+      await engine.runFullAnalysis(files, CONFIG);
+      expect(engine.getAllEvents()).toContain("standalone.event");
+
+      const standalonePath = path.join(root, "standalone.ts");
+      await engine.removeFile(standalonePath);
+
+      expect(engine.getAllEvents()).not.toContain("standalone.event");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("removeFile() reanalyzes dependent files via reanalyzeFiles when dependents exist", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "tracker.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          const sdk = new Eventra({ apiKey: "k" });
+          export function trackFeature(name: string) { sdk.track(name); }
+        `,
+        "app.ts": `
+          import { trackFeature } from "./tracker";
+          trackFeature("dependent.event");
+        `,
+      });
+
+      await engine.runFullAnalysis(files, CONFIG);
+      expect(engine.getAllEvents()).toContain("dependent.event");
+
+      // Delete tracker.ts from disk too (mirrors the real watch.ts trigger for
+      // removeFile) — otherwise ts's own module resolution would just re-read
+      // it back off disk as an unlisted dependency of app.ts and the wrapper
+      // would keep resolving.
+      fs.rmSync(path.join(root, "tracker.ts"));
+
+      // Removing tracker.ts has a dependent (app.ts), so removeFile must take
+      // the reanalyzeFiles() branch rather than the no-dependents fast path.
+      await engine.removeFile(path.join(root, "tracker.ts"), CONFIG);
+
+      // app.ts survives (still indexed), just no longer resolves the wrapper.
+      expect(engine.getAllEvents()).not.toContain("dependent.event");
+    } finally {
+      cleanup();
+    }
+  });
+
   it("getAllFunctionWrappers filters out anonymous / internal names", async () => {
     const { root, cleanup } = makeProject();
     try {
@@ -268,6 +486,51 @@ describe("EventraEngine", () => {
       // sanity: no synthetic names
       expect(wrappers.every((w) => !w.startsWith("__"))).toBe(true);
       expect(wrappers.every((w) => w !== "anonymous")).toBe(true);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("getAllFunctionWrappers actually drops an 'anonymous'/empty/'__'-prefixed name when one is present", async () => {
+    // Provoking the analyzer into emitting an "anonymous"/"__"-prefixed wrapper
+    // name from real source would depend on internals of analysis/** (treated
+    // as a black box here). The aggregation/filter under test lives entirely
+    // in EventraEngine itself, so this seeds fileResults directly — a
+    // real Set<string>, run through the real filter — to exercise the
+    // false side of each condition in that filter.
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const fileResults = (
+        engine as unknown as {
+          fileResults: Map<string, { detectedFunctionWrappers: Set<string>; events: Set<string>; dynamicOccurrences: unknown[] }>;
+        }
+      ).fileResults;
+      fileResults.set(path.join(root, "fake.ts"), {
+        events: new Set(),
+        detectedFunctionWrappers: new Set(["anonymous", "__internal", "", "realWrapper"]),
+        dynamicOccurrences: [],
+      });
+
+      expect(engine.getAllFunctionWrappers()).toEqual(["realWrapper"]);
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("updateImportGraph removes a file from the import graph when it's no longer in the program", async () => {
+    // Reachable only in-process: the scheduler always calls this right after
+    // compiler.updateFile() staged the same file, so it's guaranteed to be
+    // present in the just-rebuilt program on every real call path. Calling
+    // the private method directly against a file that was never staged
+    // exercises the defensive fallback.
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const missing = path.join(root, "missing.ts");
+      expect(() =>
+        (engine as unknown as { updateImportGraph(fileName: string): void }).updateImportGraph(missing),
+      ).not.toThrow();
     } finally {
       cleanup();
     }

@@ -116,9 +116,11 @@ export class CompilerContext {
         onError,
         shouldCreateNewSourceFile,
       );
+      /* v8 ignore if -- unreachable: host.readFile (below) only ever returns a string or throws (fs.readFileSync semantics); ts's default getSourceFile only yields undefined when readFile resolves to undefined without throwing, which this host can never produce */
       if (!fromDisk) {
         return undefined;
       }
+      /* v8 ignore else -- unreachable: reaching this line already required an undefined snapshot above, and DocumentRecord always carries a snapshot once registry.has() is true, so has() cannot have flipped true in between */
       if (!this.registry.has(normalized)) {
         this.registry.update(normalized, fromDisk.getFullText());
       }

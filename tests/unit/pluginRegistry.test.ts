@@ -1,3 +1,5 @@
+import path from "path";
+
 import { describe, expect, it } from "vitest";
 
 import { createBuiltinPluginRegistry } from "../../src/plugin/loadPlugins";
@@ -67,11 +69,104 @@ describe("PluginRegistry", () => {
     ]);
   });
 
+  it("falls back to the source file's own normalized path when it has never been preprocessed", () => {
+    const registry = createBuiltinPluginRegistry();
+    expect(registry.getVirtualPathsForSource("/app/never-touched.ts")).toEqual([
+      path.resolve("/app/never-touched.ts").replace(/\\/g, "/"),
+    ]);
+  });
+
+  it("falls through to the default passthrough when no preprocessor's test() matches", async () => {
+    const registry = createBuiltinPluginRegistry();
+    registry.registerFilePreprocessor({
+      name: "vue-only",
+      test: (fileName) => fileName.endsWith(".vue"),
+      process: async ({ fileName }) => [{ fileName: `${fileName}.virtual.ts`, content: "export {}" }],
+    });
+
+    const files = await registry.preprocessFile({
+      fileName: "/app/plain.ts",
+      content: "export const x = 1;",
+    });
+
+    expect(files).toEqual([{ fileName: "/app/plain.ts", content: "export const x = 1;" }]);
+    // No virtual mapping was recorded for this source, so lookups fall back too.
+    expect(registry.getVirtualPathsForSource("/app/plain.ts")).toEqual([
+      path.resolve("/app/plain.ts").replace(/\\/g, "/"),
+    ]);
+  });
+
+  it("moves on to the next preprocessor when one matches but returns no virtual files", async () => {
+    const registry = createBuiltinPluginRegistry();
+    registry.registerFilePreprocessor({
+      name: "matches-but-empty",
+      test: () => true,
+      process: async () => [],
+    });
+    registry.registerFilePreprocessor({
+      name: "matches-and-produces",
+      test: () => true,
+      process: async ({ fileName }) => [{ fileName: `${fileName}.ts`, content: "export {}" }],
+    });
+
+    const files = await registry.preprocessFile({
+      fileName: "/app/Widget.vue",
+      content: "<script />",
+    });
+
+    expect(files).toEqual([{ fileName: "/app/Widget.vue.ts", content: "export {}" }]);
+  });
+
+  it("clears a stale virtual-path mapping when a source no longer matches any preprocessor", async () => {
+    const registry = createBuiltinPluginRegistry();
+    let shouldMatch = true;
+    registry.registerFilePreprocessor({
+      name: "toggle",
+      test: () => shouldMatch,
+      process: async ({ fileName }) => [{ fileName: `${fileName}.ts`, content: "export {}" }],
+    });
+
+    await registry.preprocessFile({ fileName: "/app/Toggle.vue", content: "<script />" });
+    expect(registry.getVirtualPathsForSource("/app/Toggle.vue")).toEqual([
+      path.resolve("/app/Toggle.vue.ts").replace(/\\/g, "/"),
+    ]);
+
+    shouldMatch = false;
+    await registry.preprocessFile({ fileName: "/app/Toggle.vue", content: "<script />" });
+    expect(registry.getVirtualPathsForSource("/app/Toggle.vue")).toEqual([
+      path.resolve("/app/Toggle.vue").replace(/\\/g, "/"),
+    ]);
+  });
+
   it("deduplicates include patterns", () => {
     const registry = createBuiltinPluginRegistry();
     registry.registerIncludePattern("**/*.vue");
     registry.registerIncludePattern("**/*.vue");
     expect(registry.getIncludePatterns()).toEqual(["**/*.vue"]);
+  });
+
+  it("ignores a blank include pattern instead of registering it", () => {
+    const registry = createBuiltinPluginRegistry();
+    registry.registerIncludePattern("   ");
+    expect(registry.getIncludePatterns()).toEqual([]);
+  });
+
+  it("throws when a file preprocessor with the same name is registered twice", () => {
+    const registry = createBuiltinPluginRegistry();
+    const preprocessor: FilePreprocessor = {
+      name: "dup-preprocessor",
+      test: () => true,
+      process: async ({ fileName, content }) => [{ fileName, content }],
+    };
+    registry.registerFilePreprocessor(preprocessor);
+    expect(() => registry.registerFilePreprocessor(preprocessor)).toThrow(/already registered/);
+  });
+
+  it("throws when a sink detector with the same name is registered twice", () => {
+    const registry = createBuiltinPluginRegistry();
+    expect(() =>
+      registry.registerSinkDetector({ name: "eventra-sdk", detect: () => null }),
+    ).toThrow(/already registered/);
   });
 
   describe("wrapper detector", () => {
@@ -145,6 +240,9 @@ describe("PluginRegistry", () => {
       await registry.runDynamicEventReporters(occurrences);
 
       expect(calls).toEqual(["a", "b"]);
+      // createBuiltinPluginRegistry() already registers the built-in "console"
+      // reporter, so "a"/"b" are appended after it.
+      expect(registry.getDynamicEventReporters().map((r) => r.name)).toEqual(["console", "a", "b"]);
     });
 
     it("throws when a reporter with the same name is registered twice", () => {

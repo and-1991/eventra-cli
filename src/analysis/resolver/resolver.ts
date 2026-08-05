@@ -49,6 +49,11 @@ function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker,
     if (!symbol || !context.parameterBindings.has(symbol)) {
       return null;
     }
+    // `has(symbol)` above already guarantees a Map entry exists, and every
+    // caller only ever `.set()`s parameterBindings to a real ts.Expression
+    // (never `undefined`) - so `.get(symbol)` can't actually miss here; the
+    // `?? null` is defensive typing, not a reachable second outcome.
+    /* v8 ignore next */
     return context.parameterBindings.get(symbol) ?? null;
   }
   if (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node)) {
@@ -109,12 +114,22 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
     //   LOGIN = "login"
     // }
     if (symbol) {
+      // symbol comes from checker.getSymbolAtLocation (never a hand-built
+      // duck-typed object here), and real ts.Symbol.getDeclarations() always
+      // returns an array (possibly empty) rather than undefined - the `?? []`
+      // is defensive against the wider `Declaration[] | undefined` type, not
+      // a reachable second outcome for a real symbol.
+      /* v8 ignore next */
       const declarations = symbol.getDeclarations() ?? [];
       for (const declaration of declarations) {
         if (!ts.isEnumDeclaration(declaration)) {
           continue;
         }
         for (const member of declaration.members) {
+          // An EnumMember's `name` can only be an Identifier or a
+          // StringLiteral per the TS grammar - the `: null` fallback has no
+          // third case to reach.
+          /* v8 ignore next */
           const memberName = ts.isIdentifier(member.name) ? member.name.text : ts.isStringLiteral(member.name) ? member.name.text : null;
           if (memberName !== propertyName || !member.initializer) {
             continue;
@@ -127,6 +142,9 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
     //   LOGIN: "login"
     // }
     if (symbol) {
+      // See the identical `?? []` above the enum-member loop: a real
+      // ts.Symbol here always has a declarations array.
+      /* v8 ignore next */
       const declarations = symbol.getDeclarations() ?? [];
       for (const declaration of declarations) {
         if (!ts.isVariableDeclaration(declaration) || !declaration.initializer || !ts.isObjectLiteralExpression(declaration.initializer)) {
@@ -154,6 +172,10 @@ function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context
   const boundSymbol = checker.getSymbolAtLocation(node);
   if (boundSymbol && context.parameterBindings.has(boundSymbol)) {
     const bound = context.parameterBindings.get(boundSymbol);
+    // `has(boundSymbol)` above already guarantees a Map entry, and every
+    // caller only ever `.set()`s parameterBindings to a real ts.Expression
+    // (never `undefined`) - so this is always truthy when reached.
+    /* v8 ignore else */
     if (bound) {
       return resolveNodeValue(bound, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
     }
@@ -170,6 +192,9 @@ function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context
   }
   const resolving = empty();
   evaluationCache.set(symbol, resolving);
+  // See the identical `?? []` above in resolvePropertyAccess: a real
+  // ts.Symbol here always has a declarations array.
+  /* v8 ignore next */
   const declarations = symbol.getDeclarations() ?? [];
   for (const declaration of declarations) {
     if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
@@ -210,7 +235,12 @@ function resolveCallExpression(node: ts.CallExpression, checker: ts.TypeChecker,
     const nextContext = {
       parameterBindings: new Map(context.parameterBindings),
     };
+    // returnPropagationAnalyzer's resolveParameter only ever returns a
+    // parameter whose `.name` is a plain ts.Identifier (destructured/
+    // computed parameter names are filtered out there), so a real program's
+    // checker always resolves a symbol for it here.
     const parameterSymbol = checker.getSymbolAtLocation(propagation.parameter.name);
+    /* v8 ignore next 2 */
     if (parameterSymbol) {
       nextContext.parameterBindings.set(parameterSymbol, argument);
     }

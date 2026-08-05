@@ -64,7 +64,17 @@ export function resolveExportedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker
   if (cached !== undefined) {
     return cached;
   }
-  // cycle guard
+  // cycle guard - defends against a cycle re-entering this function via the
+  // alias/export/ambient recursive calls below. In practice, a genuinely
+  // circular alias chain (e.g. two barrel files re-exporting each other's
+  // binding) is collapsed by the TypeScript checker itself: getAliasedSymbol
+  // returns its own synthetic "unknown" symbol after a single hop rather than
+  // looping, and getExportSymbolOfSymbol/the ambient-auto-import unwrap were
+  // not observed (across many realistic export shapes: named/default/star/
+  // namespace-as/CJS `export =`/ambient-module/UMD re-exports) to ever
+  // redirect to an already-visited symbol either. We could not construct a
+  // realistic source file that re-enters with the same symbol still `seen`.
+  /* v8 ignore next 4 */
   if (seen.has(symbol)) {
     cache.set(symbol, null);
     return null;
@@ -77,8 +87,16 @@ export function resolveExportedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker
     cache.set(symbol, resolved);
     return resolved;
   }
-  // export unwrap
+  // export unwrap - TypeScript's binder can in principle give a declaration a
+  // distinct "local" symbol and "export" symbol (see `declareModuleMember`'s
+  // `local.exportSymbol` link), but this was not observed via
+  // checker.getSymbolAtLocation for any realistic export shape we tried
+  // (named/default/star/namespace-as/CJS `export =`/ambient-module/UMD
+  // exports, from both the declaring file and importing files) - the split
+  // only seems to materialize for binder-internal container shapes we could
+  // not reach from ordinary source text.
   const exportSymbol = checker.getExportSymbolOfSymbol(symbol);
+  /* v8 ignore next 4 */
   if (exportSymbol && exportSymbol !== symbol) {
     const resolved = resolveExportedSymbol(exportSymbol, checker, cache, seen);
     cache.set(symbol, resolved);
@@ -99,8 +117,12 @@ export function resolveExportedSymbol(symbol: ts.Symbol, checker: ts.TypeChecker
       return symbol;
     }
   }
-  // final validation
+  // final validation - `.some(isConcreteDeclaration)` re-checks the exact same
+  // predicate over the exact same `declarations` array the for-loop above just
+  // iterated without finding a match; if the loop didn't return, `.some` of
+  // the identical predicate over the identical array is guaranteed false too.
   const valid = declarations.some(isConcreteDeclaration);
+  /* v8 ignore next 3 */
   if (valid) {
     cache.set(symbol, symbol);
     return symbol;

@@ -1,5 +1,9 @@
-import { describe, expect, it } from "vitest";
-import { buildConfigFromScan } from "../../src/core/scanResults";
+import fs from "fs-extra";
+import os from "os";
+import path from "path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { buildConfigFromScan, persistScanResults } from "../../src/core/scanResults";
+import { CONFIG_NAME } from "../../src/config/config";
 import { EventraConfig } from "../../src/types";
 import { EventraEngine } from "../../src/core/EventraEngine";
 
@@ -49,5 +53,33 @@ describe("buildConfigFromScan", () => {
     const out = buildConfigFromScan(BASE, engine);
     expect(out.events).toEqual([]);
     expect(out.functionWrappers).toEqual([]);
+  });
+});
+
+describe("persistScanResults", () => {
+  const originalCwd = process.cwd();
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-scanresults-"));
+    process.chdir(tmp);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.removeSync(tmp);
+  });
+
+  it("builds the config from the engine and writes it to eventra.json", async () => {
+    const engine = makeEngineStub(["b.event", "a.event"], ["wrapperB"]);
+
+    await persistScanResults(BASE, engine);
+
+    const written = await fs.readJSON(path.join(tmp, CONFIG_NAME));
+    // saveConfig normalizes: events sorted, apiKey/endpoint preserved from BASE.
+    expect(written.events).toEqual(["a.event", "b.event"]);
+    expect(written.functionWrappers).toEqual([{ name: "wrapperB" }]);
+    expect(written.apiKey).toBe("secret");
+    expect(written.endpoint).toBe("https://api.example.com");
   });
 });

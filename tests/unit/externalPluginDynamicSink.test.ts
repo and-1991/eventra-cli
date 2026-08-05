@@ -69,4 +69,31 @@ describe("external plugin static sink with a non-literal argument", () => {
       cleanup();
     }
   });
+
+  it("does not flag a call with fewer arguments than the sink's eventNameArgumentIndex requires", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const registry = createBuiltinPluginRegistry();
+      registerExternalCliPlugin(testPlugin, registry);
+
+      const engine = new EventraEngine(root, registry);
+      engine.beginPreload();
+      const fileName = path.join(root, "app.ts");
+      await engine.preloadFile(
+        fileName,
+        `
+          declare function __test_dynamic_sink__(name: string): void;
+          __test_dynamic_sink__();
+        `,
+      );
+      engine.endPreload();
+
+      await engine.runFullAnalysis([fileName], CONFIG);
+
+      expect(engine.getAllEvents()).toEqual([]);
+      expect(engine.getAllDynamicOccurrences()).toEqual([]);
+    } finally {
+      cleanup();
+    }
+  });
 });
