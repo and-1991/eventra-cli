@@ -206,6 +206,10 @@ function runCheckExitCodes() {
   cleanup(dir);
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function waitFor(condition: () => boolean, timeoutMs: number, intervalMs = 100): Promise<boolean> {
   return new Promise((resolve) => {
     const start = Date.now();
@@ -247,6 +251,12 @@ async function runWatchNewFileDetection(): Promise<void> {
     }
 
     fs.mkdirSync(path.join(dir, "routes"), { recursive: true });
+    // chokidar watches directories individually (Linux inotify has no native
+    // recursive watch), so a brand-new subdirectory needs its own watch set
+    // up asynchronously before it can see anything created inside it - write
+    // immediately after mkdirSync risks losing that race, especially on
+    // slower/CI filesystems. Giving it a moment to settle avoids that.
+    await sleep(500);
     fs.writeFileSync(
       path.join(dir, "routes", "newFeature.ts"),
       [
