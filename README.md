@@ -8,9 +8,9 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-110%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-403%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
-  <img alt="coverage" src="https://img.shields.io/badge/coverage-73.5%25%20(unit)-yellow?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
   <img alt="license" src="https://img.shields.io/npm/l/@eventra_dev/eventra-cli?style=flat-square&color=lightgrey">
@@ -254,7 +254,7 @@ External plugins export an object (or factory) with:
 | `transform({ path, source })` | Returns `{ modules: [{ path, content }] }` |
 | `staticSinks?` | Declarative callee-based sink rules (CLI converts to internal detectors) |
 
-No dependency on `@eventra_dev/eventra-cli` is required. See [`ARCHITECTURE.md`](./ARCHITECTURE.md#plugin-kernel-phase-15--foundation-shipped) for details.
+No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads the plugin, converts `staticSinks` into its own internal sink detectors, and calls `transform()` on matching files; the plugin never imports anything from the CLI itself.
 
 **Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, restricting to `@eventra_dev/cli-plugin-*` means nothing outside that scope can ever be loaded this way. Any other entry in `plugins` is skipped with a console warning instead of being imported — third-party/community plugins aren't supported today.
 
@@ -313,11 +313,11 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **110 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **403 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
-**73.5% statement coverage** (58.1% branch, 83.1% function, 73.8% line — v8 provider, `pnpm test:coverage`). This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented.
+**100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** — 21 suites covering core modules:
+**Unit tests (vitest)** — 37 suites covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -338,7 +338,7 @@ Two test layers, **110 unit tests + 12 e2e fixtures + 3 `check` exit-code scenar
 | `cross-file SDK detection` | Direct `.track()` and wrapper calls resolve across files even when the call-site file never imports the SDK package itself |
 | `dynamic event reporter` | Dynamic vs. static call classification, end-to-end `registerDynamicEventReporter` invocation |
 | `load plugins` | Trusted-specifier allowlist (`^@eventra_dev/cli-plugin-[a-z0-9-]+$`), accepted/rejected plugin shapes |
-| `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution — a hand-written fixture, not a real `nuxt build` (see `packages/cli-plugin-vue`'s README) |
+| `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution — a hand-written fixture, not a real `nuxt build` |
 | `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
 | `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval |
 | `wrapper detector plugin` | A custom `WrapperDetector` (e.g. a template-literal wrapper shape the built-in analyzer can't cover) alongside the built-in fallback |

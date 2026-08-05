@@ -51,23 +51,14 @@ export function getCallName(
 
   //
   // analytics.track()
+  // analytics?.track()
   //
+  // ts.isPropertyAccessExpression is also true for a PropertyAccessChain
+  // (optional-chain access is the same SyntaxKind with questionDotToken set),
+  // so there is no separate isPropertyAccessChain case to handle here.
 
   if (
     ts.isPropertyAccessExpression(
-      expression,
-    )
-  ) {
-
-    return expression.name.text;
-  }
-
-  //
-  // analytics?.track()
-  //
-
-  if (
-    ts.isPropertyAccessChain(
       expression,
     )
   ) {

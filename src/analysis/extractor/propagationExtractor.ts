@@ -48,6 +48,12 @@ export function extractPropagationEvents(call: ts.CallExpression, checker: ts.Ty
     return;
   }
   const signature = checker.getSignatureFromDeclaration(resolved);
+  // resolveFunctionFromCall only ever returns a FunctionDeclaration,
+  // MethodDeclaration, ArrowFunction, or FunctionExpression (verified: every
+  // one of those kinds — including a bodyless ambient overload signature —
+  // yields a signature from getSignatureFromDeclaration), so this guard has
+  // no reachable failure case; it's defensive only.
+  /* v8 ignore if */
   if (!signature) {
     return;
   }
@@ -77,6 +83,11 @@ function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpres
     // propertyPath by evaluating targetNode with `payload` substituted for
     // the *raw*, un-narrowed call-site argument.
     const parameterSymbol = checker.getSymbolAtLocation(propagation.sourceParameter.name);
+    // Every real ts.ParameterDeclaration identifier is bound to a symbol by
+    // the TS binder (verified across ordinary functions, type-only function
+    // types, interface call signatures, and ambient declarations), so
+    // `parameterSymbol` is never undefined here; the guard is defensive only.
+    /* v8 ignore else */
     if (parameterSymbol) {
       context.parameterBindings.set(parameterSymbol, argument);
     }

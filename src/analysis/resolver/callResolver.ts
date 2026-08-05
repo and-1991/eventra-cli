@@ -34,6 +34,12 @@ function getExpressionSymbol(expression: ts.Expression, checker: ts.TypeChecker)
     return checker.getSymbolAtLocation(expression.name);
   }
   // analytics?.track()
+  // A PropertyAccessChain has the exact same SyntaxKind (PropertyAccessExpression)
+  // as a plain property access - the "chain" distinction is purely a flag
+  // (NodeFlags.OptionalChain) on the same node kind, not a separate kind. The
+  // isPropertyAccessExpression check above already matches (and returns for)
+  // every property-access-chain node, so this branch can never be reached.
+  /* v8 ignore next 3 */
   if (ts.isPropertyAccessChain(expression)) {
     return checker.getSymbolAtLocation(expression.name);
   }

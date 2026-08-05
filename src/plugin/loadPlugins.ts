@@ -38,12 +38,23 @@ function pluginLoadHint(spec: string): string {
 
 async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promise<void> {
   const trimmed = spec.trim();
+  // Defensive-only: the sole caller (createPluginRegistry) already does
+  // `if (!trimmed) continue;` before ever calling this function, so `spec`
+  // here is always non-blank. Kept as a guard in case a future caller is
+  // added that doesn't pre-filter.
+  /* v8 ignore next */
   if (!trimmed) return;
 
   let mod: unknown;
   try {
     mod = await import(trimmed);
   } catch (err) {
+    // Node's dynamic import() only ever rejects with an Error (module
+    // resolution, syntax, or evaluation errors are all Error instances) —
+    // the String(err) fallback can't be reached without a plugin module
+    // whose top-level code does a bare `throw "non-error value"`, which
+    // we won't fabricate as a persistent test fixture. Defensive-only.
+    /* v8 ignore next */
     const message = err instanceof Error ? err.message : String(err);
     throw new Error(`Failed to load plugin "${trimmed}": ${message}.${pluginLoadHint(trimmed)}`);
   }

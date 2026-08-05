@@ -3,10 +3,14 @@ import os from "os";
 import path from "path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  CONFIG_NAME,
   LOCAL_CONFIG_NAME,
+  getTrustedEndpoint,
+  loadConfig,
   normalizeConfig,
   resolveApiKey,
   saveLocalApiKey,
+  trustEndpoint,
 } from "../../src/config/config";
 import { EventraConfig } from "../../src/types";
 
@@ -134,5 +138,63 @@ describe("resolveApiKey / saveLocalApiKey", () => {
     const lines = gitignore.split(/\r?\n/).filter(Boolean);
     expect(lines.filter((l) => l === LOCAL_CONFIG_NAME)).toHaveLength(1);
     expect(lines).toContain("node_modules");
+  });
+
+  it("inserts a leading newline when appending to a .gitignore that doesn't end with one", async () => {
+    await fs.writeFile(path.join(tmp, ".gitignore"), "node_modules");
+
+    await saveLocalApiKey("local-key");
+
+    const gitignore = await fs.readFile(path.join(tmp, ".gitignore"), "utf8");
+    expect(gitignore).toBe(`node_modules\n${LOCAL_CONFIG_NAME}\n`);
+  });
+
+  it("readLocalSecrets falls back to {} when eventra.local.json is malformed", async () => {
+    await fs.writeFile(path.join(tmp, LOCAL_CONFIG_NAME), "{ not valid json");
+
+    expect(await resolveApiKey(baseConfig("inline-key"))).toBe("inline-key");
+    expect(await getTrustedEndpoint()).toBeUndefined();
+  });
+
+  it("getTrustedEndpoint / trustEndpoint round-trip through eventra.local.json", async () => {
+    expect(await getTrustedEndpoint()).toBeUndefined();
+
+    await trustEndpoint("https://ingest.example.com/api/v1/cli/events");
+    expect(await getTrustedEndpoint()).toBe("https://ingest.example.com/api/v1/cli/events");
+  });
+});
+
+describe("loadConfig", () => {
+  const originalCwd = process.cwd();
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-config-"));
+    process.chdir(tmp);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.removeSync(tmp);
+  });
+
+  it("returns null when eventra.json doesn't exist", async () => {
+    expect(await loadConfig()).toBeNull();
+  });
+
+  it("returns null when eventra.json contains malformed JSON", async () => {
+    await fs.writeFile(path.join(tmp, CONFIG_NAME), "{ not valid json");
+    expect(await loadConfig()).toBeNull();
+  });
+
+  it("loads and normalizes a well-formed eventra.json", async () => {
+    await fs.writeJSON(path.join(tmp, CONFIG_NAME), {
+      apiKey: "k",
+      events: ["b", "a"],
+    });
+
+    const config = await loadConfig();
+    expect(config?.apiKey).toBe("k");
+    expect(config?.events).toEqual(["a", "b"]);
   });
 });

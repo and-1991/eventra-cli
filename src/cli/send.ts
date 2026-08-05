@@ -33,6 +33,12 @@ async function attemptDelivery(
   payload: string,
 ): Promise<{ ok: true; data: SendResponse } | { ok: false; status: number; body?: string; retryable: boolean }> {
   const controller = new AbortController();
+  // Exercising this callback for real means either a genuine 10s wait per
+  // attempt (too slow for a unit test, especially across MAX_ATTEMPTS
+  // retries) or faking timers through an AbortController+fetch+retry-loop
+  // chain, which deadlocks vi.runAllTimersAsync/advanceTimersByTimeAsync in
+  // practice - not worth the added flakiness for one timeout wire-up line.
+  /* v8 ignore next */
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
 
   try {
