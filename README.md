@@ -24,7 +24,7 @@ Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-s
 
 The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`.
 
-It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`) require an optional [plugin](#plugins).
+It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`, `.svelte`, `.astro`) require an optional [plugin](#plugins).
 
 ---
 
@@ -228,6 +228,46 @@ The plugin:
 
 `sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`. See [`@eventra_dev/cli-plugin-vue`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-vue) for details.
 
+### Svelte (`.svelte`)
+
+```bash
+pnpm add -D @eventra_dev/cli-plugin-svelte
+```
+
+```json
+{
+  "plugins": ["@eventra_dev/cli-plugin-svelte"]
+}
+```
+
+The plugin:
+
+- parses each `.svelte` file with the real Svelte compiler (`svelte/compiler`) into a single virtual TypeScript module combining `context="module"` and instance `<script>` blocks
+- extracts `track()` calls from the script exactly like a regular `.ts` file (direct calls, wrappers, propagation); Svelte 5 runes (`$props`, `$state`, …) pass through untouched
+- detects `event="feature_name"` attributes on any tag — plain elements, components, `{#if}`/`{#each}`/`{#await}`/`{#key}` blocks, slots — both literal and dynamic (`event={expr}`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
+
+`sync.include` does **not** need `**/*.svelte` manually. See [`@eventra_dev/cli-plugin-svelte`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-svelte) for details.
+
+### Astro (`.astro`)
+
+```bash
+pnpm add -D @eventra_dev/cli-plugin-astro
+```
+
+```json
+{
+  "plugins": ["@eventra_dev/cli-plugin-astro"]
+}
+```
+
+The plugin:
+
+- parses each `.astro` file with the real Astro compiler (`@astrojs/compiler`) into a single virtual TypeScript module from the frontmatter
+- extracts `track()` calls from the frontmatter exactly like a regular `.ts` file (direct calls, wrappers, propagation); `Astro.props` and other globals pass through untouched
+- detects `event="feature_name"` attributes on any tag, including inside JSX expressions (`{cond && <Button event="..." />}`, `.map()`) — both literal and dynamic (`event={expr}`, including the `{event}` shorthand); dynamic bindings resolve through the same module scope as the frontmatter, or surface as a dynamic occurrence if unresolvable
+
+`sync.include` does **not** need `**/*.astro` manually. See [`@eventra_dev/cli-plugin-astro`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-astro) for details.
+
 ### Before publishing / local development
 
 Plugins are resolved from your project's `node_modules` (same as any dependency):
@@ -313,11 +353,11 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **403 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **409 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** — 37 suites covering core modules:
+**Unit tests (vitest)** — 39 suites covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -329,7 +369,7 @@ Two test layers, **403 unit tests + 12 e2e fixtures + 3 `check` exit-code scenar
 | `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |
 | `external plugin adapter` | Transform output mapping, static sink registration, invalid result rejection |
 | `external plugin dynamic sink` | A non-literal argument at a plugin-declared static sink surfaces as a dynamic occurrence instead of being silently dropped |
-| `vue-shaped external plugin` | Adapter path for script + template virtual modules and `staticSinks` |
+| `vue-shaped`/`svelte-shaped`/`astro-shaped` external plugin | Adapter path for script + template virtual modules and `staticSinks`, one suite per framework |
 | `processFile` | Script-kind detection, import/export specifier extraction |
 | `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
 | `config` | `normalizeConfig` (sort events, dedupe wrappers, defaults, preserve `apiKey`/`endpoint`/`sync`/`plugins`); `resolveApiKey` env-var > `eventra.local.json` > legacy-inline priority, `saveLocalApiKey`'s gitignore-append |
