@@ -131,6 +131,8 @@ trackFeature("purchase");
 
 The second argument (`userId`, `properties`) is **not** used as the event name.
 
+A literal name that violates either rule (too long, or a character outside the allowed set) is not truncated and not flagged as a dynamic occurrence - it's silently excluded from the scan result, with no warning and no diagnostic anywhere. It simply never appears in `eventra.json` after `sync`. If an event you expect to see is missing, check this before assuming a detection bug.
+
 ---
 
 ## What is ignored
@@ -187,6 +189,8 @@ eventra send --trust-endpoint
 ```
 
 This records the endpoint in `eventra.local.json` (gitignored). If `eventra.json`'s `endpoint` later changes to a different value — e.g. a PR silently pointing it at another host — `send` blocks again until re-approved, so a committed config change alone can't redirect where your API key and events get sent.
+
+Once `eventra.json` already commits an `endpoint`, that committed value is what events actually get sent to - `EVENTRA_ENDPOINT` only controls whether the approval prompt is skipped; its own value is not read or compared against anything in that case. `EVENTRA_ENDPOINT` becomes the real destination only when `eventra.json` has no `endpoint` set at all. In other words, setting the variable to point somewhere else does not redirect traffic away from an already-committed endpoint - it only means you won't be asked to approve it.
 
 Network resilience:
 
