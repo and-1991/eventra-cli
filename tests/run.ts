@@ -48,7 +48,7 @@ const fixtures: Array<{
   },
   {
     name: "backend/express",
-    minEvents: 25,
+    minEvents: 26,
     minWrappers: 2,
   },
   {

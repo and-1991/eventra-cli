@@ -71,7 +71,10 @@ export function extractPropagationEvents(call: ts.CallExpression, checker: ts.Ty
 }
 
 function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpression, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[]): void {
-  const argument = call.arguments[propagation.sourceParameterIndex];
+  // Call site can omit the argument and rely on the parameter's own default
+  // value (`function f(event = "x") {}` called as `f()`) - that default is a
+  // real static literal, so fall back to it instead of dropping the call site.
+  const argument = call.arguments[propagation.sourceParameterIndex] ?? propagation.sourceParameter.initializer;
   if (!argument) {
     return;
   }
@@ -118,6 +121,6 @@ function extractPropagation(propagation: WrapperPropagation, call: ts.CallExpres
     }
   }
   if (resolved.dynamic) {
-    recordDynamicOccurrence(call, resolved.values, dynamicOccurrences);
+    recordDynamicOccurrence(call, call.expression.getText(), resolved.values, dynamicOccurrences);
   }
 }

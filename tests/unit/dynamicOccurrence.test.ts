@@ -25,7 +25,7 @@ describe("recordDynamicOccurrence", () => {
     const call = findFirstCall(`sdk.track(eventName);`);
     const out: DynamicOccurrence[] = [];
 
-    recordDynamicOccurrence(call, ["maybe_a", "maybe_b"], out);
+    recordDynamicOccurrence(call, call.expression.getText(), ["maybe_a", "maybe_b"], out);
 
     expect(out).toHaveLength(1);
     const [occurrence] = out;
@@ -42,7 +42,7 @@ describe("recordDynamicOccurrence", () => {
     const call = findFirstCall(`sdk.track(${longArgument});`);
     const out: DynamicOccurrence[] = [];
 
-    recordDynamicOccurrence(call, [], out);
+    recordDynamicOccurrence(call, call.expression.getText(), [], out);
 
     const [occurrence] = out;
     expect(occurrence.callText.length).toBe(121);
@@ -62,7 +62,7 @@ describe("recordDynamicOccurrence", () => {
     };
     const out: DynamicOccurrence[] = [existing];
 
-    recordDynamicOccurrence(call, ["name_value"], out);
+    recordDynamicOccurrence(call, call.expression.getText(), ["name_value"], out);
 
     expect(out).toHaveLength(2);
     expect(out[0]).toBe(existing);

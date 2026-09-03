@@ -811,6 +811,309 @@ describe("resolveNodeValue - property access", () => {
   });
 });
 
+describe("resolveNodeValue - this-expression property access", () => {
+  it("resolves this.FIELD to a class property's literal initializer", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          EVENT_NAME = "class_field_value";
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["class_field_value"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("resolves this.FIELD inside a class expression", () => {
+    const project = buildProject({
+      "a.ts": `
+        const Foo = class {
+          EVENT_NAME = "class_expression_value";
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        };
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["class_expression_value"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("skips a non-matching property before finding the class field that matches", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          OTHER = "not_this_one";
+          EVENT_NAME = "matched_after_skip";
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["matched_after_skip"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("skips a private-named property (not an Identifier or StringLiteral name) before finding the match", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          #private = "not_relevant";
+          EVENT_NAME = "matched_after_private";
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["matched_after_private"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("returns empty when the class has no matching property (e.g. only a method by that name)", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          EVENT_NAME() { return "not_a_property"; }
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("returns empty when a matching property exists but has no initializer", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          EVENT_NAME!: string;
+          bar() {
+            track(this.EVENT_NAME);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("resolves a quoted (string-literal-named) class property", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          "weird name" = "quoted_field_value";
+          bar() {
+            track(this["weird name"]);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["quoted_field_value"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("returns empty when `this` is used outside any enclosing class", () => {
+    const project = buildProject({
+      "a.ts": `
+        function bar(this: { EVENT_NAME: string }) {
+          track(this.EVENT_NAME);
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("resolves this.FIELD through a getter with a single return statement, inheriting its confidence", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          get computedEventName() {
+            return "getter_value";
+          }
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      // A single deterministic return is exactly as confident as a plain
+      // field initializer would be - dynamic: false, not forced dynamic.
+      expect(resolve(project, arg)).toEqual({ values: ["getter_value"], dynamic: false });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("unions multiple conditional returns from a getter and flags the result dynamic", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          get computedEventName() {
+            if (this.cond) {
+              return "branch_a";
+            }
+            return "branch_b";
+          }
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      const result = resolve(project, arg);
+      expect(result.values.sort()).toEqual(["branch_a", "branch_b"]);
+      expect(result.dynamic).toBe(true);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("does not attribute a nested function's return statement to the enclosing getter", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          get computedEventName() {
+            const helper = () => {
+              return "not_this_getters_value";
+            };
+            return "actual_getter_value";
+          }
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: ["actual_getter_value"], dynamic: false });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("returns empty for an abstract getter with no body at all", () => {
+    const project = buildProject({
+      "a.ts": `
+        abstract class Foo {
+          abstract get computedEventName(): string;
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("returns empty for a getter with no return statement at all", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          get computedEventName() {
+            console.log("no return");
+          }
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("skips unrelated member kinds (a setter, a method) before matching the real getter", () => {
+    const project = buildProject({
+      "a.ts": `
+        class Foo {
+          set unrelatedSetter(v: string) {}
+          unrelatedMethod() { return "not_this_one"; }
+          get computedEventName() {
+            return "matched_getter_value";
+          }
+          bar() {
+            track(this.computedEventName);
+          }
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: ["matched_getter_value"], dynamic: false });
+    } finally {
+      project.cleanup();
+    }
+  });
+});
+
 describe("resolveNodeValue - identifiers", () => {
   it("returns empty for an identifier with no resolvable symbol", () => {
     const project = buildProject({
@@ -883,6 +1186,111 @@ describe("resolveNodeValue - identifiers", () => {
       const sf = project.file("a.ts");
       const arg = findCallArgument(sf, "track(");
       expect(resolve(project, arg).values).toEqual(["variable_initializer_value"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("does not confidently resolve a `let` variable to its stale initializer once it's reassigned", () => {
+    const project = buildProject({
+      "a.ts": `
+        let mode = "initial_value";
+        mode = "reassigned_value";
+        track(mode);
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      const result = resolve(project, arg);
+      // Both the initializer and every later assignment are real literals, so
+      // both are surfaced - but flagged dynamic, since only one of them is
+      // actually true at runtime and the resolver can't know which.
+      expect(result.values.sort()).toEqual(["initial_value", "reassigned_value"]);
+      expect(result.dynamic).toBe(true);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("does not confidently resolve a `let` variable reassigned via a compound operator, but doesn't fabricate the wrong value either", () => {
+    const project = buildProject({
+      "a.ts": `
+        let mode = "initial_value";
+        mode += "_suffix";
+        track(mode);
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      const result = resolve(project, arg);
+      // The compound assignment's real result ("initial_value_suffix") can't
+      // be folded without evaluating `mode`'s own prior value, so it isn't
+      // fabricated as a candidate - but its presence still means the
+      // initializer alone can't be trusted as the confident answer.
+      expect(result.values).toEqual(["initial_value"]);
+      expect(result.dynamic).toBe(true);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("unions plain reassignments with the initializer even when a compound reassignment is also present", () => {
+    const project = buildProject({
+      "a.ts": `
+        let mode = "initial_value";
+        mode = "plain_reassigned_value";
+        mode += "_suffix";
+        track(mode);
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      const result = resolve(project, arg);
+      expect(result.values.sort()).toEqual(["initial_value", "plain_reassigned_value"]);
+      expect(result.dynamic).toBe(true);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("still confidently resolves a `let` variable with no reassignment", () => {
+    const project = buildProject({
+      "a.ts": `
+        let mode = "only_value";
+        track(mode);
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg)).toEqual({ values: ["only_value"], dynamic: false });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("ignores reassignment on an unrelated shadowed `let` with the same name", () => {
+    const project = buildProject({
+      "a.ts": `
+        function outer() {
+          let mode = "outer_value";
+          track(mode);
+        }
+        function other() {
+          let mode = "other_initial";
+          mode = "other_reassigned";
+        }
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      // The reassignment lives on `other`'s `mode`, a distinct symbol from
+      // `outer`'s - it must not bleed into `outer`'s resolution.
+      expect(resolve(project, arg)).toEqual({ values: ["outer_value"], dynamic: false });
     } finally {
       project.cleanup();
     }
@@ -1007,6 +1415,38 @@ describe("resolveNodeValue - call expressions", () => {
       const sf = project.file("a.ts");
       const arg = findCallArgument(sf, "track(");
       expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("falls back to the parameter's default value when the call site omits the argument", () => {
+    const project = buildProject({
+      "a.ts": `
+        function build(name: string = "default_return") { return name; }
+        track(build());
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["default_return"]);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it("prefers the call-site argument over the parameter's default value when both are present", () => {
+    const project = buildProject({
+      "a.ts": `
+        function build(name: string = "default_return") { return name; }
+        track(build("explicit_return"));
+      `,
+    });
+    try {
+      const sf = project.file("a.ts");
+      const arg = findCallArgument(sf, "track(");
+      expect(resolve(project, arg).values).toEqual(["explicit_return"]);
     } finally {
       project.cleanup();
     }

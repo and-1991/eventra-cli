@@ -3,6 +3,7 @@ import ts from "typescript";
 import {FileSemanticIndex, TrackCall} from "../shared/types";
 import {TrackSink, WrapperSemanticInfo} from "../shared/propagation";
 import {detectTrackSink} from "./sinkDetector";
+import {detectJsxEventAttribute} from "./jsxEventAttribute";
 import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import type { PluginRegistry } from "../../plugin/registry";
@@ -62,8 +63,15 @@ export function scanSource(
           node,
           sourceFile: source,
           trackedArguments,
+          calleeText: node.expression.getText(source),
         });
       }
+    }
+    // JSX `event="..."`/`event={expr}` attribute detection (React/JSX files
+    // only - a plain .ts/.js file never contains a JsxAttribute node).
+    const jsxEventAttribute = detectJsxEventAttribute(node);
+    if (jsxEventAttribute) {
+      trackCalls.push(jsxEventAttribute);
     }
     ts.forEachChild(node, visit);
   }

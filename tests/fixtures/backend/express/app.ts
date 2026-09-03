@@ -204,6 +204,8 @@ function withDefault(e = "default_event") {
   tracker.track(e);
 }
 
+withDefault();
+
 // =========================
 // INLINE OBJECT
 // =========================

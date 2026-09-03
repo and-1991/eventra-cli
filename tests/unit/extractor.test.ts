@@ -75,6 +75,7 @@ describe("extractEvents", () => {
             node: call,
             sourceFile,
             trackedArguments: [call.arguments[0], call.arguments[1], call.arguments[2]],
+            calleeText: "sink",
           },
         ],
       };

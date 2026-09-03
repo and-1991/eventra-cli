@@ -14,15 +14,19 @@ export interface DynamicOccurrence {
 
 const CALL_TEXT_MAX_LENGTH = 120;
 
-export function recordDynamicOccurrence(call: ts.CallExpression, resolvedValues: readonly string[], out: DynamicOccurrence[]): void {
-  const sourceFile = call.getSourceFile();
-  const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, call.getStart(sourceFile));
-  const callText = call.getText(sourceFile);
+// `node` is a CallExpression for a real track() call, or a JsxAttribute for
+// a JSX `event="..."`/`event={expr}` binding (see jsxEventAttribute.ts) -
+// `calleeText` is supplied by the caller since it's derived differently per
+// node kind (a call's callee text vs. a JSX element's tag name).
+export function recordDynamicOccurrence(node: ts.Node, calleeText: string, resolvedValues: readonly string[], out: DynamicOccurrence[]): void {
+  const sourceFile = node.getSourceFile();
+  const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart(sourceFile));
+  const callText = node.getText(sourceFile);
   out.push({
     fileName: sourceFile.fileName,
     line: line + 1,
     character,
-    calleeText: call.expression.getText(sourceFile),
+    calleeText,
     callText: callText.length > CALL_TEXT_MAX_LENGTH ? `${callText.slice(0, CALL_TEXT_MAX_LENGTH)}…` : callText,
     resolvedValues,
   });

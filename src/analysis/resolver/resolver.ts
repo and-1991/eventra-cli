@@ -80,6 +80,60 @@ function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker,
   return null;
 }
 
+// Walks up from a `this` reference to the class it's lexically inside of, so
+// `this.EVENT_NAME` can be resolved against that class's own property
+// declarations - the same idea as resolving a plain identifier against its
+// variable declaration, just rooted at the enclosing class instead of a
+// module-scope symbol (`this` itself has no symbol/declaration of its own to
+// look up via the checker).
+function findEnclosingClass(node: ts.Node): ts.ClassLikeDeclaration | null {
+  let current: ts.Node | undefined = node;
+  while (current) {
+    if (ts.isClassDeclaration(current) || ts.isClassExpression(current)) {
+      return current;
+    }
+    current = current.parent;
+  }
+  return null;
+}
+
+function isFunctionLikeBoundary(node: ts.Node): boolean {
+  return (
+    ts.isFunctionDeclaration(node) ||
+    ts.isFunctionExpression(node) ||
+    ts.isArrowFunction(node) ||
+    ts.isMethodDeclaration(node) ||
+    ts.isGetAccessorDeclaration(node) ||
+    ts.isSetAccessorDeclaration(node)
+  );
+}
+
+// Collects every `return <expr>;` belonging directly to `getter` - i.e. not
+// one that belongs to a function/method/accessor nested inside its body.
+// A getter with conditional returns is legitimately multi-valued (which
+// branch runs depends on runtime state), so the caller unions more than one
+// of these the same way it already does for a reassigned `let`.
+function collectReturnExpressions(getter: ts.GetAccessorDeclaration): readonly ts.Expression[] {
+  const expressions: ts.Expression[] = [];
+  function visit(node: ts.Node): void {
+    if (node !== getter && isFunctionLikeBoundary(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) {
+      expressions.push(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  }
+  if (getter.body) {
+    visit(getter.body);
+  }
+  return expressions;
+}
+
+function getMemberName(member: ts.PropertyDeclaration | ts.GetAccessorDeclaration): string | null {
+  return ts.isIdentifier(member.name) ? member.name.text : ts.isStringLiteral(member.name) ? member.name.text : null;
+}
+
 function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression, checker: ts.TypeChecker, context: EvaluationContext, visited: Set<ts.Node>, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache | undefined, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache): ResolveResult {
   const propertyName = getPropertyName(node);
   if (!propertyName) {
@@ -104,6 +158,40 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
         return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
       }
     }
+  }
+  // this.EVENT_NAME
+  // class Foo { EVENT_NAME = "checkout"; bar() { track(this.EVENT_NAME); } }
+  //
+  // this.computedEventName (getter)
+  // class Foo { get computedEventName() { return "checkout"; } }
+  if (targetExpression.kind === ts.SyntaxKind.ThisKeyword) {
+    const enclosingClass = findEnclosingClass(node);
+    if (enclosingClass) {
+      for (const member of enclosingClass.members) {
+        if (ts.isPropertyDeclaration(member) && member.initializer && getMemberName(member) === propertyName) {
+          return resolveNodeValue(member.initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+        }
+        if (ts.isGetAccessorDeclaration(member) && getMemberName(member) === propertyName) {
+          const returnExpressions = collectReturnExpressions(member);
+          if (returnExpressions.length === 0) {
+            return empty();
+          }
+          if (returnExpressions.length === 1) {
+            return resolveNodeValue(returnExpressions[0], checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+          }
+          const values: string[] = [];
+          for (const expression of returnExpressions) {
+            const resolved = resolveNodeValue(expression, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+            values.push(...resolved.values);
+          }
+          return {
+            values: unique(values),
+            dynamic: true,
+          };
+        }
+      }
+    }
+    return empty();
   }
   if (ts.isIdentifier(targetExpression)) {
     let symbol = checker.getSymbolAtLocation(targetExpression);
@@ -168,6 +256,78 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
   return empty();
 }
 
+function isConstDeclaration(declaration: ts.VariableDeclaration): boolean {
+  return (ts.getCombinedNodeFlags(declaration) & ts.NodeFlags.Const) !== 0;
+}
+
+// `ts.isAssignmentOperator` exists on the compiled module at runtime but
+// isn't part of the public .d.ts (an internal-only export), so the operator
+// set is spelled out here instead of depending on an undocumented API.
+const ASSIGNMENT_OPERATOR_KINDS: ReadonlySet<ts.SyntaxKind> = new Set([
+  ts.SyntaxKind.EqualsToken,
+  ts.SyntaxKind.PlusEqualsToken,
+  ts.SyntaxKind.MinusEqualsToken,
+  ts.SyntaxKind.AsteriskEqualsToken,
+  ts.SyntaxKind.AsteriskAsteriskEqualsToken,
+  ts.SyntaxKind.SlashEqualsToken,
+  ts.SyntaxKind.PercentEqualsToken,
+  ts.SyntaxKind.LessThanLessThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.GreaterThanGreaterThanGreaterThanEqualsToken,
+  ts.SyntaxKind.AmpersandEqualsToken,
+  ts.SyntaxKind.BarEqualsToken,
+  ts.SyntaxKind.CaretEqualsToken,
+  ts.SyntaxKind.AmpersandAmpersandEqualsToken,
+  ts.SyntaxKind.BarBarEqualsToken,
+  ts.SyntaxKind.QuestionQuestionEqualsToken,
+]);
+
+interface ReassignmentInfo {
+  // Resolvable RHS expressions from plain `x = <expr>` assignments.
+  readonly values: readonly ts.Expression[];
+  // True when a compound assignment (`x += y`, `x ||= y`, `x **= y`, ...) was
+  // found. Its resulting value depends on `x`'s own prior value, which this
+  // flow-insensitive resolver has no sound way to fold, so it never becomes a
+  // candidate literal - but its mere presence still means the binding can't
+  // be trusted as a single confident value either.
+  readonly hasUnresolvedReassignment: boolean;
+}
+
+// A `let`/`var` binding can be reassigned after its declaration - resolving
+// only the initializer would confidently report a value that a later
+// assignment (still just as static - a literal, another variable, a
+// template, etc.) overwrites before any sink ever sees it. This walks the
+// declaring file(s) for every assignment to `symbol` so the caller can treat
+// the binding as multi-valued (or at least uncertain) instead of silently
+// trusting the first value it was ever given.
+function collectReassignments(symbol: ts.Symbol, checker: ts.TypeChecker): ReassignmentInfo {
+  const values: ts.Expression[] = [];
+  let hasUnresolvedReassignment = false;
+  // See the identical `?? []` elsewhere in this file: a real ts.Symbol here
+  // always has a declarations array.
+  /* v8 ignore next */
+  const sourceFiles = new Set((symbol.getDeclarations() ?? []).map(declaration => declaration.getSourceFile()));
+  for (const sourceFile of sourceFiles) {
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        ASSIGNMENT_OPERATOR_KINDS.has(node.operatorToken.kind) &&
+        ts.isIdentifier(node.left) &&
+        checker.getSymbolAtLocation(node.left) === symbol
+      ) {
+        if (node.operatorToken.kind === ts.SyntaxKind.EqualsToken) {
+          values.push(node.right);
+        } else {
+          hasUnresolvedReassignment = true;
+        }
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(sourceFile);
+  }
+  return { values, hasUnresolvedReassignment };
+}
+
 function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context: EvaluationContext, visited: Set<ts.Node>, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache | undefined, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache,): ResolveResult {
   const boundSymbol = checker.getSymbolAtLocation(node);
   if (boundSymbol && context.parameterBindings.has(boundSymbol)) {
@@ -198,7 +358,21 @@ function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context
   const declarations = symbol.getDeclarations() ?? [];
   for (const declaration of declarations) {
     if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
-      const resolved = resolveNodeValue(declaration.initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+      const reassignment = isConstDeclaration(declaration) ? null : collectReassignments(symbol, checker);
+      if (!reassignment || (reassignment.values.length === 0 && !reassignment.hasUnresolvedReassignment)) {
+        const resolved = resolveNodeValue(declaration.initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+        evaluationCache.set(symbol, resolved);
+        return resolved;
+      }
+      const values: string[] = [];
+      for (const expression of [declaration.initializer, ...reassignment.values]) {
+        const resolvedValue = resolveNodeValue(expression, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+        values.push(...resolvedValue.values);
+      }
+      const resolved: ResolveResult = {
+        values: unique(values),
+        dynamic: true,
+      };
       evaluationCache.set(symbol, resolved);
       return resolved;
     }
@@ -228,7 +402,11 @@ function resolveCallExpression(node: ts.CallExpression, checker: ts.TypeChecker,
   }
   const values: string[] = [];
   for (const propagation of semantic.propagations) {
-    const argument = node.arguments[propagation.parameterIndex];
+    // Call site can omit the argument and rely on the parameter's own default
+    // value (`function build(name = "x") {}` called as `build()`) - that
+    // default is a real static literal, so fall back to it instead of
+    // dropping the call site.
+    const argument = node.arguments[propagation.parameterIndex] ?? propagation.parameter.initializer;
     if (!argument) {
       continue;
     }

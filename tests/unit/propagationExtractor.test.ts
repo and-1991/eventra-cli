@@ -203,6 +203,57 @@ describe("extractPropagationEvents", () => {
     }
   });
 
+  it("falls back to the parameter's default value when the call site omits the argument", () => {
+    const env = setup(`
+      function wrapperDefaultArg(payload = "default_event") {}
+      wrapperDefaultArg();
+    `);
+    try {
+      const decl = findFunctionDeclaration(env.sourceFile, "wrapperDefaultArg");
+      const paramName = decl.parameters[0].name as ts.Identifier;
+      registerWrapper(env, "wrapperDefaultArg", [
+        {
+          sourceParameter: decl.parameters[0],
+          sourceParameterIndex: 0,
+          propertyPath: [],
+          targetNode: paramName,
+        },
+      ]);
+      const call = findCall(env.sourceFile, "wrapperDefaultArg");
+      const events = new Set<string>();
+      extract(env, call, events, new Set(), []);
+      expect(events.has("default_event")).toBe(true);
+    } finally {
+      env.cleanup();
+    }
+  });
+
+  it("prefers the call-site argument over the parameter's default value when both are present", () => {
+    const env = setup(`
+      function wrapperDefaultArgOverridden(payload = "default_event") {}
+      wrapperDefaultArgOverridden("explicit_event");
+    `);
+    try {
+      const decl = findFunctionDeclaration(env.sourceFile, "wrapperDefaultArgOverridden");
+      const paramName = decl.parameters[0].name as ts.Identifier;
+      registerWrapper(env, "wrapperDefaultArgOverridden", [
+        {
+          sourceParameter: decl.parameters[0],
+          sourceParameterIndex: 0,
+          propertyPath: [],
+          targetNode: paramName,
+        },
+      ]);
+      const call = findCall(env.sourceFile, "wrapperDefaultArgOverridden");
+      const events = new Set<string>();
+      extract(env, call, events, new Set(), []);
+      expect(events.has("explicit_event")).toBe(true);
+      expect(events.has("default_event")).toBe(false);
+    } finally {
+      env.cleanup();
+    }
+  });
+
   it("resolves an identifier-parameter propagation to a literal value", () => {
     const env = setup(`
       function wrapperIdentifier(payload) {}
