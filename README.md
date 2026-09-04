@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-403%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-445%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -24,7 +24,7 @@ Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-s
 
 The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`.
 
-It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`, `.svelte`, `.astro`) require an optional [plugin](#plugins).
+It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`, `.svelte`, `.astro`, Angular's `.html` templates) require an optional [plugin](#plugins).
 
 ---
 
@@ -272,6 +272,31 @@ The plugin:
 
 `sync.include` does **not** need `**/*.astro` manually. See [`@eventra_dev/cli-plugin-astro`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-astro) for details.
 
+### Angular (`.html`, via `templateUrl`)
+
+```bash
+pnpm add -D @eventra_dev/cli-plugin-angular
+```
+
+```json
+{
+  "plugins": ["@eventra_dev/cli-plugin-angular"],
+  "sync": {
+    "include": ["**/*.{ts,tsx,js,jsx}"],
+    "exclude": ["node_modules", "dist", ".angular", ".git"]
+  }
+}
+```
+
+The plugin:
+
+- parses each component template with the real Angular compiler (`@angular/compiler`) into a virtual TypeScript module, paired with its component class (`foo.component.html` ↔ `foo.component.ts`, Angular CLI's default naming)
+- extracts `track()` calls from the component class exactly like a regular `.ts` file (direct calls, wrappers, propagation) - no plugin needed for that part
+- detects `event="feature_name"` attributes on any tag, including `*ngIf`/`*ngFor` and the `@if`/`@for`/`@switch` block syntax - both literal and dynamic; a dynamic binding resolves against the component instance (`this.field`, including getters), or surfaces as a dynamic occurrence if unresolvable
+- use `[attr.event]="expr"`, not `[event]="expr"`, for a dynamic binding on a plain HTML element - `[event]` is a property binding that Angular's real compiler rejects (`NG8002`) unless the element is a component that actually declares `@Input() event`; both forms are detected identically by the plugin, only `[attr.event]` is guaranteed to compile
+
+`sync.include` does **not** need `**/*.html` manually. Only `templateUrl`-based components are covered - an inline `template: "..."` isn't yet. Requires Node `^20.19.0 || ^22.12.0 || >=24.0.0` (higher than the other plugins' `>=18` floor - `@angular/compiler`'s own requirement). See [`@eventra_dev/cli-plugin-angular`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-angular) for details.
+
 ### Before publishing / local development
 
 Plugins are resolved from your project's `node_modules` (same as any dependency):
@@ -357,7 +382,7 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **409 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **445 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
