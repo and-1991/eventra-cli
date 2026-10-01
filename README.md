@@ -407,7 +407,7 @@ Two test layers, **445 unit tests + 12 e2e fixtures + 3 `check` exit-code scenar
 | `cross-file SDK detection` | Direct `.track()` and wrapper calls resolve across files even when the call-site file never imports the SDK package itself |
 | `dynamic event reporter` | Dynamic vs. static call classification, end-to-end `registerDynamicEventReporter` invocation |
 | `load plugins` | Trusted-specifier allowlist (`^@eventra_dev/cli-plugin-[a-z0-9-]+$`), accepted/rejected plugin shapes |
-| `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution — a hand-written fixture, not a real `nuxt build` |
+| `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution - a hand-written fixture; a real `nuxt prepare` project was also verified manually, but that check is not automated |
 | `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
 | `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval |
 | `wrapper detector plugin` | A custom `WrapperDetector` (e.g. a template-literal wrapper shape the built-in analyzer can't cover) alongside the built-in fallback |
