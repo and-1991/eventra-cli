@@ -93,7 +93,7 @@ describe("extractEvents", () => {
       );
 
       expect(result.events.has("valid_event")).toBe(true);
-      // fails normalizeEventName's charset check (space, "!") — must be skipped.
+      // fails normalizeEventName's charset check ("!") - must be skipped.
       expect(result.events.has("invalid event!")).toBe(false);
       // the template literal resolves dynamically (an unresolved identifier
       // span), so it must be recorded as a dynamic occurrence.

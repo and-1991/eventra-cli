@@ -1,5 +1,6 @@
 import ts from "typescript";
 
+import {unwrapExpression} from "../shared/utils";
 import {FileSemanticIndex, TrackCall} from "../shared/types";
 import {TrackSink, WrapperSemanticInfo} from "../shared/propagation";
 import {detectTrackSink} from "./sinkDetector";
@@ -41,15 +42,21 @@ export function scanSource(
             // track({
             //   event: name
             // })
-            if (tracked.propertyPath.length > 0 && ts.isObjectLiteralExpression(argument)) {
-              const property = argument.properties.find(prop => {
+            const argumentLiteral = unwrapExpression(argument);
+            if (tracked.propertyPath.length > 0 && ts.isObjectLiteralExpression(argumentLiteral)) {
+              const property = argumentLiteral.properties.find(prop => {
                   return (
-                    ts.isPropertyAssignment(prop) && prop.name.getText() === tracked.propertyPath[0]
+                    (ts.isPropertyAssignment(prop) || ts.isShorthandPropertyAssignment(prop)) &&
+                    prop.name.getText() === tracked.propertyPath[0]
                   );
                 },
               );
               if (property && ts.isPropertyAssignment(property)) {
                 return property.initializer;
+              }
+              // track({ event })
+              if (property && ts.isShorthandPropertyAssignment(property)) {
+                return property.name;
               }
             }
             // track(name)

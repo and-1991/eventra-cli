@@ -1,7 +1,7 @@
 import fs from "fs-extra";
 import path from "path";
 
-import { EventraConfig } from "../types";
+import { EventraConfig, SinkRuleConfig } from "../types";
 
 export const CONFIG_NAME = "eventra.json";
 
@@ -15,6 +15,13 @@ const DEFAULT_INCLUDE = ["**/*.{ts,tsx,js,jsx}"];
 
 const DEFAULT_EXCLUDE = ["node_modules", "dist", ".next", ".git"];
 
+function normalizeSinks(sinks: unknown): SinkRuleConfig[] {
+  if (!Array.isArray(sinks)) return [];
+  return sinks.filter(
+    (s): s is SinkRuleConfig => typeof s === "object" && s !== null && !Array.isArray(s),
+  );
+}
+
 export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
   const functionWrappers = (config.functionWrappers ?? [])
     .filter((w) => w?.name)
@@ -27,12 +34,15 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
     return true;
   });
 
+  const sinks = normalizeSinks(config.sinks);
+
   return {
     apiKey: config.apiKey ?? "",
     endpoint: config.endpoint ?? "",
     events: [...(config.events ?? [])].sort(),
     functionWrappers: uniqueWrappers.sort((a, b) => a.name.localeCompare(b.name)),
     plugins: [...(config.plugins ?? [])],
+    ...(sinks.length > 0 ? { sinks } : {}),
     sync: {
       include: config.sync?.include ?? DEFAULT_INCLUDE,
       exclude: config.sync?.exclude ?? DEFAULT_EXCLUDE,

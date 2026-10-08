@@ -1,5 +1,6 @@
 import ts from "typescript";
 
+import {getValueSymbol} from "../symbols/symbolUtils";
 import {resolveExportedSymbol} from "./exportResolver";
 import {EvaluationCache} from "../cache/evaluationCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
@@ -45,7 +46,7 @@ function concat(left: readonly string[], right: readonly string[],): string[] {
 function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker, context: EvaluationContext): ts.Expression | null {
   const node = unwrapExpression(rawNode);
   if (ts.isIdentifier(node)) {
-    const symbol = checker.getSymbolAtLocation(node);
+    const symbol = getValueSymbol(node, checker);
     if (!symbol || !context.parameterBindings.has(symbol)) {
       return null;
     }
@@ -235,10 +236,12 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
       /* v8 ignore next */
       const declarations = symbol.getDeclarations() ?? [];
       for (const declaration of declarations) {
-        if (!ts.isVariableDeclaration(declaration) || !declaration.initializer || !ts.isObjectLiteralExpression(declaration.initializer)) {
+        // `{ ... } as const` / `satisfies Record<...>` is still the same object literal.
+        const objectLiteral = ts.isVariableDeclaration(declaration) && declaration.initializer ? unwrapExpression(declaration.initializer) : null;
+        if (!objectLiteral || !ts.isObjectLiteralExpression(objectLiteral)) {
           continue;
         }
-        for (const property of declaration.initializer.properties) {
+        for (const property of objectLiteral.properties) {
           if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
             continue;
           }
@@ -329,7 +332,7 @@ function collectReassignments(symbol: ts.Symbol, checker: ts.TypeChecker): Reass
 }
 
 function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context: EvaluationContext, visited: Set<ts.Node>, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache | undefined, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache,): ResolveResult {
-  const boundSymbol = checker.getSymbolAtLocation(node);
+  const boundSymbol = getValueSymbol(node, checker);
   if (boundSymbol && context.parameterBindings.has(boundSymbol)) {
     const bound = context.parameterBindings.get(boundSymbol);
     // `has(boundSymbol)` above already guarantees a Map entry, and every

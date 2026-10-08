@@ -1,5 +1,17 @@
 import ts from "typescript";
 
+/**
+ * Symbol an identifier *refers to*. For the name in a shorthand property (`{ event }`) a plain
+ * `getSymbolAtLocation` yields the property's own symbol, not the variable/parameter it reads.
+ */
+export function getValueSymbol(node: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undefined {
+  const parent = node.parent;
+  if (parent && ts.isShorthandPropertyAssignment(parent) && parent.name === node) {
+    return checker.getShorthandAssignmentValueSymbol(parent);
+  }
+  return checker.getSymbolAtLocation(node);
+}
+
 export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.TypeChecker,): ts.Symbol | undefined {
   // function foo() {}
   if (ts.isFunctionDeclaration(node) && node.name) {

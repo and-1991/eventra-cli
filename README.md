@@ -8,8 +8,8 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-445%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
-  <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-12%20fixtures-brightgreen?style=flat-square">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-665%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-ready-blue?style=flat-square&logo=typescript&logoColor=white"></a>
@@ -24,7 +24,7 @@ Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-s
 
 The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`.
 
-It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box. Framework files (e.g. `.vue`, `.svelte`, `.astro`, Angular's `.html` templates) require an optional [plugin](#plugins).
+It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box - but you can opt in to a third-party library with [`sinks`](#third-party-analytics-sinks) (PostHog, Segment, Amplitude and Google Analytics 4 have built-in presets). Framework files (e.g. `.vue`, `.svelte`, `.astro`, Angular's `.html` templates) require an optional [plugin](#plugins).
 
 ---
 
@@ -121,12 +121,51 @@ trackFeature("purchase");
 
 ---
 
+## Third-party analytics (`sinks`)
+
+Already have analytics in place? Declare it in `eventra.json` and the CLI treats its calls as event sources too, with no SDK swap. Wrappers, constants, cross-file imports and JSX component props resolve exactly as they do for the Eventra SDK.
+
+```json
+{
+  "sinks": [
+    { "preset": "posthog" },
+    { "preset": "segment" },
+    { "preset": "amplitude" },
+    { "preset": "ga4" },
+    { "callee": "analytics.track" },
+    { "callee": "gtag", "nameArg": 1, "when": { "arg": 0, "equals": "event" } }
+  ]
+}
+```
+
+| Field | Meaning |
+|-------|---------|
+| `preset` | A built-in rule set: `posthog`, `segment`, `amplitude` or `ga4` (see below) |
+| `callee` | Dotted call path, matched as a suffix: `analytics.track` also matches `this.analytics.track`, but not `myanalytics.track` |
+| `nameArg` | Zero-based index of the event-name argument (default `0`) |
+| `nameProperty` | If that argument is an object literal, read the name from this property (e.g. `event`) |
+| `modules` | Only match when the receiver comes from one of these npm packages (imported, re-exported, typed, or built from them) |
+| `when` | Only match when the argument at `arg` is the string literal `equals`, e.g. `{ "arg": 0, "equals": "event" }` for `gtag("event", name)` |
+
+| Preset | Detects |
+|--------|---------|
+| `posthog` | `posthog.capture("x")`, the `usePostHog()` hook (from `posthog-js/react` or `@posthog/react`) under any variable name (also through re-exports like `export { usePostHog as useAnalytics }`), and posthog-node's `client.capture({ distinctId, event: "x" })`, including typed class fields |
+| `segment` | `analytics.track("x", props)` (analytics.js, `window.analytics`), analytics-node's `client.track({ userId, event: "x" })`, and clients from `@segment/analytics-next`, `@segment/analytics-node`, `@segment/analytics-react-native` or `analytics-node` under any variable name, including `const [analytics] = await AnalyticsBrowser.load(...)` |
+| `amplitude` | `amplitude.track("x")`, `amplitude.track({ event_type: "x" })`, `amplitude.logEvent("x")`, `amplitude.getInstance().logEvent("x")`, and clients from the `@amplitude/*` browser, node, react-native and unified packages or `amplitude-js` |
+| `ga4` | `gtag("event", "x", params)` (also `window.gtag` and nuxt-gtag's `const { gtag } = useGtag()`), `sendGAEvent("event", "x", params)` from `@next/third-parties`, nuxt-gtag's `useTrackEvent("x")`, vue-gtag's `this.$gtag.event("x")` and `event("x")` / `const { event } = useGtag()`, and react-ga4's `ReactGA.event("x")` / `ReactGA.event({ category, action: "x" })`. Other gtag commands (`gtag("config", id)`, `gtag("set", ...)`) are not events and are ignored |
+
+Rules are plain data and never run code, so they are safe to commit. A rule with a typo, an invalid `when` or an unknown preset is skipped with a warning. A function with its own name (`trackEvent({ event: "x" })`) is not covered by a preset: add a rule such as `{ "callee": "trackEvent", "nameProperty": "event" }`.
+
+The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events too. Spaces and colons are allowed, so names like `App: User Sign Up` or `Order Completed` are kept as written. Names with other characters, such as PostHog's `$`-prefixed system events (`$pageview`) or a name ending in `!`, are excluded from the scan result.
+
+---
+
 ## Event name rules (aligned with SDK)
 
 | Rule | Limit |
 |------|--------|
 | Max length | **64 characters** (same as SDK) |
-| Allowed characters | `a-zA-Z0-9:_./-` |
+| Allowed characters | `a-zA-Z0-9:_./-` and the space (so `App: User Sign Up` works); tabs, newlines and any other character are rejected |
 | Position | First argument of `.track(name, options?)` |
 
 The second argument (`userId`, `properties`) is **not** used as the event name.
@@ -137,8 +176,10 @@ A literal name that violates either rule (too long, or a character outside the a
 
 ## What is ignored
 
+By default only the Eventra SDK is read. Calls to other analytics are ignored unless you enable them with [`sinks`](#third-party-analytics-sinks).
+
 ```ts
-// Not from @eventra_dev/eventra-sdk
+// Not from @eventra_dev/eventra-sdk (and no matching `sinks` rule)
 track("legacy");
 analytics.track("ga");
 segment.track("x");
@@ -150,6 +191,28 @@ tracker.track({ event: "click" });
 ---
 
 ## Commands
+
+### `eventra init`
+
+Creates `eventra.json`. It asks for an API key and an endpoint, then looks through `package.json` (and the `package.json` of every workspace member in a monorepo: `workspaces` or `pnpm-workspace.yaml`) for analytics libraries:
+
+```
+Found analytics in package.json: posthog-js; @segment/analytics-next
+? Also read events from these analytics calls (sinks):
+❯◉ posthog (posthog-js)
+ ◉ segment (@segment/analytics-next)
+```
+
+Everything found is pre-selected; press Enter to accept or untick what you do not want. The chosen presets are written to `sinks` in `eventra.json`. Recognised packages:
+
+| Preset | Packages |
+|--------|----------|
+| `posthog` | `posthog-js`, `@posthog/react`, `posthog-js-lite`, `posthog-node`, `posthog-react-native` |
+| `segment` | `@segment/analytics-next`, `@segment/analytics-node`, `@segment/analytics-react-native`, `@segment/snippet`, and the older `analytics-node`, `@segment/analytics.js-core` |
+| `amplitude` | `@amplitude/analytics-browser`, `@amplitude/analytics-node`, `@amplitude/analytics-react-native`, `@amplitude/unified`, `@amplitude/marketing-analytics-browser`, and the older `amplitude-js` |
+| `ga4` | `react-ga4`, `vue-gtag`, `@next/third-parties`, `nuxt-gtag`, `@types/gtag.js`, and the older `vue-gtag-next` |
+
+Detection reads dependencies only. A tag pasted straight into the HTML (a Segment or `gtag.js` snippet with no package) is not seen: add the preset to `sinks` yourself. In a monorepo only the block-list form of `packages:` in `pnpm-workspace.yaml` is understood (not `packages: [a, b]`), and workspace patterns that are absolute or contain `..` are ignored. Running `init` again rewrites `eventra.json`.
 
 ### `eventra sync`
 
@@ -338,6 +401,7 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
   "events": [],
   "functionWrappers": [],
   "plugins": [],
+  "sinks": [],
   "sync": {
     "include": ["**/*.{ts,tsx,js,jsx}"],
     "exclude": ["node_modules", "dist", ".next", ".git"]
@@ -350,6 +414,7 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
 | `apiKey` | Legacy inline API key — leave empty. Use `EVENTRA_API_KEY` or `eventra.local.json` instead (see [`eventra send`](#eventra-send)) so a real key never ends up in this committed file |
 | `endpoint` | Custom `eventra send` target (e.g. self-hosted). Non-default values from this file need one-time local approval — see [`eventra send`](#eventra-send) |
 | `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
+| `sinks` | Third-party analytics calls to treat as event sources, e.g. `[{ "preset": "posthog" }]` (see [Third-party analytics](#third-party-analytics-sinks)) |
 | `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
 | `sync.exclude` | Paths skipped during scan |
 
@@ -382,11 +447,11 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **445 unit tests + 12 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **665 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** — 39 suites covering core modules:
+**Unit tests (vitest)** - 47 suites covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -411,8 +476,14 @@ Two test layers, **445 unit tests + 12 e2e fixtures + 3 `check` exit-code scenar
 | `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
 | `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval |
 | `wrapper detector plugin` | A custom `WrapperDetector` (e.g. a template-literal wrapper shape the built-in analyzer can't cover) alongside the built-in fallback |
+| `configured sinks` | `sinks` rules and the PostHog, Segment, Amplitude and GA4 presets: every call shape, receivers traced through imports, re-exports, hooks, typed fields and aliases, the `when` guard, spaced names, wrong-typed config, circular chains |
+| `sink presets` | The package table behind the presets: detection per package, order, legacy and detect-only flags, rules vetted only against their own preset's packages |
+| `project dependencies` | package.json and workspace reading for `eventra init` (`workspaces`, pnpm-workspace.yaml, negations, caps, patterns that leave the project, unreadable files) |
+| `init` | `eventra init` prompts, pre-selected presets, written config, exact console output, API key kept out of `eventra.json` |
+| `preset package check` | The registry verdicts behind `pnpm check:presets` (missing, deprecated, stale, legacy) |
+| `license` | `LICENSE` is the complete MIT text, its holder is the package author, and both match `package.json` |
 
-**End-to-end fixtures** — 12 isolated TS projects scanned via `eventra sync`:
+**End-to-end fixtures** - 14 isolated TS projects scanned via `eventra sync`:
 
 | Fixture | Covers |
 |---|---|
@@ -423,6 +494,8 @@ Two test layers, **445 unit tests + 12 e2e fixtures + 3 `check` exit-code scenar
 | `wrappers/barrel` | `export * from "./tracker"` re-exports |
 | `wrappers/default-export` | `export default function trackFeature` propagation |
 | `wrappers/path-aliases` | `tsconfig.json` `paths` mapping (`@app/*`) |
+| `sinks/presets` | PostHog, Segment, Amplitude and GA4 side by side, including `gtag("config")` that must not count |
+| `sinks/spaced-names` | Names with spaces and colons through the SDK, PostHog (client and server shapes), a custom rule, wrappers and JSX, plus calls that must be ignored |
 | `watch-incremental` | Engine state across sequential file updates (matches `sync` output) |
 
 **`eventra check` exit-code scenarios:**
@@ -447,4 +520,4 @@ pnpm --filter @eventra_dev/eventra-cli test:e2e   # fixtures + check exit codes
 
 ## License
 
-MIT
+MIT, copyright (c) 2026 [and-1991](https://github.com/and-1991). See [LICENSE](LICENSE).

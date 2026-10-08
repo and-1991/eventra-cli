@@ -34,7 +34,7 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
   const propagationVisited = new Set<ts.Signature>();
 
   function visit(node: ts.Node): void {
-    if (ts.isCallExpression(node)) {
+    if (ts.isCallExpression(node) || ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
       extractPropagationEvents(node, checker, wrapperRegistry, resolvedCallCache, returnPropagationCache, evaluationCache, exportCache, events, propagationVisited, dynamicOccurrences);
     }
     ts.forEachChild(node, visit);

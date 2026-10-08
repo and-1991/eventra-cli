@@ -10,12 +10,18 @@ export function isEventraSdkModuleSpecifier(specifier: string): boolean {
   );
 }
 
+/**
+ * Letters, digits and `: _ . / -`, plus the plain space - so third-party names such as
+ * `App: User Sign Up` survive. Tabs, newlines and every other character stay rejected.
+ */
+const EVENT_NAME_PATTERN = /^[a-zA-Z0-9:_./ -]+$/;
+
 export function normalizeEventName(value: string): string | null {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > MAX_EVENT_NAME_LENGTH) {
     return null;
   }
-  if (!/^[a-zA-Z0-9:_./-]+$/.test(trimmed)) {
+  if (!EVENT_NAME_PATTERN.test(trimmed)) {
     return null;
   }
   return trimmed;

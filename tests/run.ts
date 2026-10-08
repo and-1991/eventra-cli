@@ -12,11 +12,50 @@ const fixtures: Array<{
   minWrappers: number;
   expectWrappers?: string[];
   mustNotInclude?: string[];
+  mustInclude?: string[];
+  sinks?: Array<Record<string, unknown>>;
 }> = [
   {
     name: "sdk/direct",
     minEvents: 4,
     minWrappers: 0,
+  },
+  {
+    name: "sinks/presets",
+    minEvents: 10,
+    minWrappers: 1,
+    expectWrappers: ["trackEverywhere"],
+    sinks: [{ preset: "segment" }, { preset: "amplitude" }, { preset: "ga4" }, { preset: "posthog" }],
+    mustInclude: [
+      "Segment Style: Checkout Started",
+      "Segment Loaded Client: Click",
+      "Amplitude: Button Clicked",
+      "Amplitude Object Form",
+      "Amplitude Legacy Log",
+      "GA4 Purchase Completed",
+      "GA4 React: Signup",
+      "GA4 React Action",
+      "PostHog: Order Completed",
+      "Helper Forwarded: Event",
+    ],
+    mustNotInclude: ["config", "set", "G-XXXXXXX", "user_properties", "nav"],
+  },
+  {
+    name: "sinks/spaced-names",
+    minEvents: 7,
+    minWrappers: 2,
+    expectWrappers: ["trackSignup", "captureServerEvent"],
+    sinks: [{ preset: "posthog" }, { callee: "analytics.track" }],
+    mustInclude: [
+      "App: User Sign Up",
+      "Order Completed",
+      "Segment Style: Checkout Started",
+      "SDK Direct: Sign Up",
+      "JSX Event: Click Me",
+      "Wrapped: Via Helper",
+      "Server Side: Envelope Sent",
+    ],
+    mustNotInclude: ["distinct-user-1", "$pageview", "Camera: Photo Taken"],
   },
   {
     name: "frontend/react",
@@ -94,12 +133,13 @@ function runCLI(args: string[], cwd: string): { stdout: string; status: number }
   };
 }
 
-function ensureTestConfig(dir: string) {
+function ensureTestConfig(dir: string, sinks?: Array<Record<string, unknown>>) {
   const configPath = path.join(dir, "eventra.json");
   const config = {
     apiKey: "",
     events: [],
     functionWrappers: [],
+    ...(sinks ? { sinks } : {}),
     sync: {
       include: ["**/*.{ts,tsx,js,jsx}"],
       exclude: ["node_modules", "dist", ".next", ".git"],
@@ -119,7 +159,7 @@ function runFixture(spec: (typeof fixtures)[number]) {
   const dir = path.resolve(__dirname, "fixtures", spec.name);
   console.log(`\nRunning: ${spec.name}`);
 
-  ensureTestConfig(dir);
+  ensureTestConfig(dir, spec.sinks);
   const { stdout, status } = runCLI(["sync"], dir);
   if (status !== 0) {
     throw new Error(`CLI failed for ${spec.name}:\n${stdout}`);
@@ -145,6 +185,13 @@ function runFixture(spec: (typeof fixtures)[number]) {
       if (!names.has(expected)) {
         // @ts-ignore
         throw new Error(`${spec.name}: missing wrapper "${expected}" in ${[...names].join(", ")}`);
+      }
+    }
+  }
+  if (spec.mustInclude) {
+    for (const required of spec.mustInclude) {
+      if (!events.includes(required)) {
+        throw new Error(`${spec.name}: missing event "${required}" in: ${events.join(" | ")}`);
       }
     }
   }

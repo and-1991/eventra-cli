@@ -145,6 +145,11 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
           if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
             continue;
           }
+          // The sink only reads one property (e.g. `event`) as the name; `{ distinctId, event }`
+          // must not propagate `distinctId` as an event name too.
+          if (tracked.propertyPath.length > 0 && property.name.getText() !== tracked.propertyPath[0]) {
+            continue;
+          }
           const initializer = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
           if (!ts.isIdentifier(initializer)) {
             continue;

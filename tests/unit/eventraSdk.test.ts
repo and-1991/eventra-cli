@@ -59,17 +59,39 @@ describe("normalizeEventName", () => {
   it("rejects a value with disallowed characters", () => {
     expect(normalizeEventName("user signup!")).toBeNull();
     expect(normalizeEventName("emoji🎉event")).toBeNull();
+    expect(normalizeEventName("tab\tseparated")).toBeNull();
+    expect(normalizeEventName("line\nbreak")).toBeNull();
+    expect(normalizeEventName("$pageview")).toBeNull();
+  });
+
+  it("accepts spaces, including together with colons (third-party style names)", () => {
+    expect(normalizeEventName("App: User Sign Up")).toBe("App: User Sign Up");
+    expect(normalizeEventName("Order Completed")).toBe("Order Completed");
+    expect(normalizeEventName("a  b")).toBe("a  b");
+  });
+
+  it("trims outer spaces but keeps inner ones", () => {
+    expect(normalizeEventName("  App: User Sign Up  ")).toBe("App: User Sign Up");
+  });
+
+  it("applies the 64 character limit to names with spaces too", () => {
+    const exact = `${"a ".repeat(31)}ab`;
+    expect(exact).toHaveLength(MAX_EVENT_NAME_LENGTH);
+    expect(normalizeEventName(exact)).toBe(exact);
+    expect(normalizeEventName(`${exact}x`)).toBeNull();
   });
 });
 
 describe("isValidEventName", () => {
   it("returns true for a valid event name", () => {
     expect(isValidEventName("checkout.completed")).toBe(true);
+    expect(isValidEventName("has space")).toBe(true);
   });
 
   it("returns false for an invalid event name", () => {
     expect(isValidEventName("")).toBe(false);
-    expect(isValidEventName("has space")).toBe(false);
+    expect(isValidEventName("has!bang")).toBe(false);
+    expect(isValidEventName("   ")).toBe(false);
   });
 });
 

@@ -1,5 +1,6 @@
 import type { EventraConfig } from "../types";
 import { registerExternalCliPlugin, isExternalCliPlugin } from "./adapters/external";
+import { registerConfiguredSinks } from "./builtins/configuredSinks";
 import { registerEventraSdkPlugin } from "./builtins/eventra-sdk";
 import { registerConsoleDynamicEventReporterPlugin } from "./builtins/consoleDynamicEventReporter";
 import { PluginRegistry } from "./registry";
@@ -79,6 +80,7 @@ export function createBuiltinPluginRegistry(): PluginRegistry {
 /** Built-ins + plugins listed in eventra.json `plugins` array. */
 export async function createPluginRegistry(config: EventraConfig): Promise<PluginRegistry> {
   const registry = createBuiltinPluginRegistry();
+  registerConfiguredSinks(registry, config.sinks);
   for (const spec of config.plugins ?? []) {
     const trimmed = spec.trim();
     if (!trimmed) continue;
