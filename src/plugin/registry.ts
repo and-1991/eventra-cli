@@ -12,6 +12,18 @@ import type {
 } from "./types";
 import type { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 
+// the synthetic callee each framework plugin uses for a template `event=...`
+const TEMPLATE_CALLEE = /^__eventra_[a-z]+_template_event__$/;
+
+// `__eventra_x_template_event__(expr)` (callText may be cut with an ellipsis)
+function templateExpression(occurrence: DynamicOccurrence): string {
+  const open = occurrence.callText.indexOf("(");
+  let expression = open === -1 ? occurrence.callText : occurrence.callText.slice(open + 1);
+  expression = expression.endsWith(")") ? expression.slice(0, -1) : expression;
+  // Angular qualifies a bare name with `this.`; the template never writes it
+  return occurrence.calleeText.includes("_angular_") ? expression.replace(/^this\./, "") : expression;
+}
+
 export class PluginRegistry {
   private readonly preprocessors: FilePreprocessor[] = [];
   private readonly sinkDetectors: SinkDetector[] = [];
@@ -126,9 +138,49 @@ export class PluginRegistry {
   }
 
   async runDynamicEventReporters(occurrences: readonly DynamicOccurrence[]): Promise<void> {
+    const attributed = this.attributeToSources(occurrences);
     for (const reporter of this.dynamicEventReporters) {
-      await reporter.report({ occurrences });
+      await reporter.report({ occurrences: attributed });
     }
+  }
+
+  /**
+   * Occurrences are found in virtual modules (`App.vue.ts`). Point them back
+   * at the file the user wrote, and flag the ones that come from generated
+   * code so reporters do not print a line number that exists nowhere.
+   */
+  private attributeToSources(occurrences: readonly DynamicOccurrence[]): readonly DynamicOccurrence[] {
+    if (this.sourceToVirtuals.size === 0) {
+      return occurrences;
+    }
+    const virtualToSource = new Map<string, string>();
+    for (const [source, virtuals] of this.sourceToVirtuals) {
+      for (const virtual of virtuals) {
+        if (virtual !== source) {
+          virtualToSource.set(virtual, source);
+        }
+      }
+    }
+    return occurrences.map((occurrence) => {
+      const source = virtualToSource.get(this.normalizePath(occurrence.fileName));
+      if (!source) {
+        return occurrence;
+      }
+      const template = TEMPLATE_CALLEE.test(occurrence.calleeText);
+      if (template) {
+        return {
+          ...occurrence,
+          fileName: source,
+          inTemplate: true,
+          eventExpression: templateExpression(occurrence),
+        };
+      }
+      // an Angular template module embeds the component class: lines there
+      // are generated, the real call is also reported from the class file
+      return source.toLowerCase().endsWith(".html")
+        ? { ...occurrence, fileName: source, inGeneratedCode: true }
+        : { ...occurrence, fileName: source };
+    });
   }
 
   private normalizePath(fileName: string): string {

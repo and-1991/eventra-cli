@@ -133,6 +133,53 @@ describe("registerDynamicEventReporter end-to-end", () => {
   });
 });
 
+describe("built-in console dynamic event reporter: generated copies and paths", () => {
+  const occ = (extra: Record<string, unknown>) => ({
+    fileName: "/app/c.component.html",
+    line: 1,
+    character: 1,
+    calleeText: "this.sdk.track",
+    callText: "this.sdk.track(name)",
+    resolvedValues: [],
+    ...extra,
+  });
+
+  it("does not print the copy of an Angular component class again, nor its header when only copies exist", async () => {
+    const registry = new PluginRegistry();
+    registerConsoleDynamicEventReporterPlugin(registry);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await registry.runDynamicEventReporters([occ({ inGeneratedCode: true })]);
+      expect(log).not.toHaveBeenCalled();
+
+      await registry.runDynamicEventReporters([
+        occ({ inGeneratedCode: true }),
+        occ({ fileName: "/app/c.component.ts", line: 9 }),
+      ]);
+      expect(log).toHaveBeenCalledTimes(2);
+      expect(log.mock.calls[1]?.[0]).toContain("c.component.ts:9");
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  it("shows a file whose name merely starts with two dots relative to the working directory", async () => {
+    const registry = new PluginRegistry();
+    registerConsoleDynamicEventReporterPlugin(registry);
+    const log = vi.spyOn(console, "log").mockImplementation(() => {});
+    try {
+      await registry.runDynamicEventReporters([
+        occ({ fileName: `${process.cwd()}/..hidden.ts`, calleeText: "sdk.track" }),
+        occ({ fileName: "/definitely/elsewhere/x.ts", calleeText: "sdk.track" }),
+      ]);
+      expect(log.mock.calls[1]?.[0]).toContain("~ ..hidden.ts:1");
+      expect(log.mock.calls[2]?.[0]).toContain("/definitely/elsewhere/x.ts:1");
+    } finally {
+      log.mockRestore();
+    }
+  });
+});
+
 describe("built-in console dynamic event reporter", () => {
   it("prints nothing when there are no dynamic occurrences", async () => {
     const registry = new PluginRegistry();

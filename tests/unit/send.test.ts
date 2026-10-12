@@ -324,3 +324,129 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(process.exitCode).toBe(0);
   });
 });
+
+describe("send() - catalog fields", () => {
+  const originalCwd = process.cwd();
+  const originalFetch = globalThis.fetch;
+  const originalEnv = { ...process.env };
+  let tmp: string;
+  let fetchMock: ReturnType<typeof vi.fn>;
+
+  const ok = { ok: true, status: 200, json: async () => ({ created: [], existing: ["a"] }) };
+
+  beforeEach(async () => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-send-cat-"));
+    process.chdir(tmp);
+    process.env.EVENTRA_API_KEY = "test-key";
+    process.env.GITHUB_REF_NAME = "main";
+    process.env.EVENTRA_ENDPOINT = "https://api.eventra.dev/api/v1/cli/events";
+    process.exitCode = 0;
+    fetchMock = vi.fn().mockResolvedValue(ok);
+    globalThis.fetch = fetchMock as unknown as typeof fetch;
+    await saveConfig(normalizeConfig({ events: ["a"] }));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    fs.removeSync(tmp);
+    globalThis.fetch = originalFetch;
+    process.env = { ...originalEnv };
+    process.exitCode = 0;
+    vi.restoreAllMocks();
+  });
+
+  const sentBody = (call = 0) => JSON.parse(fetchMock.mock.calls[call]?.[1].body as string);
+
+  it("posts complete, cliVersion, dynamicCount and branch next to the unchanged events and cli fields", async () => {
+    await send();
+    const body = sentBody();
+    expect(body.events).toEqual(["a"]);
+    expect(body.cli).toMatchObject({ name: "@eventra_dev/eventra-cli", runtime: "node" });
+    // the temp project has no source, so the scan finds nothing and the list is stale
+    expect(body.complete).toBe(false);
+    expect(body.dynamicCount).toBe(0);
+    expect(body.branch).toBe("main");
+    expect(body.cliVersion).toBe(body.cli.version);
+  });
+
+  it("says the snapshot is incomplete when the list is out of date", async () => {
+    await send();
+    const printed = (console.log as unknown as ReturnType<typeof vi.fn>).mock.calls.flat().join("\n");
+    expect(printed).toContain("Catalog snapshot marked incomplete");
+  });
+
+  it("sends complete: true when the scan is clean and matches eventra.json", async () => {
+    await fs.writeFile(
+      path.join(tmp, "app.ts"),
+      'import { Eventra } from "@eventra_dev/eventra-sdk";\nconst sdk = new Eventra({ apiKey: "k" });\nsdk.track("a");\n',
+    );
+    await send();
+    const body = sentBody();
+    expect(body.events).toEqual(["a"]);
+    expect(body.complete).toBe(true);
+    expect(body.dynamicCount).toBe(0);
+  });
+
+  it("sends complete: false and no dynamicCount when the scan itself fails", async () => {
+    // an unreadable tsconfig makes the compiler context throw
+    await fs.writeFile(path.join(tmp, "tsconfig.json"), "{ not json");
+    await send();
+    const body = sentBody();
+    expect(body.complete).toBe(false);
+    expect(body).not.toHaveProperty("dynamicCount");
+    expect(body.events).toEqual(["a"]);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("repeats the request without the catalog fields when an older server rejects them", async () => {
+    fetchMock
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        text: async () => '{"error":{"code":"VALIDATION_ERROR","message":"Validation failed"}}',
+      })
+      .mockResolvedValueOnce(ok);
+
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentBody(0)).toHaveProperty("complete");
+    const legacy = sentBody(1);
+    expect(legacy).toEqual({ events: ["a"], cli: expect.objectContaining({ runtime: "node" }) });
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("does not loop when the plain request is rejected too", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => '{"error":{"code":"VALIDATION_ERROR"}}',
+    });
+
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("does not retry other 400 responses and keeps the catalog fields", async () => {
+    fetchMock.mockResolvedValue({ ok: false, status: 400, text: async () => "nope" });
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("treats a 400 whose body cannot be read as a plain failure", async () => {
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 400,
+      text: async () => {
+        throw new Error("stream closed");
+      },
+    });
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+  });
+});

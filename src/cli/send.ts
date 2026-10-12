@@ -2,6 +2,7 @@ import chalk from "chalk";
 import inquirer from "inquirer";
 
 import {getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint} from "../config/config";
+import { collectCatalogMeta } from "../core/catalogMeta";
 import pkg from "../../package.json";
 
 const CLI_VERSION = pkg.version;
@@ -70,6 +71,11 @@ async function attemptDelivery(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+// the API answers a rejected unknown property with {"error":{"code":"VALIDATION_ERROR",...}}
+function isValidationError(body: string | undefined): boolean {
+  return typeof body === "string" && body.includes("VALIDATION_ERROR");
 }
 
 type SendResponse = {
@@ -162,14 +168,37 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   console.log("");
   console.log(chalk.blue(`Sending ${config.events.length} events...`));
 
-  const payload = JSON.stringify({
+  // Tells the server whether this list is a full snapshot of the code (so names
+  // missing from it can be marked as removed) and how many event names could
+  // not be resolved. Older servers ignore the extra fields.
+  const meta = await collectCatalogMeta(config);
+  if (!meta.complete) {
+    console.log(
+      chalk.gray(
+        "Catalog snapshot marked incomplete (files were skipped, the scan failed, or eventra.json is out of date: run 'eventra sync')",
+      ),
+    );
+  }
+
+  const legacyBody = {
     events: config.events,
     cli: {
       name: "@eventra_dev/eventra-cli",
       version: CLI_VERSION,
       runtime: "node",
     },
+  };
+  const payload = JSON.stringify({
+    ...legacyBody,
+    complete: meta.complete,
+    cliVersion: CLI_VERSION,
+    ...(meta.dynamicCount !== undefined ? { dynamicCount: meta.dynamicCount } : {}),
+    ...(meta.branch ? { branch: meta.branch } : {}),
   });
+  // A server that predates the catalog fields rejects unknown properties with a
+  // generic validation 400; the request is then repeated once without them.
+  const legacyPayload = JSON.stringify(legacyBody);
+  let body = payload;
 
   // attempt delivery with retry on 429/5xx/network errors
   let data: SendResponse | undefined;
@@ -177,11 +206,18 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
 
   for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
     try {
-      const outcome = await attemptDelivery(endpoint, apiKey, payload);
+      const outcome = await attemptDelivery(endpoint, apiKey, body);
 
       if (outcome.ok) {
         data = outcome.data;
         break;
+      }
+
+      if (outcome.status === 400 && body !== legacyPayload && isValidationError(outcome.body)) {
+        body = legacyPayload;
+        console.log(chalk.gray("Server does not know the catalog fields yet, sending the plain event list"));
+        attempt--;
+        continue;
       }
 
       if (!outcome.retryable) {

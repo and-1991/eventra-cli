@@ -239,3 +239,56 @@ describe("init: prompts, defaults and output", () => {
     ]);
   });
 });
+
+describe("init: existing eventra.json and --yes", () => {
+  const existing = { apiKey: "", endpoint: "x", events: ["keep.me"], functionWrappers: [], plugins: ["@eventra_dev/cli-plugin-vue"] };
+
+  it("asks before overwriting and keeps the file on no", async () => {
+    fs.writeFileSync(path.join(cwd, "eventra.json"), JSON.stringify(existing));
+    prompt.mockResolvedValueOnce({ overwrite: false });
+    await init();
+
+    expect(prompt).toHaveBeenCalledTimes(1);
+    expect(readConfig().events).toEqual(["keep.me"]);
+    expect(readConfig().plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+  });
+
+  it("overwrites only after an explicit yes", async () => {
+    fs.writeFileSync(path.join(cwd, "eventra.json"), JSON.stringify(existing));
+    prompt.mockImplementation(async (questions: Array<{ name: string }>) =>
+      questions[0].name === "overwrite"
+        ? { overwrite: true }
+        : { apiKey: "", endpoint: "https://api.eventra.dev/api/v1/cli/events" },
+    );
+    await init();
+
+    expect(readConfig().events).toEqual([]);
+    expect(readConfig().plugins).toEqual([]);
+  });
+
+  it("--yes never prompts and never overwrites an existing file", async () => {
+    fs.writeFileSync(path.join(cwd, "eventra.json"), JSON.stringify(existing));
+    await init({ yes: true });
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readConfig().events).toEqual(["keep.me"]);
+  });
+
+  it("--yes creates a config with defaults and every detected preset, without prompting", async () => {
+    writePackage({ dependencies: { "posthog-js": "1", react: "19" } });
+    await init({ yes: true });
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readConfig().endpoint).toBe("https://api.eventra.dev/api/v1/cli/events");
+    expect(readConfig().sinks).toEqual([{ preset: "posthog" }]);
+  });
+
+  it("--yes with nothing detected writes no sinks", async () => {
+    writePackage({ dependencies: { react: "19" } });
+    await init({ yes: true });
+
+    expect(prompt).not.toHaveBeenCalled();
+    expect(readConfig().sinks).toBeUndefined();
+  });
+});
+

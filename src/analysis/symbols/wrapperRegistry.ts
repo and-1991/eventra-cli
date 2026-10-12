@@ -12,17 +12,28 @@ function isSymbol(value: ts.Symbol | ts.FunctionLikeDeclaration): value is ts.Sy
 export class WrapperRegistry {
   private wrappers = new WeakMap<ts.Symbol, WrapperSemanticInfo>();
 
+  private resolvedChecker: ts.TypeChecker | undefined;
+
+  /** `checker` may be a provider, called once on first use (setChecker replaces it). */
   constructor(
-    private checker: ts.TypeChecker,
+    private pendingChecker: ts.TypeChecker | (() => ts.TypeChecker),
     private readonly exportCache: ResolvedExportCache,
   ) {}
 
   setChecker(checker: ts.TypeChecker): void {
-    this.checker = checker;
+    this.resolvedChecker = checker;
   }
 
   getChecker(): ts.TypeChecker {
-    return this.checker;
+    if (!this.resolvedChecker) {
+      this.resolvedChecker =
+        typeof this.pendingChecker === "function" ? this.pendingChecker() : this.pendingChecker;
+    }
+    return this.resolvedChecker;
+  }
+
+  private get checker(): ts.TypeChecker {
+    return this.getChecker();
   }
 
   private normalize(symbol: ts.Symbol): ts.Symbol {

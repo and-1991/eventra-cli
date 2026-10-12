@@ -10,6 +10,20 @@ export interface DynamicOccurrence {
   readonly calleeText: string;
   readonly callText: string;
   readonly resolvedValues: readonly string[];
+  /**
+   * Set when the call came from a framework template (Vue, Svelte, Astro,
+   * Angular): `fileName` is then the template's source file and `line` is
+   * not meaningful, because the call was generated, not written.
+   */
+  readonly inTemplate?: boolean;
+  /** The template expression behind `event=...`, for template occurrences. */
+  readonly eventExpression?: string;
+  /**
+   * Set when the call sits in a generated module that is not a plain source
+   * file (for example the component class copied into an Angular template
+   * module): `line` points into generated text and is not meaningful.
+   */
+  readonly inGeneratedCode?: boolean;
 }
 
 const CALL_TEXT_MAX_LENGTH = 120;

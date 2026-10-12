@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-665%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-783%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -212,7 +212,7 @@ Everything found is pre-selected; press Enter to accept or untick what you do no
 | `amplitude` | `@amplitude/analytics-browser`, `@amplitude/analytics-node`, `@amplitude/analytics-react-native`, `@amplitude/unified`, `@amplitude/marketing-analytics-browser`, and the older `amplitude-js` |
 | `ga4` | `react-ga4`, `vue-gtag`, `@next/third-parties`, `nuxt-gtag`, `@types/gtag.js`, and the older `vue-gtag-next` |
 
-Detection reads dependencies only. A tag pasted straight into the HTML (a Segment or `gtag.js` snippet with no package) is not seen: add the preset to `sinks` yourself. In a monorepo only the block-list form of `packages:` in `pnpm-workspace.yaml` is understood (not `packages: [a, b]`), and workspace patterns that are absolute or contain `..` are ignored. Running `init` again rewrites `eventra.json`.
+Detection reads dependencies only. A tag pasted straight into the HTML (a Segment or `gtag.js` snippet with no package) is not seen: add the preset to `sinks` yourself. In a monorepo only the block-list form of `packages:` in `pnpm-workspace.yaml` is understood (not `packages: [a, b]`), and workspace patterns that are absolute or contain `..` are ignored. If `eventra.json` already exists, `init` asks before overwriting it (the default answer is no). `eventra init --yes` never prompts: it uses the default endpoint, accepts every detected preset, and leaves an existing `eventra.json` untouched, so it is safe in scripts and CI.
 
 ### `eventra sync`
 
@@ -221,9 +221,11 @@ Full project scan → updates `eventra.json`:
 - `events` — discovered event names
 - `functionWrappers` — detected wrapper functions
 
+A file that cannot be analysed (a broken `.vue`, `.svelte`, `.astro` or `.html`, an unreadable file, or one over 2 MB) is skipped, and `sync` prints one summary at the end listing each skipped file and why. While anything is skipped, events already in `eventra.json` are kept, because a missing event may simply live in a skipped file. The exit code stays `0`; `eventra sync --strict` exits `1` if any file was skipped.
+
 ### `eventra check`
 
-Compares config with the current scan (events + wrappers). Exit code `1` on drift.
+Compares config with the current scan (events + wrappers). Exit code `1` on drift. When files were skipped, known events that were not found are not reported as removed (they cannot be verified) and the skipped files are listed; `eventra check --strict` also exits `1` if any file was skipped.
 
 ### `eventra check --fix`
 
@@ -254,6 +256,14 @@ eventra send --trust-endpoint
 This records the endpoint in `eventra.local.json` (gitignored). If `eventra.json`'s `endpoint` later changes to a different value — e.g. a PR silently pointing it at another host — `send` blocks again until re-approved, so a committed config change alone can't redirect where your API key and events get sent.
 
 Once `eventra.json` already commits an `endpoint`, that committed value is what events actually get sent to - `EVENTRA_ENDPOINT` only controls whether the approval prompt is skipped; its own value is not read or compared against anything in that case. `EVENTRA_ENDPOINT` becomes the real destination only when `eventra.json` has no `endpoint` set at all. In other words, setting the variable to point somewhere else does not redirect traffic away from an already-committed endpoint - it only means you won't be asked to approve it.
+
+**Catalog snapshot.** Besides the event list, `send` scans the project once more and tells the server how trustworthy that list is, so the dashboard can compare what is in your code with what actually arrived. It adds four optional fields to the request: `complete`, `dynamicCount`, `branch` and `cliVersion`.
+
+- `complete` is `true` only when the scan skipped no file, hit no error, and `eventra.json` matches what the scan just found. The server marks names that are missing from a complete snapshot as removed from code, so anything doubtful is `false` (a file that could not be parsed, a failed scan, or an `eventra.json` that is out of date: run `eventra sync` first). A request that is not complete never removes anything.
+- `dynamicCount` is the number of event-name call sites that could not be resolved to any string (for example `track(name)` with an unknown `name`). The dashboard uses it to warn that such names may show up as unexpected events.
+- `branch` is the current branch, read from the usual CI variables (`GITHUB_REF_NAME`, `CI_COMMIT_REF_NAME`, `BRANCH_NAME`, `BITBUCKET_BRANCH`, `CIRCLE_BRANCH`, `BUILDKITE_BRANCH`, `VERCEL_GIT_COMMIT_REF`) and otherwise from `git`; it is left out when unknown (for example a detached checkout with no CI variable). `cliVersion` is the CLI version.
+
+Run `send` from the main branch in CI: a snapshot from a feature branch describes that branch. A server that predates these fields rejects them, so `send` repeats the request once with the plain event list. The extra scan adds the same time as one `eventra sync`.
 
 Network resilience:
 
@@ -416,7 +426,7 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
 | `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
 | `sinks` | Third-party analytics calls to treat as event sources, e.g. `[{ "preset": "posthog" }]` (see [Third-party analytics](#third-party-analytics-sinks)) |
 | `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
-| `sync.exclude` | Paths skipped during scan |
+| `sync.exclude` | Paths skipped during scan. A plain name such as `node_modules` or `dist` matches at any depth (nested `packages/*/node_modules` too); entries containing `/` or glob characters are used as written |
 
 `eventra init`/`eventra send` never write a real key into this file — they write to `eventra.local.json` instead, which is automatically added to `.gitignore`.
 
@@ -440,14 +450,14 @@ No runtime execution. No monkey-patching.
 
 ## Requirements
 
-- Node.js 18+
+- Node.js 18+ (`eventra watch` needs Node.js 20.19+, which its file-watching dependency requires; `init`, `sync`, `check` and `send` run on 18)
 - TypeScript/JavaScript source using `@eventra_dev/eventra-sdk`
 
 ---
 
 ## Test Coverage
 
-Two test layers, **665 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **783 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 

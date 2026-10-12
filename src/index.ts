@@ -12,24 +12,27 @@ program
 
 program
   .command("init")
-  .action(async () => {
+  .option("-y, --yes", "do not prompt: accept defaults and keep an existing eventra.json")
+  .action(async (opts) => {
     const { init } = await import("./cli/init");
-    await init();
+    await init({ yes: opts.yes });
   });
 
 program
   .command("sync")
-  .action(async () => {
+  .option("--strict", "exit with a non-zero code if any file could not be analysed")
+  .action(async (opts) => {
     const { sync } = await import("./cli/sync");
-    await sync();
+    await sync({ strict: opts.strict });
   });
 
 program
   .command("check")
   .option("--fix", "auto fix issues")
+  .option("--strict", "exit with a non-zero code if any file could not be analysed")
   .action(async (opts) => {
     const { check } = await import("./cli/check");
-    await check({ fix: opts.fix });
+    await check({ fix: opts.fix, strict: opts.strict });
   });
 
 program

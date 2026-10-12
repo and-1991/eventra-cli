@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "2.1.0",
+  "version": "2.2.0",
   "description": "Static analytics event extraction CLI powered by the TypeScript compiler API",
   "license": "MIT",
   "author": {
@@ -37,7 +37,8 @@
     "test:e2e": "pnpm run clean && pnpm run build && tsx tests/run.ts",
     "clean": "rm -rf dist",
     "test:mutation": "stryker run",
-    "check:presets": "tsx scripts/check-preset-packages.ts"
+    "check:presets": "tsx scripts/check-preset-packages.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "chalk": "^4.1.2",

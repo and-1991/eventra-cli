@@ -29,6 +29,36 @@ const BASE: EventraConfig = {
   },
 };
 
+describe("buildConfigFromScan: preserveKnown", () => {
+  it("keeps previously known events and wrappers when files were skipped", () => {
+    const engine = makeEngineStub(["new.a", "stale"], ["wrapperA"]);
+    const out = buildConfigFromScan(BASE, engine, { preserveKnown: true });
+
+    expect(out.events).toEqual(["new.a", "stale"]);
+    expect(out.functionWrappers).toEqual([{ name: "oldWrapper" }, { name: "wrapperA" }]);
+  });
+
+  it("is a sorted, de-duplicated union", () => {
+    const base = { ...BASE, events: ["b", "a"], functionWrappers: [{ name: "w" }] };
+    const out = buildConfigFromScan(base, makeEngineStub(["a", "c"], ["w", "v"]), { preserveKnown: true });
+
+    expect(out.events).toEqual(["a", "b", "c"]);
+    expect(out.functionWrappers).toEqual([{ name: "v" }, { name: "w" }]);
+  });
+
+  it("handles a config without events or wrappers", () => {
+    const bare = { ...BASE, events: undefined, functionWrappers: undefined } as unknown as EventraConfig;
+    const out = buildConfigFromScan(bare, makeEngineStub(["x"], []), { preserveKnown: true });
+
+    expect(out.events).toEqual(["x"]);
+    expect(out.functionWrappers).toEqual([]);
+  });
+
+  it("without the option a removed event is still dropped", () => {
+    expect(buildConfigFromScan(BASE, makeEngineStub([], [])).events).toEqual([]);
+  });
+});
+
 describe("buildConfigFromScan", () => {
   it("replaces events and wrappers with engine output", () => {
     const engine = makeEngineStub(["new.a", "new.b"], ["wrapperA"]);
@@ -73,11 +103,13 @@ describe("persistScanResults", () => {
   it("builds the config from the engine and writes it to eventra.json", async () => {
     const engine = makeEngineStub(["b.event", "a.event"], ["wrapperB"]);
 
-    await persistScanResults(BASE, engine);
+    const returned = await persistScanResults(BASE, engine);
 
     const written = await fs.readJSON(path.join(tmp, CONFIG_NAME));
     // saveConfig normalizes: events sorted, apiKey/endpoint preserved from BASE.
     expect(written.events).toEqual(["a.event", "b.event"]);
+    expect(returned.events).toEqual(["a.event", "b.event"]);
+    expect(returned.functionWrappers).toEqual([{ name: "wrapperB" }]);
     expect(written.functionWrappers).toEqual([{ name: "wrapperB" }]);
     expect(written.apiKey).toBe("secret");
     expect(written.endpoint).toBe("https://api.example.com");

@@ -1,14 +1,17 @@
 import fs from "fs-extra";
 import os from "os";
 import path from "path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONFIG_NAME,
   LOCAL_CONFIG_NAME,
+  describeConfigProblem,
   getTrustedEndpoint,
   loadConfig,
   normalizeConfig,
+  requireConfig,
   resolveApiKey,
+  saveConfig,
   saveLocalApiKey,
   trustEndpoint,
 } from "../../src/config/config";
@@ -161,6 +164,76 @@ describe("resolveApiKey / saveLocalApiKey", () => {
 
     await trustEndpoint("https://ingest.example.com/api/v1/cli/events");
     expect(await getTrustedEndpoint()).toBe("https://ingest.example.com/api/v1/cli/events");
+  });
+});
+
+describe("config problems and saving", () => {
+  const originalCwd = process.cwd();
+  let tmp: string;
+
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-config-problem-"));
+    process.chdir(tmp);
+  });
+
+  afterEach(() => {
+    process.chdir(originalCwd);
+    process.exitCode = undefined;
+    vi.restoreAllMocks();
+    fs.removeSync(tmp);
+  });
+
+  it("describes a missing file and a malformed file differently", async () => {
+    expect(await describeConfigProblem()).toBe("eventra.json not found");
+
+    await fs.writeFile(path.join(tmp, CONFIG_NAME), "{ not valid json");
+    expect(await describeConfigProblem()).toMatch(/^eventra\.json is not valid JSON: /);
+  });
+
+  it("falls back to a generic message when the file parses but cannot be loaded", async () => {
+    await fs.writeJSON(path.join(tmp, CONFIG_NAME), { ok: true });
+    expect(await describeConfigProblem()).toBe("eventra.json could not be read");
+  });
+
+  it("requireConfig returns the config without touching the exit code", async () => {
+    await fs.writeJSON(path.join(tmp, CONFIG_NAME), { apiKey: "k" });
+    expect((await requireConfig())?.apiKey).toBe("k");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("requireConfig reports the reason and sets exit code 1 for a missing or malformed file", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    expect(await requireConfig()).toBeNull();
+    expect(process.exitCode).toBe(1);
+    expect(err).toHaveBeenLastCalledWith("eventra.json not found");
+
+    process.exitCode = undefined;
+    await fs.writeFile(path.join(tmp, CONFIG_NAME), "nope");
+    expect(await requireConfig()).toBeNull();
+    expect(process.exitCode).toBe(1);
+    expect(String(err.mock.calls.at(-1)?.[0])).toContain("not valid JSON");
+  });
+
+  it("saveConfig leaves the file alone when nothing changed", async () => {
+    await saveConfig(normalizeConfig({ events: ["a"] }));
+    const file = path.join(tmp, CONFIG_NAME);
+    const old = new Date(Date.now() - 60_000);
+    fs.utimesSync(file, old, old);
+
+    await saveConfig(normalizeConfig({ events: ["a"] }));
+    expect(fs.statSync(file).mtimeMs).toBeCloseTo(old.getTime(), -2);
+
+    await saveConfig(normalizeConfig({ events: ["a", "b"] }));
+    expect(fs.statSync(file).mtimeMs).toBeGreaterThan(old.getTime() + 1000);
+    expect(fs.readFileSync(file, "utf8").endsWith("}\n")).toBe(true);
+  });
+
+  it("orders function wrappers by plain comparison, independent of the locale", () => {
+    const out = normalizeConfig({
+      functionWrappers: [{ name: "b" }, { name: "B" }, { name: "a" }, { name: "b" }],
+    });
+    expect(out.functionWrappers.map((w) => w.name)).toEqual(["B", "a", "b"]);
   });
 });
 

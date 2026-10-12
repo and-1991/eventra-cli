@@ -4,12 +4,31 @@ import ts from "typescript";
 
 import { DocumentRegistry } from "./documentRegistry";
 
+interface CachedSourceFile {
+  // content is compared, not the registry version: a removed and re-added file
+  // starts again at version 1 with different text
+  readonly content: string;
+  readonly languageVersion: ts.ScriptTarget;
+  readonly scriptKind: ts.ScriptKind;
+  readonly sourceFile: ts.SourceFile;
+}
+
 export class CompilerContext {
   private readonly registry = new DocumentRegistry();
+  // Parsed files survive a program rebuild: a flush changes a handful of files,
+  // and parsing every other file (and the default lib .d.ts files) again was
+  // most of the rebuild cost. Reusing a SourceFile object across programs is
+  // what the TypeScript language service does too.
+  private readonly sourceFileCache = new Map<string, CachedSourceFile>();
   private readonly compilerOptions: ts.CompilerOptions;
   private readonly host: ts.CompilerHost;
-  private program: ts.Program = ts.createProgram([], {});
+  // Built on first use (or by flushUpdates): the engine stages every file of a
+  // scan and flushes once, so an eager build in the constructor was thrown away.
+  private programInstance: ts.Program | undefined;
   private readonly rootNames = new Set<string>();
+  // Only set while withResolutionCache() runs: it memoises fileExists results,
+  // so it must never outlive one batch of resolutions against one program.
+  private activeResolutionCache: ts.ModuleResolutionCache | undefined;
 
   constructor(private readonly rootDir: string) {
     const localTsconfig = path.join(rootDir, "tsconfig.json");
@@ -53,7 +72,6 @@ export class CompilerContext {
     this.compilerOptions = compilerOptions;
     this.host = ts.createCompilerHost(this.compilerOptions, true);
     this.patchCompilerHost();
-    this.rebuildProgram();
   }
 
   private normalize(fileName: string): string {
@@ -85,13 +103,19 @@ export class CompilerContext {
     if (!snapshot) {
       return undefined;
     }
-    const sourceFile = ts.createSourceFile(
-      normalized,
-      snapshot.getText(0, snapshot.getLength()),
-      languageVersion,
-      true,
-      this.getScriptKind(normalized),
-    );
+    const content = snapshot.getText(0, snapshot.getLength());
+    const scriptKind = this.getScriptKind(normalized);
+    const cached = this.sourceFileCache.get(normalized);
+    if (
+      cached &&
+      cached.content === content &&
+      cached.languageVersion === languageVersion &&
+      cached.scriptKind === scriptKind
+    ) {
+      return this.attachVersion(cached.sourceFile, normalized);
+    }
+    const sourceFile = ts.createSourceFile(normalized, content, languageVersion, true, scriptKind);
+    this.sourceFileCache.set(normalized, { content, languageVersion, scriptKind, sourceFile });
     return this.attachVersion(sourceFile, normalized);
   }
 
@@ -154,7 +178,35 @@ export class CompilerContext {
   }
 
   private rebuildProgram(): void {
-    this.program = ts.createProgram([...this.rootNames], this.compilerOptions, this.host);
+    this.programInstance = ts.createProgram([...this.rootNames], this.compilerOptions, this.host);
+  }
+
+  private get program(): ts.Program {
+    if (!this.programInstance) {
+      this.rebuildProgram();
+    }
+    return this.programInstance!;
+  }
+
+  /**
+   * Run `fn` with one shared module resolution cache, so resolving the imports
+   * of many files in a row (import graph after a flush) does not repeat the
+   * same directory lookups. The cache is dropped when `fn` returns.
+   */
+  withResolutionCache<T>(fn: () => T): T {
+    if (this.activeResolutionCache) {
+      return fn();
+    }
+    this.activeResolutionCache = ts.createModuleResolutionCache(
+      this.rootDir,
+      (fileName) => this.normalize(fileName),
+      this.compilerOptions,
+    );
+    try {
+      return fn();
+    } finally {
+      this.activeResolutionCache = undefined;
+    }
   }
 
   /** Register file content without rebuilding the TS program (batch via {@link flushUpdates}). */
@@ -178,8 +230,64 @@ export class CompilerContext {
   removeFile(fileName: string): void {
     const normalized = this.normalize(fileName);
     this.registry.remove(normalized);
+    this.sourceFileCache.delete(normalized);
     this.rootNames.delete(normalized);
     this.rebuildProgram();
+  }
+
+  /**
+   * Re-reads files that are in the program only because something imports them
+   * (they are not scanned sources): the disk content replaces whatever the
+   * registry cached and the program is rebuilt ONCE for the whole batch. A file
+   * that no longer exists is dropped. Returns the files whose content really
+   * changed (normalized); none of them ever becomes a root.
+   */
+  refreshFromDisk(fileNames: readonly string[]): string[] {
+    const changed: string[] = [];
+    for (const fileName of fileNames) {
+      const normalized = this.normalize(fileName);
+      const before = this.registry.getContent(normalized);
+      let content: string | undefined;
+      try {
+        content = fs.readFileSync(normalized, "utf8");
+      } catch {
+        content = undefined;
+      }
+      if (before === content) continue;
+      if (content === undefined) {
+        this.registry.remove(normalized);
+        this.sourceFileCache.delete(normalized);
+      } else {
+        this.registry.update(normalized, content);
+      }
+      changed.push(normalized);
+    }
+    if (changed.length === 0) {
+      return changed;
+    }
+    this.rebuildProgram();
+    // a file nothing imports must not linger in the registry
+    for (const normalized of changed) {
+      if (this.registry.has(normalized) && !this.programInstance!.getSourceFile(normalized)) {
+        this.registry.remove(normalized);
+        this.sourceFileCache.delete(normalized);
+      }
+    }
+    return changed;
+  }
+
+  /** True when the file is part of the current program (scanned or only imported). */
+  hasFile(fileName: string): boolean {
+    return this.program.getSourceFile(this.normalize(fileName)) !== undefined;
+  }
+
+  /** Project files of the program (no TypeScript libs, no node_modules), declaration files included. */
+  getProjectFileNames(): string[] {
+    const program = this.program;
+    return program
+      .getSourceFiles()
+      .filter((sf) => !program.isSourceFileDefaultLibrary(sf) && !program.isSourceFileFromExternalLibrary(sf))
+      .map((sf) => sf.fileName);
   }
 
   getProgram(): ts.Program {
@@ -214,6 +322,7 @@ export class CompilerContext {
       this.normalize(fromFile),
       this.compilerOptions,
       this.host,
+      this.activeResolutionCache,
     );
     return resolved.resolvedModule?.resolvedFileName;
   }

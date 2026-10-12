@@ -13,7 +13,6 @@ import { FileSemanticIndex } from "../analysis/shared/types";
 import { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
-import { processFile } from "../filesystem/processFile";
 import { createBuiltinPluginRegistry } from "../plugin/loadPlugins";
 import type { PluginRegistry } from "../plugin/registry";
 
@@ -35,6 +34,10 @@ export class EventraEngine {
   private readonly fileIndices = new Map<string, FileSemanticIndex>();
   private readonly fileResults = new Map<string, ScanResult>();
   private readonly normalizedPathCache = new Map<string, string>();
+  // files whose events count (the scanned sources); files that are in the
+  // program only because something imports them are never extracted, as in a
+  // fresh scan
+  private readonly scannedFiles = new Set<string>();
   private readonly plugins: PluginRegistry;
   private isPreloading = false;
   private lastConfig: EventraConfig = {
@@ -49,17 +52,33 @@ export class EventraEngine {
   constructor(rootDir: string, plugins: PluginRegistry = createBuiltinPluginRegistry()) {
     this.plugins = plugins;
     this.compiler = new CompilerContext(rootDir);
+    // resolved lazily: asking for the checker now would build the program
     this.wrapperRegistry = new WrapperRegistry(
-      this.compiler.getChecker(),
+      () => this.compiler.getChecker(),
       this.resolvedExportCache,
     );
     this.scheduler = new Scheduler(async (updates) => {
       const changedFiles = new Set<string>();
+      // a file the graph has not seen yet changes what other files' imports resolve to
+      let fileSetChanged = false;
 
+      // Stage every file, rebuild the program ONCE, then refresh the import
+      // graph against that final program (one rebuild per flush, not per file).
       for (const [file, content] of updates) {
-        await this.compiler.updateFile(file, content);
-        this.updateImportGraph(file);
+        if (!this.importGraph.hasFile(file)) fileSetChanged = true;
+        this.scannedFiles.add(file);
+        this.compiler.stageFile(file, content);
         changedFiles.add(file);
+      }
+      this.compiler.flushUpdates();
+      const edgeChanged = new Set<string>();
+      this.compiler.withResolutionCache(() => {
+        for (const file of changedFiles) {
+          this.updateImportGraph(file);
+        }
+      });
+      if (fileSetChanged) {
+        for (const file of this.refreshImportEdges(changedFiles)) edgeChanged.add(file);
       }
 
       // Program was rebuilt → every ts.Symbol from the previous program is now
@@ -73,18 +92,19 @@ export class EventraEngine {
       // wrappers defined in unaffected files (this is the watch-corruption bug).
       this.reindexAll(this.lastConfig);
 
-      // Incremental extract: only re-extract changed files + their dependents.
+      // Incremental extract: only re-extract changed files + their dependents
+      // (+ files whose imports now resolve differently, and their dependents).
       // Unaffected files keep their previously-computed Set<string> events,
       // which is safe (just strings, no AST refs).
       const affected = new Set<string>();
-      for (const file of changedFiles) {
+      for (const file of [...changedFiles, ...edgeChanged]) {
         affected.add(file);
         for (const dependent of this.importGraph.collectDependents(file)) {
           affected.add(dependent);
         }
       }
       for (const file of affected) {
-        this.extractFile(file, this.lastConfig);
+        if (this.scannedFiles.has(file)) this.extractFile(file, this.lastConfig);
       }
     });
   }
@@ -121,12 +141,14 @@ export class EventraEngine {
     return normalized;
   }
 
-  private updateImportGraph(fileName: string): void {
+  // true when the file's resolved imports changed
+  private updateImportGraph(fileName: string): boolean {
     const normalized = this.normalize(fileName);
     const source = this.compiler.getSourceFile(normalized);
     if (!source) {
+      const known = this.importGraph.hasFile(normalized);
       this.importGraph.removeFile(normalized);
-      return;
+      return known;
     }
     const imports: string[] = [];
     for (const statement of source.statements) {
@@ -146,7 +168,26 @@ export class EventraEngine {
       }
       imports.push(this.normalize(resolved));
     }
-    this.importGraph.updateFile(normalized, imports);
+    return this.importGraph.updateFile(normalized, imports);
+  }
+
+  /**
+   * Creating or deleting a file can change what OTHER files' imports resolve to,
+   * without those files changing: an import written before its target existed
+   * starts to resolve, a deleted target stops. Their edges are re-resolved
+   * against the current program; the files whose imports changed are returned
+   * so they get analysed again (the graph alone cannot know about them: the
+   * reverse edge of a file that did not exist was never recorded).
+   */
+  private refreshImportEdges(skip: ReadonlySet<string>): Set<string> {
+    const changed = new Set<string>();
+    this.compiler.withResolutionCache(() => {
+      for (const file of this.importGraph.getFiles()) {
+        if (skip.has(file)) continue;
+        if (this.updateImportGraph(file)) changed.add(file);
+      }
+    });
+    return changed;
   }
 
   async preloadFile(fileName: string, content: string): Promise<void> {
@@ -154,16 +195,19 @@ export class EventraEngine {
       throw new Error("preload phase not active");
     }
     const normalized = this.normalize(fileName);
-    const processed = await processFile(normalized, content);
-    this.compiler.stageFile(processed.fileName, processed.content);
+    // processFile only echoed fileName/content back (its dependency list was
+    // unused here), so stage directly instead of parsing the file a second time.
+    this.compiler.stageFile(normalized, content);
   }
 
   endPreload(): void {
     this.isPreloading = false;
     this.compiler.flushUpdates();
-    for (const sourceFile of this.compiler.getAllSourceFiles()) {
-      this.updateImportGraph(sourceFile.fileName);
-    }
+    this.compiler.withResolutionCache(() => {
+      for (const sourceFile of this.compiler.getAllSourceFiles()) {
+        this.updateImportGraph(sourceFile.fileName);
+      }
+    });
   }
 
   async updateFile(fileName: string, content: string, config: EventraConfig): Promise<void> {
@@ -181,6 +225,7 @@ export class EventraEngine {
     this.refreshChecker();
     const normalized = fileNames.map((f) => this.normalize(f));
     for (const file of normalized) {
+      this.scannedFiles.add(file);
       this.indexFile(file, config);
     }
     for (const file of normalized) {
@@ -200,8 +245,64 @@ export class EventraEngine {
 
     const normalized = fileNames.map((f) => this.normalize(f));
     for (const file of normalized) {
-      this.extractFile(file, config);
+      if (this.scannedFiles.has(file)) this.extractFile(file, config);
     }
+  }
+
+  /**
+   * Files that are only imported (not scanned, e.g. `shared/events.ts` outside
+   * `include`) changed on disk, appeared or vanished. Their content is re-read
+   * (one program rebuild for the whole batch), the import graph is refreshed and
+   * the scanned files that depend on them are analysed again, so a long-running
+   * engine agrees with a fresh scan. Returns false when no content changed.
+   */
+  async refreshExternalFiles(fileNames: readonly string[], config: EventraConfig): Promise<boolean> {
+    this.lastConfig = config;
+    const normalized = fileNames.map((f) => this.normalize(f));
+    // dependents are read before the edges change
+    const affected = new Set<string>();
+    for (const file of normalized) {
+      for (const dependent of this.importGraph.collectDependents(file)) {
+        affected.add(dependent);
+      }
+    }
+    const changed = this.compiler.refreshFromDisk(normalized);
+    if (changed.length === 0) {
+      return false;
+    }
+    this.compiler.withResolutionCache(() => {
+      for (const file of changed) {
+        this.updateImportGraph(file);
+      }
+    });
+    // importers that had no edge before (a missing target appeared) or lost it
+    // (the target vanished), and everything depending on them
+    for (const file of this.refreshImportEdges(new Set(changed))) {
+      affected.add(file);
+      for (const dependent of this.importGraph.collectDependents(file)) {
+        affected.add(dependent);
+      }
+    }
+    for (const file of changed) {
+      for (const dependent of this.importGraph.collectDependents(file)) {
+        affected.add(dependent);
+      }
+    }
+    for (const file of changed) {
+      affected.delete(file);
+    }
+    await this.reanalyzeFiles([...affected], config);
+    return true;
+  }
+
+  /** True when the file is in the program (scanned or only imported). */
+  hasProgramFile(fileName: string): boolean {
+    return this.compiler.hasFile(this.normalize(fileName));
+  }
+
+  /** Project files in the program, for watching those that live outside the project root. */
+  getProjectFileNames(): string[] {
+    return this.compiler.getProjectFileNames();
   }
 
   indexFile(fileName: string, _config: EventraConfig): void {
@@ -243,6 +344,7 @@ export class EventraEngine {
 
   async scanFile(fileName: string, config: EventraConfig): Promise<ScanResult> {
     this.lastConfig = config;
+    this.scannedFiles.add(this.normalize(fileName));
     this.refreshChecker();
     this.indexFile(fileName, config);
     return this.extractFile(fileName, config);
@@ -255,8 +357,17 @@ export class EventraEngine {
     this.compiler.removeFile(normalized);
     this.fileIndices.delete(normalized);
     this.fileResults.delete(normalized);
+    this.scannedFiles.delete(normalized);
     this.normalizedPathCache.delete(fileName);
     this.normalizedPathCache.delete(normalized);
+
+    // importers of the removed file now resolve differently (and another file
+    // may now win a resolution the removed one was shadowing)
+    for (const file of this.refreshImportEdges(new Set([normalized]))) {
+      for (const dependent of this.importGraph.collectDependents(file)) {
+        affected.add(dependent);
+      }
+    }
 
     const nextConfig = config ?? this.lastConfig;
     const toReanalyze = [...affected].filter((f) => f !== normalized);
@@ -303,6 +414,9 @@ export class EventraEngine {
     for (const result of this.fileResults.values()) {
       occurrences.push(...result.dynamicOccurrences);
     }
-    return occurrences.sort((a, b) => a.fileName.localeCompare(b.fileName) || a.line - b.line);
+    const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+    return occurrences.sort(
+      (a, b) => byText(a.fileName, b.fileName) || a.line - b.line || a.character - b.character,
+    );
   }
 }

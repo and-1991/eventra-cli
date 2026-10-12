@@ -1,20 +1,25 @@
 import chalk from "chalk";
 
-import { loadConfig } from "../config/config";
+import { requireConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { persistScanResults } from "../core/scanResults";
+import { plural, reportIgnored, reportSkipped } from "../core/skipped";
 
-export async function sync(): Promise<void> {
-  const config = await loadConfig();
-  if (!config) {
-    console.log(chalk.red("eventra.json not found"));
-    return;
-  }
+export async function sync({ strict = false }: { strict?: boolean } = {}): Promise<void> {
+  const config = await requireConfig();
+  if (!config) return;
   console.log(chalk.blue("Scanning..."));
-  const { engine, plugins } = await scanProject(config);
-  await persistScanResults(config, engine);
-  const events = engine.getAllEvents();
-  const wrappers = engine.getAllFunctionWrappers();
-  console.log(chalk.green(`Found ${events.length} events, ${wrappers.length} function wrappers`));
+  const { engine, plugins, skipped, ignored } = await scanProject(config);
+  // report what was saved: with skipped files that is the union of the known and
+  // the found events, not just what this scan found
+  const saved = await persistScanResults(config, engine, { preserveKnown: skipped.length > 0 });
+  console.log(
+    chalk.green(
+      `Found ${plural(saved.events?.length ?? 0, "event")}, ${plural(saved.functionWrappers?.length ?? 0, "function wrapper")}`,
+    ),
+  );
   await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
+  reportSkipped(skipped);
+  reportIgnored(ignored);
+  if (strict && skipped.length > 0) process.exitCode = 1;
 }

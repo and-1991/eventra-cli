@@ -1,3 +1,6 @@
+import * as fs from "fs";
+import * as os from "os";
+import * as path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { createPluginRegistry, isTrustedPluginSpecifier } from "../../src/plugin/loadPlugins";
@@ -242,3 +245,49 @@ describe("createPluginRegistry — trusted specifier import path", () => {
     expect(registry.getSinkDetectors().map((d) => d.name)).toContain("eventra-sdk");
   });
 });
+
+describe("createPluginRegistry: resolves plugins from the user's project", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("loads a plugin that is installed in the project's node_modules, not next to the CLI", async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-plugin-project-"));
+    try {
+      const dir = path.join(project, "node_modules", "@eventra_dev", "cli-plugin-localtest");
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(
+        path.join(dir, "package.json"),
+        JSON.stringify({ name: "@eventra_dev/cli-plugin-localtest", version: "1.0.0", main: "index.js" }),
+      );
+      fs.writeFileSync(
+        path.join(dir, "index.js"),
+        'module.exports = { id: "localtest", includeGlobs: ["**/*.localtest"], match: () => false, transform: async () => ({ modules: [] }) };',
+      );
+      vi.spyOn(process, "cwd").mockReturnValue(project);
+
+      const registry = await createPluginRegistry(
+        normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-localtest"] }),
+      );
+
+      expect(registry.getIncludePatterns()).toContain("**/*.localtest");
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to normal resolution when the project does not have the plugin", async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-plugin-empty-"));
+    try {
+      vi.spyOn(process, "cwd").mockReturnValue(project);
+      // resolved through vi.mock, as in the tests above
+      const registry = await createPluginRegistry(
+        normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-fixture-valid"] }),
+      );
+      expect(registry.getIncludePatterns()).toContain("**/*.fixture");
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+});
+

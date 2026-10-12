@@ -6,7 +6,16 @@ export class ImportGraph {
   // import -> importers
   private readonly reverse = new Map<string, Set<string>>();
 
-  updateFile(file: string, nextImports: readonly string[]): void {
+  hasFile(file: string): boolean {
+    return this.imports.has(file);
+  }
+
+  getFiles(): string[] {
+    return [...this.imports.keys()];
+  }
+
+  /** Returns true when the set of files this file imports changed. */
+  updateFile(file: string, nextImports: readonly string[]): boolean {
     const previous = this.imports.get(file) ?? new Set<string>();
     const next = new Set(nextImports);
     // remove old edges
@@ -35,6 +44,7 @@ export class ImportGraph {
       importers.add(file);
     }
     this.imports.set(file, next);
+    return previous.size !== next.size || [...next].some((imported) => !previous.has(imported));
   }
 
   removeFile(file: string): void {

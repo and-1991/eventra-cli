@@ -1,3 +1,6 @@
+import { createRequire } from "module";
+import path from "path";
+
 import type { EventraConfig } from "../types";
 import { registerExternalCliPlugin, isExternalCliPlugin } from "./adapters/external";
 import { registerConfiguredSinks } from "./builtins/configuredSinks";
@@ -37,6 +40,19 @@ function pluginLoadHint(spec: string): string {
   return "";
 }
 
+/**
+ * Plugins are installed in the user's project, not next to the CLI (a global
+ * install, npx or a pnpm layout would not find them from here), so resolve from
+ * the project first and fall back to normal resolution relative to the CLI.
+ */
+function resolveFromProject(spec: string): string {
+  try {
+    return createRequire(path.join(process.cwd(), "package.json")).resolve(spec);
+  } catch {
+    return spec;
+  }
+}
+
 async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promise<void> {
   const trimmed = spec.trim();
   // Defensive-only: the sole caller (createPluginRegistry) already does
@@ -48,7 +64,7 @@ async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promi
 
   let mod: unknown;
   try {
-    mod = await import(trimmed);
+    mod = await import(resolveFromProject(trimmed));
   } catch (err) {
     // Node's dynamic import() only ever rejects with an Error (module
     // resolution, syntax, or evaluation errors are all Error instances) —
@@ -87,7 +103,7 @@ export async function createPluginRegistry(config: EventraConfig): Promise<Plugi
 
     if (!isTrustedPluginSpecifier(trimmed)) {
       console.warn(
-        `Eventra: skipping plugin "${trimmed}" — only official @eventra_dev/cli-plugin-* packages can be loaded.${pluginLoadHint(trimmed)}`,
+        `Eventra: skipping plugin "${trimmed}" - only official @eventra_dev/cli-plugin-* packages can be loaded.${pluginLoadHint(trimmed)}`,
       );
       continue;
     }

@@ -40,7 +40,9 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
     apiKey: config.apiKey ?? "",
     endpoint: config.endpoint ?? "",
     events: [...(config.events ?? [])].sort(),
-    functionWrappers: uniqueWrappers.sort((a, b) => a.name.localeCompare(b.name)),
+    // plain comparison, not localeCompare: the order in the committed file must
+    // not depend on the machine's ICU locale
+    functionWrappers: uniqueWrappers.sort((a, b) => (a.name < b.name ? -1 : 1)),
     plugins: [...(config.plugins ?? [])],
     ...(sinks.length > 0 ? { sinks } : {}),
     sync: {
@@ -63,9 +65,45 @@ export async function loadConfig(): Promise<EventraConfig | null> {
   }
 }
 
+/**
+ * Says why `loadConfig` returned null, for the CLI's error message: a missing
+ * file and a malformed one are different problems.
+ */
+export async function describeConfigProblem(): Promise<string> {
+  const configPath = path.join(process.cwd(), CONFIG_NAME);
+  if (!(await fs.pathExists(configPath))) return `${CONFIG_NAME} not found`;
+  try {
+    await fs.readJSON(configPath);
+    return `${CONFIG_NAME} could not be read`;
+  } catch (err) {
+    // readJSON only rejects with an Error (ENOENT was ruled out above, the rest is a parse error)
+    return `${CONFIG_NAME} is not valid JSON: ${(err as Error).message}`;
+  }
+}
+
+/**
+ * Loads the config for a command that cannot run without it. On failure it
+ * prints the reason and sets a non-zero exit code, and returns null, so every
+ * command ends the same way when there is no usable config.
+ */
+export async function requireConfig(): Promise<EventraConfig | null> {
+  const config = await loadConfig();
+  if (config) return config;
+  console.error(await describeConfigProblem());
+  process.exitCode = 1;
+  return null;
+}
+
+/** Writes eventra.json only when its content actually changed (watch mode re-saves often). */
 export async function saveConfig(config: EventraConfig): Promise<void> {
   const configPath = path.join(process.cwd(), CONFIG_NAME);
-  await fs.writeJSON(configPath, normalizeConfig(config), { spaces: 2 });
+  const next = `${JSON.stringify(normalizeConfig(config), null, 2)}\n`;
+  try {
+    if ((await fs.readFile(configPath, "utf8")) === next) return;
+  } catch {
+    // missing or unreadable: write it
+  }
+  await fs.writeFile(configPath, next);
 }
 
 interface LocalSecrets {

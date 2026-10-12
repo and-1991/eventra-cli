@@ -198,3 +198,29 @@ describe("WrapperRegistry", () => {
     }
   });
 });
+
+describe("WrapperRegistry checker provider", () => {
+  it("calls a provider once, on first use, and setChecker replaces it", () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const compiler = new CompilerContext(root);
+      const first = compiler.getChecker();
+      let calls = 0;
+      const registry = new WrapperRegistry(() => {
+        calls++;
+        return first;
+      }, new ResolvedExportCache());
+
+      expect(calls).toBe(0);
+      expect(registry.getChecker()).toBe(first);
+      expect(registry.getChecker()).toBe(first);
+      expect(calls).toBe(1);
+
+      const other = new CompilerContext(root).getChecker();
+      registry.setChecker(other);
+      expect(registry.getChecker()).toBe(other);
+    } finally {
+      cleanup();
+    }
+  });
+});

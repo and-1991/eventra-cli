@@ -1,8 +1,9 @@
 import chalk from "chalk";
 
-import { loadConfig, saveConfig } from "../config/config";
+import { requireConfig, saveConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { buildConfigFromScan } from "../core/scanResults";
+import { plural, reportIgnored, reportSkipped } from "../core/skipped";
 
 function diffSets(found: Set<string>, known: Set<string>): { added: string[]; removed: string[] } {
   return {
@@ -11,15 +12,13 @@ function diffSets(found: Set<string>, known: Set<string>): { added: string[]; re
   };
 }
 
-export async function check({ fix = false }: { fix?: boolean }) {
-  const config = await loadConfig();
-  if (!config) {
-    console.log(chalk.red("eventra.json not found"));
-    process.exit(1);
-  }
+export async function check({ fix = false, strict = false }: { fix?: boolean; strict?: boolean } = {}) {
+  const config = await requireConfig();
+  if (!config) return;
   console.log(chalk.blue("Checking events and function wrappers..."));
-  const { engine, plugins } = await scanProject(config);
+  const { engine, plugins, skipped, ignored } = await scanProject(config);
   await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
+  const partial = skipped.length > 0;
 
   const foundEvents = new Set(engine.getAllEvents());
   const knownEvents = new Set(config.events ?? []);
@@ -29,9 +28,20 @@ export async function check({ fix = false }: { fix?: boolean }) {
   const knownWrappers = new Set(config.functionWrappers?.map((w) => w.name) ?? []);
   const wrapperDiff = diffSets(foundWrappers, knownWrappers);
 
+  // With skipped files the scan is incomplete: a known event that was not found
+  // may simply live in a skipped file, so it is not reported as removed.
+  const unverified = partial ? eventDiff.removed.length + wrapperDiff.removed.length : 0;
+  if (partial) {
+    eventDiff.removed = [];
+    wrapperDiff.removed = [];
+  }
+
   if (fix) {
-    await saveConfig(buildConfigFromScan(config, engine));
+    await saveConfig(buildConfigFromScan(config, engine, { preserveKnown: partial }));
     console.log(chalk.green("Synced"));
+    reportSkipped(skipped);
+    reportIgnored(ignored);
+    if (strict && partial) process.exitCode = 1;
     return;
   }
 
@@ -51,7 +61,15 @@ export async function check({ fix = false }: { fix?: boolean }) {
     wrapperDiff.removed.forEach((w) => console.log(chalk.yellow(`- ${w}`)));
   }
 
-  if (hasDiff) {
+  reportSkipped(skipped);
+  reportIgnored(ignored);
+  if (unverified > 0) {
+    console.error(
+      chalk.gray(`${plural(unverified, "known entry", "known entries")} could not be verified because files were skipped.`),
+    );
+  }
+
+  if (hasDiff || (strict && partial)) {
     process.exit(1);
   }
   console.log(chalk.green("All good"));

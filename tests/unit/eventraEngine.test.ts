@@ -536,3 +536,28 @@ describe("EventraEngine", () => {
     }
   });
 });
+
+describe("EventraEngine.getAllDynamicOccurrences ordering", () => {
+  const occ = (fileName: string, line: number, character: number) => ({
+    fileName,
+    line,
+    character,
+    calleeText: "track",
+    callText: "track(x)",
+    resolvedValues: [],
+  });
+
+  it("sorts by file, line and column with plain comparison, not the machine locale", () => {
+    const engine = new EventraEngine(process.cwd());
+    const results = (engine as unknown as { fileResults: Map<string, unknown> }).fileResults;
+    results.set("one", {
+      events: new Set(),
+      detectedFunctionWrappers: new Set(),
+      dynamicOccurrences: [occ("b.ts", 1, 5), occ("a.ts", 2, 9), occ("a.ts", 2, 3), occ("B.ts", 1, 0)],
+    });
+
+    expect(
+      engine.getAllDynamicOccurrences().map((o) => `${o.fileName}:${o.line}:${o.character}`),
+    ).toEqual(["B.ts:1:0", "a.ts:2:3", "a.ts:2:9", "b.ts:1:5"]);
+  });
+});

@@ -12,8 +12,23 @@ export interface DocumentRecord {
 export class DocumentRegistry {
   private readonly documents = new Map<string, DocumentRecord>();
 
+  // path.resolve + regex ran thousands of times per scan on the same inputs;
+  // keyed on cwd because relative inputs resolve against it
+  private readonly normalizedCache = new Map<string, string>();
+  private normalizedCwd = "";
+
   normalize(fileName: string): string {
-    return path.resolve(fileName).replace(/\\/g, "/");
+    const cwd = process.cwd();
+    if (cwd !== this.normalizedCwd) {
+      this.normalizedCache.clear();
+      this.normalizedCwd = cwd;
+    }
+    let normalized = this.normalizedCache.get(fileName);
+    if (normalized === undefined) {
+      normalized = path.resolve(fileName).replace(/\\/g, "/");
+      this.normalizedCache.set(fileName, normalized);
+    }
+    return normalized;
   }
 
   has(fileName: string): boolean {
