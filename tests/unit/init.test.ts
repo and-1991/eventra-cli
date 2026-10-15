@@ -19,7 +19,8 @@ vi.mock("../../src/config/config", async (importOriginal) => {
   };
 });
 
-import { init } from "../../src/cli/init";
+import { init, isInstalled } from "../../src/cli/init";
+import { INIT_EXCLUDE } from "../../src/config/config";
 
 let cwd: string;
 let cwdSpy: ReturnType<typeof vi.spyOn>;
@@ -139,7 +140,7 @@ describe("init: prompts, defaults and output", () => {
       plugins: [],
       sync: {
         include: ["**/*.{ts,tsx,js,jsx}"],
-        exclude: ["node_modules", "dist", ".next", ".git"],
+        exclude: [...INIT_EXCLUDE],
       },
     });
   });
@@ -214,7 +215,7 @@ describe("init: prompts, defaults and output", () => {
         functionWrappers: [],
         sync: {
           include: ["**/*.{ts,tsx,js,jsx}"],
-          exclude: ["node_modules", "dist", ".next", ".git"],
+          exclude: [...INIT_EXCLUDE],
         },
       },
     ]);
@@ -237,6 +238,63 @@ describe("init: prompts, defaults and output", () => {
       "",
       "Run `eventra sync`",
     ]);
+  });
+});
+
+describe("init: framework plugins", () => {
+  const FRAMEWORKS: Array<[string, string]> = [
+    ["vue", "@eventra_dev/cli-plugin-vue"],
+    ["svelte", "@eventra_dev/cli-plugin-svelte"],
+    ["astro", "@eventra_dev/cli-plugin-astro"],
+    ["@angular/core", "@eventra_dev/cli-plugin-angular"],
+  ];
+  const installedOnly = (...plugins: string[]) => (plugin: string) => plugins.includes(plugin);
+
+  it.each(FRAMEWORKS)("enables the plugin for %s when it is installed", async (dependency, plugin) => {
+    writePackage({ dependencies: { [dependency]: "1" } });
+    await init({ yes: true, isPluginInstalled: installedOnly(plugin) });
+
+    expect(readConfig().plugins).toEqual([plugin]);
+    const out = log.mock.calls.flat().join("\n");
+    expect(out).toContain(`plugins: ${plugin}`);
+    expect(out).not.toContain("npm install");
+  });
+
+  it.each(FRAMEWORKS)("does not write the plugin for %s when it is not installed, and says what to do", async (dependency, plugin) => {
+    writePackage({ dependencies: { [dependency]: "1" } });
+    await init({ yes: true, isPluginInstalled: installedOnly() });
+
+    // `sync` stops on a plugin it cannot load, so an init followed by a sync must not be set up to fail
+    expect(readConfig().plugins).toEqual([]);
+    const out = log.mock.calls.flat().join("\n");
+    expect(out).toContain(`npm install -D ${plugin}`);
+    expect(out).toContain(`add "${plugin}" to "plugins" in eventra.json`);
+    expect(out).not.toContain("plugins: @eventra_dev");
+  });
+
+  it("splits several frameworks into installed and missing", async () => {
+    writePackage({ dependencies: { vue: "1", svelte: "1" } });
+    await init({ yes: true, isPluginInstalled: installedOnly("@eventra_dev/cli-plugin-vue") });
+
+    expect(readConfig().plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+    expect(log.mock.calls.flat().join("\n")).toContain("npm install -D @eventra_dev/cli-plugin-svelte");
+  });
+
+  it("writes no plugins and prints nothing about them when no framework is found", async () => {
+    writePackage({ dependencies: { react: "19" } });
+    await init({ yes: true, isPluginInstalled: installedOnly() });
+    expect(readConfig().plugins).toEqual([]);
+    expect(log.mock.calls.flat().join("\n")).not.toContain("plugins:");
+    expect(log.mock.calls.flat().join("\n")).not.toContain("npm install");
+  });
+
+  it("the real check finds a plugin installed in the project, and not one that is not", () => {
+    const dir = path.join(cwd, "node_modules", "@eventra_dev", "cli-plugin-fake");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "@eventra_dev/cli-plugin-fake", main: "index.js" }));
+    fs.writeFileSync(path.join(dir, "index.js"), "module.exports = {};");
+    expect(isInstalled("@eventra_dev/cli-plugin-fake")).toBe(true);
+    expect(isInstalled("@eventra_dev/cli-plugin-surely-not-installed")).toBe(false);
   });
 });
 

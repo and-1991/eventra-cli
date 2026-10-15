@@ -13,7 +13,23 @@ export const LOCAL_CONFIG_NAME = "eventra.local.json";
 
 const DEFAULT_INCLUDE = ["**/*.{ts,tsx,js,jsx}"];
 
+// what a config without `sync.exclude` has always skipped; changing it would change the scan of every
+// existing project that never wrote its own list
 const DEFAULT_EXCLUDE = ["node_modules", "dist", ".next", ".git"];
+
+/**
+ * What `eventra init` writes into a new eventra.json: the default above plus folders and files whose
+ * code is not the product. Events fired from a test are not features, and on a large repository the tests
+ * alone can double the files scanned. Written out, so it is visible and editable. `build` and `out` are
+ * left out on purpose: they are as likely to be a source folder as output.
+ */
+export const INIT_EXCLUDE = [
+  ...DEFAULT_EXCLUDE,
+  "coverage",
+  "**/*.{test,spec}.{ts,tsx,js,jsx}",
+  "**/__tests__/**",
+  "**/__mocks__/**",
+];
 
 function normalizeSinks(sinks: unknown): SinkRuleConfig[] {
   if (!Array.isArray(sinks)) return [];

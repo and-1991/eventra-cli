@@ -4,6 +4,7 @@ import path from "path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   CONFIG_NAME,
+  INIT_EXCLUDE,
   LOCAL_CONFIG_NAME,
   describeConfigProblem,
   getTrustedEndpoint,
@@ -26,7 +27,21 @@ describe("normalizeConfig", () => {
     expect(out.functionWrappers).toEqual([]);
     expect(out.plugins).toEqual([]);
     expect(out.sync.include).toEqual(["**/*.{ts,tsx,js,jsx}"]);
+    // unchanged: a config without `sync.exclude` must scan what it always scanned
     expect(out.sync.exclude).toEqual(["node_modules", "dist", ".next", ".git"]);
+  });
+
+  it("gives a new eventra.json (init) the default plus coverage and test files, but not build or out", () => {
+    expect(INIT_EXCLUDE).toEqual([
+      "node_modules",
+      "dist",
+      ".next",
+      ".git",
+      "coverage",
+      "**/*.{test,spec}.{ts,tsx,js,jsx}",
+      "**/__tests__/**",
+      "**/__mocks__/**",
+    ]);
   });
 
   it("sorts events alphabetically", () => {
