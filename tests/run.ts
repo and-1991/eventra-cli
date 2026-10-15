@@ -54,8 +54,9 @@ const fixtures: Array<{
       "JSX Event: Click Me",
       "Wrapped: Via Helper",
       "Server Side: Envelope Sent",
+      "$pageview",
     ],
-    mustNotInclude: ["distinct-user-1", "$pageview", "Camera: Photo Taken"],
+    mustNotInclude: ["distinct-user-1", "Bad!Name", "Camera: Photo Taken"],
   },
   {
     name: "frontend/react",

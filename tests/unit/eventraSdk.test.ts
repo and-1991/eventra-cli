@@ -61,7 +61,11 @@ describe("normalizeEventName", () => {
     expect(normalizeEventName("emoji🎉event")).toBeNull();
     expect(normalizeEventName("tab\tseparated")).toBeNull();
     expect(normalizeEventName("line\nbreak")).toBeNull();
-    expect(normalizeEventName("$pageview")).toBeNull();
+  });
+
+  it("accepts a leading $, as PostHog names its own events", () => {
+    expect(normalizeEventName("$pageview")).toBe("$pageview");
+    expect(normalizeEventName("$pageleave")).toBe("$pageleave");
   });
 
   it("accepts spaces, including together with colons (third-party style names)", () => {

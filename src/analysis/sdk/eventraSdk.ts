@@ -1,4 +1,4 @@
-/** Mirrors @eventra_dev/eventra-sdk runtime limits (see packages/sdk/src/client.ts). */
+/** Mirrors the length limit of @eventra_dev/eventra-sdk (see packages/sdk/src/client.ts). */
 export const EVENTRA_SDK_PACKAGE = "@eventra_dev/eventra-sdk";
 export const MAX_EVENT_NAME_LENGTH = 64;
 
@@ -11,10 +11,12 @@ export function isEventraSdkModuleSpecifier(specifier: string): boolean {
 }
 
 /**
- * Letters, digits and `: _ . / -`, plus the plain space - so third-party names such as
- * `App: User Sign Up` survive. Tabs, newlines and every other character stay rejected.
+ * Letters, digits and `$ : _ . / -`, plus the plain space - so third-party names such as
+ * `App: User Sign Up` and PostHog's own `$pageview` survive. The SDK and the API accept any text up
+ * to the length limit; the CLI stays stricter so that a name read out of code is a clean identifier:
+ * tabs, newlines and every other character are rejected.
  */
-const EVENT_NAME_PATTERN = /^[a-zA-Z0-9:_./ -]+$/;
+const EVENT_NAME_PATTERN = /^[a-zA-Z0-9$:_./ -]+$/;
 
 export function normalizeEventName(value: string): string | null {
   const trimmed = value.trim();

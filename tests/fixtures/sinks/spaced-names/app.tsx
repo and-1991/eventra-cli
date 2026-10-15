@@ -20,6 +20,7 @@ sdk.track("SDK Direct: Sign Up");
 posthog.capture("App: User Sign Up");
 posthog.capture("Order Completed", { total: 5 });
 posthog.capture("$pageview");
+posthog.capture("Bad!Name");
 server.capture({ distinctId: "distinct-user-1", event: "Server Side: Direct" });
 
 // custom callee rule
