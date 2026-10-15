@@ -5,7 +5,7 @@ import path from "path";
 const DEPENDENCY_FIELDS = ["dependencies", "devDependencies", "peerDependencies", "optionalDependencies"] as const;
 
 /** Upper bound on workspace members read, so a huge monorepo cannot make `init` crawl. */
-const MAX_WORKSPACE_PACKAGES = 300;
+export const MAX_WORKSPACE_PACKAGES = 300;
 
 type Json = Record<string, unknown>;
 
@@ -29,13 +29,13 @@ function dependencyNames(pkg: Json): string[] {
   });
 }
 
-function stringList(value: unknown): string[] {
+export function stringList(value: unknown): string[] {
   // Stryker disable next-line ArrayDeclaration: a stray pattern that matches no directory changes nothing
   return Array.isArray(value) ? value.filter((v): v is string => typeof v === "string") : [];
 }
 
 /** `packages:` entries of a pnpm-workspace.yaml (only the plain list form, which is all pnpm writes). */
-function pnpmWorkspacePatterns(yaml: string): string[] {
+export function pnpmWorkspacePatterns(yaml: string): string[] {
   // Stryker disable next-line ArrayDeclaration: a stray pattern that matches no directory changes nothing
   const patterns: string[] = [];
   let inPackages = false;
@@ -58,7 +58,7 @@ function pnpmWorkspacePatterns(yaml: string): string[] {
 }
 
 /** A workspace pattern may only point inside the project: no absolute paths, no `..`. */
-function staysInsideProject(pattern: string): boolean {
+export function staysInsideProject(pattern: string): boolean {
   // Stryker disable next-line StringLiteral: a negated pattern outside the project excludes nothing, so what replaces the "!" cannot show
   const target = pattern.replace(/^!/, "");
   return !path.isAbsolute(target) && !target.split(/[\\/]/).includes("..");
@@ -87,7 +87,7 @@ async function workspacePatterns(rootDir: string, rootPackage: Json): Promise<st
  * `apps/*` -> every member's package.json. A negated pattern (`!apps/skipped`) becomes
  * `!apps/skipped/package.json`, which fast-glob treats as an exclusion of exactly those files.
  */
-const memberGlob = (pattern: string): string => `${pattern}/package.json`;
+export const memberGlob = (pattern: string): string => `${pattern}/package.json`;
 
 /** Member package.json paths for the patterns; a pattern fast-glob rejects (a NUL byte, say) yields none. */
 async function findMembers(rootDir: string, patterns: string[]): Promise<string[]> {

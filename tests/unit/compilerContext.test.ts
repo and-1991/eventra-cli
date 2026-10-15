@@ -108,6 +108,70 @@ describe("CompilerContext", () => {
     }
   });
 
+  it("resolveModule reads path aliases from a referenced tsconfig (solution-style root)", () => {
+    const { root, cleanup } = makeProject();
+    try {
+      fs.mkdirSync(path.join(root, "src"));
+      fs.writeFileSync(path.join(root, "src/tracker.ts"), "export const trackFeature = () => {};");
+      fs.writeFileSync(
+        path.join(root, "tsconfig.json"),
+        JSON.stringify({
+          files: [],
+          references: [{ path: "./tsconfig.node.json" }, { path: "./tsconfig.app.json" }],
+        }),
+      );
+      fs.writeFileSync(path.join(root, "tsconfig.node.json"), JSON.stringify({ compilerOptions: {}, include: [] }));
+      fs.writeFileSync(
+        path.join(root, "tsconfig.app.json"),
+        JSON.stringify({ compilerOptions: { composite: true, paths: { "@/*": ["./src/*"] } }, include: ["src"] }),
+      );
+
+      const ctx = new CompilerContext(root);
+      const callerPath = path.join(root, "app.ts");
+      ctx.updateFile(callerPath, `import { trackFeature } from "@/tracker";`);
+
+      const resolved = ctx.resolveModule("@/tracker", callerPath);
+      expect(resolved!.replace(/\\/g, "/")).toContain("/src/tracker.ts");
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("a root tsconfig's own paths win over the referenced ones, and a missing reference is skipped", () => {
+    const { root, cleanup } = makeProject();
+    try {
+      fs.mkdirSync(path.join(root, "src"));
+      fs.writeFileSync(path.join(root, "src/tracker.ts"), "export const trackFeature = () => {};");
+      fs.writeFileSync(
+        path.join(root, "tsconfig.json"),
+        JSON.stringify({
+          compilerOptions: { baseUrl: ".", paths: { "@own/*": ["./src/*"] } },
+          references: [{ path: "./missing.json" }],
+        }),
+      );
+
+      const ctx = new CompilerContext(root);
+      const callerPath = path.join(root, "app.ts");
+      ctx.updateFile(callerPath, `import { trackFeature } from "@own/tracker";`);
+
+      expect(ctx.resolveModule("@own/tracker", callerPath)).toBeDefined();
+    } finally {
+      cleanup();
+    }
+  });
+
+  it("skips a reference whose tsconfig is unreadable, and one without aliases", () => {
+    const { root, cleanup } = makeProject();
+    try {
+      fs.writeFileSync(path.join(root, "tsconfig.json"), JSON.stringify({ files: [], references: [{ path: "./missing.json" }, { path: "./plain" }] }));
+      fs.mkdirSync(path.join(root, "plain"));
+      fs.writeFileSync(path.join(root, "plain/tsconfig.json"), JSON.stringify({ compilerOptions: {} }));
+      expect(() => new CompilerContext(root)).not.toThrow();
+    } finally {
+      cleanup();
+    }
+  });
+
   it("getAllSourceFiles excludes declaration files", () => {
     const { root, cleanup } = makeProject();
     try {

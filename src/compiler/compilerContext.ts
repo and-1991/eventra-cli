@@ -3,6 +3,7 @@ import path from "path";
 import ts from "typescript";
 
 import { DocumentRegistry } from "./documentRegistry";
+import { findWorkspacePackages } from "./workspacePackages";
 
 interface CachedSourceFile {
   // content is compared, not the registry version: a removed and re-added file
@@ -26,9 +27,15 @@ export class CompilerContext {
   // scan and flushes once, so an eager build in the constructor was thrown away.
   private programInstance: ts.Program | undefined;
   private readonly rootNames = new Set<string>();
-  // Only set while withResolutionCache() runs: it memoises fileExists results,
-  // so it must never outlive one batch of resolutions against one program.
-  private activeResolutionCache: ts.ModuleResolutionCache | undefined;
+  // compiler options of the nearest tsconfig.json above a folder (the root one for files outside any other)
+  private readonly optionsByDir = new Map<string, ts.CompilerOptions>();
+  // the options a project starts from before any tsconfig.json is applied
+  private readonly defaultOptions: ts.CompilerOptions;
+  private readonly workspacePackages: ReadonlyMap<string, string>;
+  // one module resolution cache per set of options; only alive while a program is built or a batch runs
+  private readonly resolutionCaches = new Map<ts.CompilerOptions, ts.ModuleResolutionCache>();
+  // how many builds or batches are running that share the caches (a rebuild can start inside a batch)
+  private cachingDepth = 0;
 
   constructor(private readonly rootDir: string) {
     const localTsconfig = path.join(rootDir, "tsconfig.json");
@@ -50,6 +57,7 @@ export class CompilerContext {
       incremental: false,
     };
 
+    this.defaultOptions = compilerOptions;
     if (configPath) {
       const config = ts.readConfigFile(configPath, ts.sys.readFile);
       if (config.error) {
@@ -64,18 +72,141 @@ export class CompilerContext {
         ...compilerOptions,
         ...parsed.options,
       };
+      // A solution-style tsconfig (`"files": []` plus `references`, the Vite and Vue template) keeps its
+      // `@/*` aliases in a referenced config, so without this every aliased import stays unresolved.
+      if (!parsed.options.paths) {
+        Object.assign(compilerOptions, this.pathOptionsFromReferences(parsed.projectReferences));
+      }
       for (const file of parsed.fileNames) {
         this.rootNames.add(this.normalize(file));
       }
     }
 
     this.compilerOptions = compilerOptions;
+    this.workspacePackages = findWorkspacePackages(rootDir);
     this.host = ts.createCompilerHost(this.compilerOptions, true);
     this.patchCompilerHost();
   }
 
   private normalize(fileName: string): string {
     return this.registry.normalize(fileName);
+  }
+
+  /**
+   * Compiler options for resolving the imports of `fromFile`: those of the nearest tsconfig.json above
+   * it. A monorepo keeps one per app (`@/*` means a different folder in each) and often none at the root;
+   * a single root-level tsconfig.json answers for every file below it, as it always did.
+   */
+  private optionsFor(fromFile: string): ts.CompilerOptions {
+    // an installed package may ship a tsconfig.json of its own: its settings are for building it, not for this project
+    if (fromFile.split(/[\\/]/).includes("node_modules")) return this.compilerOptions;
+    const visited: string[] = [];
+    let options = this.compilerOptions;
+    for (let dir = path.dirname(fromFile); ; dir = path.dirname(dir)) {
+      const cached = this.optionsByDir.get(dir);
+      const own = cached ?? this.readDirectoryOptions(dir);
+      if (own) {
+        options = own;
+        visited.push(dir);
+        break;
+      }
+      visited.push(dir);
+      // a file outside the project, or the top of the filesystem, keeps the root options
+      if (path.relative(this.rootDir, dir).startsWith("..") || path.dirname(dir) === dir || dir === this.rootDir) break;
+    }
+    for (const dir of visited) this.optionsByDir.set(dir, options);
+    return options;
+  }
+
+  /** The options a folder's own tsconfig.json sets, `undefined` when it has none (the root's are already loaded). */
+  private readDirectoryOptions(dir: string): ts.CompilerOptions | undefined {
+    if (dir === this.rootDir) return this.compilerOptions;
+    const configPath = path.join(dir, "tsconfig.json");
+    if (!fs.existsSync(configPath)) return undefined;
+    const config = ts.readConfigFile(configPath, ts.sys.readFile);
+    if (config.error) return undefined;
+    const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir);
+    return {
+      ...this.defaultOptions,
+      ...parsed.options,
+      ...(parsed.options.paths ? {} : this.aliasesWithout(parsed.options, parsed.projectReferences)),
+    };
+  }
+
+  /**
+   * Aliases for a config that sets no `paths` of its own: those of its project references, or else the root's.
+   * A tsconfig.json that only adjusts a few options (a `tests/` one, say) does not mean the root's `@/*` stopped
+   * being valid there, and the root's aliases applied to every file before configs were read per folder.
+   */
+  private aliasesWithout(own: ts.CompilerOptions, references: readonly ts.ProjectReference[] | undefined): ts.CompilerOptions {
+    const fromReferences = this.pathOptionsFromReferences(references);
+    if (fromReferences.paths) return fromReferences;
+    const { paths, baseUrl, pathsBasePath } = this.compilerOptions;
+    return { paths, baseUrl: own.baseUrl ?? baseUrl, pathsBasePath };
+  }
+
+  private cacheFor(options: ts.CompilerOptions): ts.ModuleResolutionCache | undefined {
+    if (this.cachingDepth === 0) return undefined;
+    let cache = this.resolutionCaches.get(options);
+    if (!cache) {
+      cache = ts.createModuleResolutionCache(this.rootDir, (fileName) => this.normalize(fileName), options);
+      this.resolutionCaches.set(options, cache);
+    }
+    return cache;
+  }
+
+  /** Where a monorepo package's own folder is for an import of it (`@acme/lib`, `@acme/lib/hooks/x`), if it is one. */
+  private workspaceTargets(moduleName: string): string[] {
+    let best: { name: string; dir: string } | undefined;
+    for (const [name, dir] of this.workspacePackages) {
+      if ((moduleName === name || moduleName.startsWith(`${name}/`)) && (!best || name.length > best.name.length)) {
+        best = { name, dir };
+      }
+    }
+    if (!best) return [];
+    const sub = moduleName.slice(best.name.length + 1);
+    // the package's sources may sit in src/ while its package.json points at a build that is not there
+    return [path.join(best.dir, sub), path.join(best.dir, "src", sub)];
+  }
+
+  private resolveImport(
+    moduleName: string,
+    containingFile: string,
+    redirectedReference?: ts.ResolvedProjectReference,
+    mode?: ts.ResolutionMode,
+  ): ts.ResolvedModuleWithFailedLookupLocations {
+    const options = this.optionsFor(containingFile);
+    const cache = this.cacheFor(options);
+    const resolved = ts.resolveModuleName(moduleName, containingFile, options, this.host, cache, redirectedReference, mode);
+    if (resolved.resolvedModule) return resolved;
+    // not installed, so no node_modules link: a package of this very monorepo is found by its folder
+    for (const target of this.workspaceTargets(moduleName)) {
+      const viaWorkspace = ts.resolveModuleName(target, containingFile, options, this.host, cache, redirectedReference, mode);
+      if (viaWorkspace.resolvedModule) return viaWorkspace;
+    }
+    return resolved;
+  }
+
+  /**
+   * Alias options (`paths`, `baseUrl`) of the first referenced tsconfig that defines `paths`. A
+   * reference that is unreadable or has no aliases is skipped; only aliases are taken, never the files.
+   */
+  private pathOptionsFromReferences(
+    references: readonly ts.ProjectReference[] | undefined,
+  ): ts.CompilerOptions {
+    for (const reference of references ?? []) {
+      const referenced = ts.sys.directoryExists(reference.path)
+        ? path.join(reference.path, "tsconfig.json")
+        : reference.path;
+      const config = ts.readConfigFile(referenced, ts.sys.readFile);
+      if (config.error) continue;
+      const { options } = ts.parseJsonConfigFileContent(config.config, ts.sys, path.dirname(referenced));
+      if (options.paths) {
+        const { paths, baseUrl, pathsBasePath } = options;
+        return { paths, baseUrl, pathsBasePath };
+      }
+    }
+    return {};
   }
 
   private resolveLanguageVersion(
@@ -162,6 +293,15 @@ export class CompilerContext {
       return this.registry.has(normalized) || fs.existsSync(normalized);
     };
 
+    this.host.resolveModuleNameLiterals = (literals, containingFile, redirectedReference, _options, containingSourceFile) =>
+      literals.map((literal) =>
+        this.resolveImport(
+          literal.text,
+          containingFile,
+          redirectedReference,
+          ts.getModeForUsageLocation(containingSourceFile, literal, this.compilerOptions),
+        ),
+      );
     this.host.getCanonicalFileName = (f) => this.normalize(f);
     this.host.useCaseSensitiveFileNames = () => true;
     this.host.getCurrentDirectory = () => this.rootDir;
@@ -178,7 +318,27 @@ export class CompilerContext {
   }
 
   private rebuildProgram(): void {
-    this.programInstance = ts.createProgram([...this.rootNames], this.compilerOptions, this.host);
+    // options are re-read from disk with every build, so an edited nested tsconfig.json is seen
+    this.optionsByDir.clear();
+    this.withSharedCaches(() => {
+      this.programInstance = ts.createProgram([...this.rootNames], this.compilerOptions, this.host);
+    });
+  }
+
+  /**
+   * Imports resolved while `fn` runs share caches, as they do in TypeScript's own host. Files may appear or
+   * go between runs, so nothing is kept after the outermost one; a run started inside another (a lazy
+   * program build inside a batch) joins it instead of dropping its caches.
+   */
+  private withSharedCaches<T>(fn: () => T): T {
+    if (this.cachingDepth === 0) this.resolutionCaches.clear();
+    this.cachingDepth++;
+    try {
+      return fn();
+    } finally {
+      this.cachingDepth--;
+      if (this.cachingDepth === 0) this.resolutionCaches.clear();
+    }
   }
 
   private get program(): ts.Program {
@@ -194,19 +354,7 @@ export class CompilerContext {
    * same directory lookups. The cache is dropped when `fn` returns.
    */
   withResolutionCache<T>(fn: () => T): T {
-    if (this.activeResolutionCache) {
-      return fn();
-    }
-    this.activeResolutionCache = ts.createModuleResolutionCache(
-      this.rootDir,
-      (fileName) => this.normalize(fileName),
-      this.compilerOptions,
-    );
-    try {
-      return fn();
-    } finally {
-      this.activeResolutionCache = undefined;
-    }
+    return this.withSharedCaches(fn);
   }
 
   /** Register file content without rebuilding the TS program (batch via {@link flushUpdates}). */
@@ -317,14 +465,7 @@ export class CompilerContext {
   }
 
   resolveModule(moduleName: string, fromFile: string): string | undefined {
-    const resolved = ts.resolveModuleName(
-      moduleName,
-      this.normalize(fromFile),
-      this.compilerOptions,
-      this.host,
-      this.activeResolutionCache,
-    );
-    return resolved.resolvedModule?.resolvedFileName;
+    return this.resolveImport(moduleName, this.normalize(fromFile)).resolvedModule?.resolvedFileName;
   }
 
   getResolvedModules(fileName: string): string[] {
