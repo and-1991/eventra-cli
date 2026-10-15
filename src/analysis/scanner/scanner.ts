@@ -116,5 +116,6 @@ export function scanSource(
     sinks,
     trackCalls,
     wrappers,
+    functions,
   };
 }

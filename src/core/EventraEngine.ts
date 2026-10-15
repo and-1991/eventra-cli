@@ -9,6 +9,7 @@ import { ResolvedCallCache } from "../analysis/cache/resolvedCallCache";
 import { ResolvedExportCache } from "../analysis/cache/resolvedExportCache";
 import { ReturnPropagationCache } from "../analysis/cache/returnPropagationCache";
 import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFile";
+import { resolveWrapperChains } from "../analysis/scanner/wrapperChains";
 import { FileSemanticIndex } from "../analysis/shared/types";
 import { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 import { EventraConfig, ScanResult } from "../types";
@@ -125,6 +126,24 @@ export class EventraEngine {
     for (const sf of sources) {
       this.indexFile(sf.fileName, config);
     }
+    this.resolveWrapperChains();
+  }
+
+  // Wrappers that reach a sink only through another wrapper (`trackEvent` -> `capture` -> the SDK
+  // call) need every file indexed first, so this runs after the files are indexed, never per file.
+  private resolveWrapperChains(): void {
+    const found = resolveWrapperChains(
+      this.fileIndices.values(),
+      this.compiler.getChecker(),
+      this.wrapperRegistry,
+      this.resolvedCallCache,
+      this.resolvedExportCache,
+    );
+    for (const [file, wrappers] of found) {
+      const index = this.fileIndices.get(file)!;
+      const kept = index.wrappers.filter((w) => !wrappers.some((n) => n.declaration === w.declaration));
+      this.fileIndices.set(file, { ...index, wrappers: [...kept, ...wrappers] });
+    }
   }
 
   beginPreload(): void {
@@ -228,6 +247,7 @@ export class EventraEngine {
       this.scannedFiles.add(file);
       this.indexFile(file, config);
     }
+    this.resolveWrapperChains();
     for (const file of normalized) {
       this.extractFile(file, config);
     }
@@ -347,6 +367,7 @@ export class EventraEngine {
     this.scannedFiles.add(this.normalize(fileName));
     this.refreshChecker();
     this.indexFile(fileName, config);
+    this.resolveWrapperChains();
     return this.extractFile(fileName, config);
   }
 

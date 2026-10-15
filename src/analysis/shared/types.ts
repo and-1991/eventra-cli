@@ -25,4 +25,6 @@ export interface FileSemanticIndex {
   readonly trackCalls: readonly TrackCall[];
   // generic wrapper semantics
   readonly wrappers: readonly WrapperSemanticInfo[];
+  // every function declared in the file, for the cross-file wrapper chain pass
+  readonly functions?: readonly ts.FunctionLikeDeclaration[];
 }
