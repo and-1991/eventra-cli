@@ -16,6 +16,11 @@ export interface DynamicOccurrence {
    * not meaningful, because the call was generated, not written.
    */
   readonly inTemplate?: boolean;
+  /**
+   * Set when the call is ordinary code the plugin copied out of a template (an inline handler, an
+   * interpolation): `fileName` is the template's source file and `line` is not meaningful.
+   */
+  readonly inTemplateCode?: boolean;
   /** The template expression behind `event=...`, for template occurrences. */
   readonly eventExpression?: string;
   /**

@@ -15,6 +15,26 @@ import type { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
 // the synthetic callee each framework plugin uses for a template `event=...`
 const TEMPLATE_CALLEE = /^__eventra_[a-z]+_template_event__$/;
 
+// A plugin starts the code it generates from a template with this comment line, so a call found
+// below it is not on a line the user wrote.
+const TEMPLATE_REGION_START = /^\s*\/\/ --- [a-z]+ template \(auto-generated\) ---$/;
+// optional: a module that carries more after the generated code (an Angular component class) ends it
+const TEMPLATE_REGION_END = /^\s*\/\/ --- end template ---$/;
+
+interface TemplateRegion {
+  readonly from: number;
+  readonly to: number;
+}
+
+// 1-based lines of the generated template region in a virtual module, or undefined when it has none
+function templateRegionOf(content: string): TemplateRegion | undefined {
+  const lines = content.split("\n");
+  const start = lines.findIndex((line) => TEMPLATE_REGION_START.test(line));
+  if (start === -1) return undefined;
+  const end = lines.findIndex((line, index) => index > start && TEMPLATE_REGION_END.test(line));
+  return { from: start + 1, to: end === -1 ? Infinity : end + 1 };
+}
+
 // `__eventra_x_template_event__(expr)` (callText may be cut with an ellipsis)
 function templateExpression(occurrence: DynamicOccurrence): string {
   const open = occurrence.callText.indexOf("(");
@@ -31,6 +51,7 @@ export class PluginRegistry {
   private readonly dynamicEventReporters: DynamicEventReporter[] = [];
   private readonly includePatterns: string[] = [];
   private readonly sourceToVirtuals = new Map<string, string[]>();
+  private readonly templateRegions = new Map<string, TemplateRegion>();
 
   registerFilePreprocessor(preprocessor: FilePreprocessor): void {
     if (this.preprocessors.some((p) => p.name === preprocessor.name)) {
@@ -105,6 +126,14 @@ export class PluginRegistry {
       }
       const files = await preprocessor.process(input);
       if (files.length > 0) {
+        // virtual files this source produced before and no longer does: their regions are not valid for anything else
+        for (const stale of this.sourceToVirtuals.get(sourceKey) ?? []) this.templateRegions.delete(stale);
+        for (const file of files) {
+          const key = this.normalizePath(file.fileName);
+          const region = templateRegionOf(file.content);
+          if (region === undefined) this.templateRegions.delete(key);
+          else this.templateRegions.set(key, region);
+        }
         this.sourceToVirtuals.set(
           sourceKey,
           files.map((file) => this.normalizePath(file.fileName)),
@@ -113,6 +142,7 @@ export class PluginRegistry {
       }
     }
 
+    for (const stale of this.sourceToVirtuals.get(sourceKey) ?? []) this.templateRegions.delete(stale);
     this.sourceToVirtuals.delete(sourceKey);
     return [{ fileName: input.fileName, content: input.content }];
   }
@@ -174,6 +204,11 @@ export class PluginRegistry {
           inTemplate: true,
           eventExpression: templateExpression(occurrence),
         };
+      }
+      // ordinary code the plugin copied out of the template: its line is in the generated text
+      const region = this.templateRegions.get(this.normalizePath(occurrence.fileName));
+      if (region !== undefined && occurrence.line >= region.from && occurrence.line <= region.to) {
+        return { ...occurrence, fileName: source, inTemplateCode: true };
       }
       // an Angular template module embeds the component class: lines there
       // are generated, the real call is also reported from the class file

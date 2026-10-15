@@ -26,6 +26,8 @@ const consoleDynamicEventReporter: DynamicEventReporter = {
       const file = displayPath(occ.fileName);
       if (occ.inTemplate) {
         console.log(chalk.yellow(`~ template of ${file}: event="${occ.eventExpression ?? ""}"${values}`));
+      } else if (occ.inTemplateCode) {
+        console.log(chalk.yellow(`~ template of ${file}: ${occ.calleeText}(...)${values}`));
       } else {
         console.log(chalk.yellow(`~ ${file}:${occ.line} ${occ.calleeText}(...)${values}`));
       }

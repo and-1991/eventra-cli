@@ -269,3 +269,135 @@ describe("dynamic occurrence attribution edge cases", () => {
   });
 });
 
+
+describe("code a plugin generated from a template", () => {
+  const tpl = (content: string): ExternalCliPlugin => ({
+    id: "tpl",
+    includeGlobs: ["**/*.tpl"],
+    match: (p) => p.endsWith(".tpl"),
+    transform: async ({ path: p }) => ({ modules: [{ path: `${p}.ts`, content }] }),
+  });
+
+  async function printed(content: string, lines: number[], calleeText = "track") {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dyn-tpl-"));
+    try {
+      process.chdir(root);
+      const registry = createBuiltinPluginRegistry();
+      registerExternalCliPlugin(tpl(content), registry);
+      const abs = path.join(root, "a.tpl");
+      await registry.preprocessFile({ fileName: abs, content: "" });
+      const out: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((text: unknown) => void out.push(String(text)));
+      await registry.runDynamicEventReporters(
+        lines.map((line) => ({
+          fileName: `${abs}.ts`,
+          line,
+          character: 0,
+          calleeText,
+          callText: `${calleeText}(x)`,
+          resolvedValues: [],
+        })),
+      );
+      return out.filter((l) => l.startsWith("~"));
+    } finally {
+      process.chdir(cwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }
+
+  const REGION = [
+    "export const real = 1;", // 1
+    "// --- tpl template (auto-generated) ---", // 2
+    "function t() {", // 3
+    "  track(x);", // 4
+    "}", // 5
+    "// --- end template ---", // 6
+    "export const after = 2;", // 7
+  ].join("\n");
+
+  it("reports a call inside the region as template code, without a line number", async () => {
+    expect(await printed(REGION, [4])).toEqual(["~ template of a.tpl: track(...)"]);
+  });
+
+  it("keeps the line of a call outside the region", async () => {
+    expect(await printed(REGION, [1, 7])).toEqual(["~ a.tpl:1 track(...)", "~ a.tpl:7 track(...)"]);
+  });
+
+  it("treats everything after the start marker as generated when there is no end marker", async () => {
+    const open = REGION.split("\n").slice(0, 5).join("\n");
+    expect(await printed(open, [4])).toEqual(["~ template of a.tpl: track(...)"]);
+  });
+
+  it("indented markers (a method inside a class) count too", async () => {
+    const indented = ["class C {", "  // --- tpl template (auto-generated) ---", "  m() { track(x); }", "  // --- end template ---", "}"].join("\n");
+    expect(await printed(indented, [3])).toEqual(["~ template of a.tpl: track(...)"]);
+  });
+
+  it("does nothing for a module without a marker", async () => {
+    expect(await printed("export const a = 1;\ntrack(x);", [2])).toEqual(["~ a.tpl:2 track(...)"]);
+  });
+
+  it("still prints the template event= form for the synthetic callee inside the region", async () => {
+    const content = REGION.replace("track(x)", "__eventra_tpl_template_event__(x)");
+    expect(await printed(content, [4], "__eventra_tpl_template_event__")).toEqual(['~ template of a.tpl: event="x"']);
+  });
+
+  it("forgets the region of a virtual file its source stopped producing", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dyn-tpl-stale-"));
+    try {
+      process.chdir(root);
+      const registry = createBuiltinPluginRegistry();
+      let modules = [{ path: "one.ts", content: REGION }];
+      registerExternalCliPlugin(
+        {
+          id: "tpl",
+          includeGlobs: ["**/*.tpl"],
+          match: (p) => p.endsWith(".tpl"),
+          transform: async ({ path: p }) => ({ modules: modules.map((m) => ({ path: path.join(path.dirname(p), m.path), content: m.content })) }),
+        },
+        registry,
+      );
+      const abs = path.join(root, "a.tpl");
+      await registry.preprocessFile({ fileName: abs, content: "" });
+      // the source now produces a different virtual file; `one.ts` is gone and could be reused by another source
+      modules = [{ path: "two.ts", content: "export const a = 1;" }];
+      await registry.preprocessFile({ fileName: abs, content: "" });
+      const other = path.join(root, "b.tpl");
+      modules = [{ path: "one.ts", content: "export const b = 1;\ntrack(x);\ntrack(x);\ntrack(x);\ntrack(x);" }];
+      await registry.preprocessFile({ fileName: other, content: "" });
+      const out: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((text: unknown) => void out.push(String(text)));
+      await registry.runDynamicEventReporters([
+        { fileName: path.join(root, "one.ts"), line: 4, character: 0, calleeText: "track", callText: "track(x)", resolvedValues: [] },
+      ]);
+      expect(out.filter((l) => l.startsWith("~"))).toEqual(["~ b.tpl:4 track(...)"]);
+    } finally {
+      process.chdir(cwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("forgets a region when the same file is generated again without one", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dyn-tpl-again-"));
+    try {
+      process.chdir(root);
+      const registry = createBuiltinPluginRegistry();
+      let content = REGION;
+      registerExternalCliPlugin(
+        { id: "tpl", includeGlobs: ["**/*.tpl"], match: (p) => p.endsWith(".tpl"), transform: async ({ path: p }) => ({ modules: [{ path: `${p}.ts`, content }] }) },
+        registry,
+      );
+      const abs = path.join(root, "a.tpl");
+      await registry.preprocessFile({ fileName: abs, content: "" });
+      content = "export const a = 1;\ntrack(x);\ntrack(x);\ntrack(x);\ntrack(x);";
+      await registry.preprocessFile({ fileName: abs, content: "" });
+      const out: string[] = [];
+      vi.spyOn(console, "log").mockImplementation((text: unknown) => void out.push(String(text)));
+      await registry.runDynamicEventReporters([{ fileName: `${abs}.ts`, line: 4, character: 0, calleeText: "track", callText: "track(x)", resolvedValues: [] }]);
+      expect(out.filter((l) => l.startsWith("~"))).toEqual(["~ a.tpl:4 track(...)"]);
+    } finally {
+      process.chdir(cwd);
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});
