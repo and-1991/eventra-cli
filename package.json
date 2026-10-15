@@ -1,6 +1,6 @@
 {
   "name": "@eventra_dev/eventra-cli",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Static analytics event extraction CLI powered by the TypeScript compiler API",
   "license": "MIT",
   "author": {

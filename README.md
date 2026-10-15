@@ -95,6 +95,27 @@ function trackDestructured({ event: name }: { event: string }) {
 trackDestructured({ event: "checkout" });
 ```
 
+A wrapper can call another wrapper, at any depth and across files. `trackEvent("x")` is found even when it only reaches the SDK through `capture`:
+
+```ts
+// capture.ts
+export function capture(name: string, props?: object) { posthog.capture(name, props); }
+
+// track.ts
+export function trackEvent<E extends string>(event: E) { capture(event); }
+
+// page.ts
+trackEvent("checkout_started");
+```
+
+Functions handed back by a hook count too (`const analytics = useAnalytics(); analytics.capture("x")`, where the hook ends with `return { capture }`), and so does a library loaded on demand (`import("posthog-js").then(({ default: ph }) => ph.capture(name))`, `await import(...)`).
+
+### Monorepos
+
+Each import is resolved with the compiler options of the nearest `tsconfig.json` above the file that writes it (a config that sets no `paths` keeps the root's aliases; `node_modules` is never read for options), so an app with its own `@/*` or `~/*` aliases works without a tsconfig at the repository root. When a root `tsconfig.json` only lists `references` (the usual Vite and Vue layout), the aliases of the referenced config are used. Packages of the same repository (`workspaces` or `pnpm-workspace.yaml`) are found by their folder (`@acme/lib`, `@acme/lib/hooks/use-x`, also when the package keeps its sources in `src/`), so the scan does not need `node_modules` to link them. A real install still takes precedence.
+
+`sync`, `check`, `watch` and `send` on a machine with room to spare (a container's memory limit counts) start themselves again with a larger memory limit (half of the machine's memory, at most 8 GB), unless you set `--max-old-space-size` yourself; `init` and `--version` never do. A new `eventra.json` written by `init` leaves out tests and coverage output (see `sync.exclude`); a config that already exists keeps scanning what it scanned.
+
 ### Variables, templates, conditionals
 
 ```ts
@@ -156,7 +177,7 @@ Already have analytics in place? Declare it in `eventra.json` and the CLI treats
 
 Rules are plain data and never run code, so they are safe to commit. A rule with a typo, an invalid `when` or an unknown preset is skipped with a warning. A function with its own name (`trackEvent({ event: "x" })`) is not covered by a preset: add a rule such as `{ "callee": "trackEvent", "nameProperty": "event" }`.
 
-The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events too. Spaces and colons are allowed, so names like `App: User Sign Up` or `Order Completed` are kept as written. Names with other characters, such as PostHog's `$`-prefixed system events (`$pageview`) or a name ending in `!`, are excluded from the scan result.
+The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events too. Spaces and colons are allowed, so names like `App: User Sign Up` or `Order Completed` are kept as written. PostHog's `$`-prefixed names (`$pageview`, `$pageleave`) are kept as well. Names with other characters, such as one ending in `!`, are excluded from the scan result.
 
 ---
 
@@ -165,7 +186,7 @@ The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events
 | Rule | Limit |
 |------|--------|
 | Max length | **64 characters** (same as SDK) |
-| Allowed characters | `a-zA-Z0-9:_./-` and the space (so `App: User Sign Up` works); tabs, newlines and any other character are rejected |
+| Allowed characters | `a-zA-Z0-9$:_./-` and the space (so `App: User Sign Up` and `$pageview` work); tabs, newlines and any other character are rejected |
 | Position | First argument of `.track(name, options?)` |
 
 The second argument (`userId`, `properties`) is **not** used as the event name.
@@ -194,7 +215,7 @@ tracker.track({ event: "click" });
 
 ### `eventra init`
 
-Creates `eventra.json`. It asks for an API key and an endpoint, then looks through `package.json` (and the `package.json` of every workspace member in a monorepo: `workspaces` or `pnpm-workspace.yaml`) for analytics libraries:
+Creates `eventra.json`. It asks for an API key and an endpoint, then looks through `package.json` (and the `package.json` of every workspace member in a monorepo: `workspaces` or `pnpm-workspace.yaml`) for analytics libraries and for the framework (`vue`, `svelte`, `astro`, `@angular/core`), and writes the matching plugin into `plugins` when it is installed. If it is not, `init` prints the install command and the line to add instead: `sync` stops on a plugin it cannot load, so `init` never writes one that would make the next `sync` fail:
 
 ```
 Found analytics in package.json: posthog-js; @segment/analytics-next
@@ -301,6 +322,7 @@ The plugin:
 - parses each `.vue` file with the real Vue compiler (`@vue/compiler-sfc`) into a single virtual TypeScript module combining `<script>`/`<script setup>`
 - extracts `track()` calls from the script exactly like a regular `.ts` file (direct calls, wrappers, propagation)
 - detects `event="feature_name"` attributes in `<template>` — both literal and dynamic (`:event="expr"`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
+- reads calls written anywhere in the template: `@click`/`v-on` handlers (several statements, multi-line arrows), `{{ }}` interpolations and the expressions of `v-bind`, `v-if`, `v-show`, `v-model`, `v-html`, `v-text`
 - Nuxt `.vue` files (pages/layouts/components) are handled the same way; auto-imported composables resolve once the project has run `nuxt prepare`/`nuxt dev`
 
 `sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`. See [`@eventra_dev/cli-plugin-vue`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-vue) for details.
@@ -321,6 +343,7 @@ The plugin:
 
 - parses each `.svelte` file with the real Svelte compiler (`svelte/compiler`) into a single virtual TypeScript module combining `context="module"` and instance `<script>` blocks
 - extracts `track()` calls from the script exactly like a regular `.ts` file (direct calls, wrappers, propagation); Svelte 5 runes (`$props`, `$state`, …) pass through untouched
+- reads calls anywhere in the markup: handlers, `{expr}`, `{@html}`, block expressions (`{#if}`, `{#each}`, `{#key}`, `{#await}`), `use:`/`class:`/`transition:` directives and attribute values
 - detects `event="feature_name"` attributes on any tag — plain elements, components, `{#if}`/`{#each}`/`{#await}`/`{#key}` blocks, slots — both literal and dynamic (`event={expr}`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
 
 `sync.include` does **not** need `**/*.svelte` manually. See [`@eventra_dev/cli-plugin-svelte`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-svelte) for details.
@@ -341,6 +364,7 @@ The plugin:
 
 - parses each `.astro` file with the real Astro compiler (`@astrojs/compiler`) into a single virtual TypeScript module from the frontmatter
 - extracts `track()` calls from the frontmatter exactly like a regular `.ts` file (direct calls, wrappers, propagation); `Astro.props` and other globals pass through untouched
+- reads calls in template expressions (`{track("x")}`, `attr={expr}`, `{...spread}`) and in the page's `<script>` tags, each as a module of its own (quoted `onclick="..."` strings are browser text and are not read)
 - detects `event="feature_name"` attributes on any tag, including inside JSX expressions (`{cond && <Button event="..." />}`, `.map()`) — both literal and dynamic (`event={expr}`, including the `{event}` shorthand); dynamic bindings resolve through the same module scope as the frontmatter, or surface as a dynamic occurrence if unresolvable
 
 `sync.include` does **not** need `**/*.astro` manually. See [`@eventra_dev/cli-plugin-astro`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-astro) for details.
@@ -365,6 +389,7 @@ The plugin:
 
 - parses each component template with the real Angular compiler (`@angular/compiler`) into a virtual TypeScript module, paired with its component class (`foo.component.html` ↔ `foo.component.ts`, Angular CLI's default naming)
 - extracts `track()` calls from the component class exactly like a regular `.ts` file (direct calls, wrappers, propagation) - no plugin needed for that part
+- reads calls in the template: `(click)` handlers, `[input]` bindings, `{{ }}` interpolations, `*ngIf` and `@if`/`@switch`/`@for`, written against the component class (`track('x')` is `this.track('x')`); an `.html` file no component names as its `templateUrl` is skipped when it does not parse
 - detects `event="feature_name"` attributes on any tag, including `*ngIf`/`*ngFor` and the `@if`/`@for`/`@switch` block syntax - both literal and dynamic; a dynamic binding resolves against the component instance (`this.field`, including getters), or surfaces as a dynamic occurrence if unresolvable
 - use `[attr.event]="expr"`, not `[event]="expr"`, for a dynamic binding on a plain HTML element - `[event]` is a property binding that Angular's real compiler rejects (`NG8002`) unless the element is a component that actually declares `@Input() event`; both forms are detected identically by the plugin, only `[attr.event]` is guaranteed to compile
 
@@ -426,7 +451,7 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
 | `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
 | `sinks` | Third-party analytics calls to treat as event sources, e.g. `[{ "preset": "posthog" }]` (see [Third-party analytics](#third-party-analytics-sinks)) |
 | `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
-| `sync.exclude` | Paths skipped during scan. A plain name such as `node_modules` or `dist` matches at any depth (nested `packages/*/node_modules` too); entries containing `/` or glob characters are used as written |
+| `sync.exclude` | Paths skipped during scan. Default for a config that has none: `node_modules`, `dist`, `.next`, `.git`. `eventra init` writes a longer list into a new `eventra.json`: that plus `coverage`, test files (`**/*.{test,spec}.{ts,tsx,js,jsx}`) and `__tests__`/`__mocks__` folders. A plain name such as `node_modules` or `dist` matches at any depth (nested `packages/*/node_modules` too); entries containing `/` or glob characters are used as written |
 
 `eventra init`/`eventra send` never write a real key into this file — they write to `eventra.local.json` instead, which is automatically added to `.gitignore`.
 
@@ -439,7 +464,7 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
 3. Run file preprocessors (e.g. `.vue` → virtual `.ts` modules).
 4. Load sources into an incremental TypeScript program (with SDK type shim).
 5. **Phase 1** — find `Eventra` instances from `@eventra_dev/eventra-sdk` and register function wrappers that call `.track()`.
-6. **Phase 2** — resolve static event names and wrapper propagation chains (sink detector chain includes plugin sinks).
+6. **Phase 2** - resolve static event names and wrapper propagation chains, a wrapper that calls another wrapper included (sink detector chain includes plugin sinks).
 7. Write results to `eventra.json`.
 
 `watch` tracks **disk source files** (including `.vue`), re-runs preprocessors on change, and incrementally updates the engine.
@@ -457,7 +482,7 @@ No runtime execution. No monkey-patching.
 
 ## Test Coverage
 
-Two test layers, **783 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **925 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
@@ -468,7 +493,10 @@ Two test layers, **783 unit tests + 14 e2e fixtures + 3 `check` exit-code scenar
 | `ImportGraph` | Forward/reverse edges, cycles, stale-edge cleanup, file removal |
 | `Scheduler` | Batch coalescing, last-write-wins per file, sequential bursts, error propagation |
 | `DocumentRegistry` | Path normalization, version bumping, no-op on identical content, `ensure()` from disk |
-| `CompilerContext` | Stage/update/remove files, `resolveModule` with `tsconfig.json` `paths`, source-file enumeration |
+| `CompilerContext` | Stage/update/remove files, `resolveModule` with `tsconfig.json` `paths`, source-file enumeration, nearest `tsconfig.json` per file, `references`, workspace packages without an install |
+| `wrapper chains` | A wrapper calling a wrapper (depth 2 and 3), either file order, generics, destructuring, cycles, watch updates |
+| `hook wrappers` | `return { capture }`, dynamic `import()` receivers, `.then` callbacks, promise-typed getters |
+| `respawn` | Heap sizing (a container's lower memory limit counts), only scanning commands respawn, signals reach the child, no second respawn, explicit `--max-old-space-size` respected |
 | `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
 | `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |
 | `external plugin adapter` | Transform output mapping, static sink registration, invalid result rejection |
