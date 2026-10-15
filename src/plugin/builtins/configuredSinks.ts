@@ -93,18 +93,6 @@ function moduleMatches(specifier: string, modules: readonly string[]): boolean {
 
 const MAX_ALIAS_HOPS = 6;
 
-/** Identifiers naming the types in a type annotation: `PostHog`, `PostHog | null`, `ph.PostHog`. */
-function typeReferenceRoots(type: ts.TypeNode): ts.Identifier[] {
-  if (ts.isParenthesizedTypeNode(type)) return typeReferenceRoots(type.type);
-  if (ts.isUnionTypeNode(type) || ts.isIntersectionTypeNode(type)) return type.types.flatMap(typeReferenceRoots);
-  if (ts.isTypeReferenceNode(type)) {
-    let name: ts.EntityName = type.typeName;
-    while (ts.isQualifiedName(name)) name = name.left;
-    return [name];
-  }
-  return [];
-}
-
 /**
  * The symbol an identifier refers to, keeping an import as the import binding itself. TS resolves an
  * import all the way to its target in some positions once something makes the module resolvable
@@ -116,6 +104,55 @@ function symbolAt(id: ts.Identifier, checker: ts.TypeChecker): ts.Symbol | undef
   // Stryker disable next-line ConditionalExpression: fast path only; the scope lookup below returns the same alias
   if (symbol && symbol.flags & ts.SymbolFlags.Alias) return symbol;
   return checker.getSymbolsInScope(id, ts.SymbolFlags.Alias).find((alias) => alias.name === id.text) ?? symbol;
+}
+
+/** `import("m")`: the specifier of the call decides, no installed package needed. */
+function dynamicImportFrom(expression: ts.Expression, modules: readonly string[]): boolean {
+  const specifier = ts.isCallExpression(expression) && expression.expression.kind === ts.SyntaxKind.ImportKeyword
+    ? expression.arguments[0]
+    : undefined;
+  return specifier !== undefined && ts.isStringLiteralLike(specifier) && moduleMatches(specifier.text, modules);
+}
+
+const PROMISE_TYPES = new Set(["Promise", "PromiseLike"]);
+
+/**
+ * True when a type annotation names something from `modules`: `PostHog`, `PostHog | null`, `ph.PostHog`,
+ * `typeof import("posthog-js")`, `Promise<typeof import("posthog-js")>`, `typeof posthog`.
+ */
+function typeFromModules(type: ts.TypeNode, checker: ts.TypeChecker, modules: readonly string[], hops: number): boolean {
+  if (ts.isParenthesizedTypeNode(type)) return typeFromModules(type.type, checker, modules, hops);
+  if (ts.isUnionTypeNode(type) || ts.isIntersectionTypeNode(type)) {
+    return type.types.some((member) => typeFromModules(member, checker, modules, hops));
+  }
+  if (ts.isImportTypeNode(type)) {
+    return ts.isLiteralTypeNode(type.argument) && ts.isStringLiteral(type.argument.literal) && moduleMatches(type.argument.literal.text, modules);
+  }
+  const name = ts.isTypeReferenceNode(type) ? type.typeName : ts.isTypeQueryNode(type) ? type.exprName : undefined;
+  if (name === undefined) return false;
+  let root: ts.EntityName = name;
+  while (ts.isQualifiedName(root)) root = root.left;
+  return (
+    symbolFromModules(symbolAt(root, checker), checker, modules, hops + 1) ||
+    // a promise of the module (`Promise<typeof import("posthog-js")>`), not any generic that mentions it
+    (ts.isTypeReferenceNode(type) &&
+      ts.isIdentifier(type.typeName) &&
+      PROMISE_TYPES.has(type.typeName.text) &&
+      (type.typeArguments ?? []).some((argument) => typeFromModules(argument, checker, modules, hops)))
+  );
+}
+
+/** `return expr` statements of a function body, not looking into functions nested in it. */
+function returnedExpressions(body: ts.ConciseBody): ts.Expression[] {
+  if (!ts.isBlock(body)) return [body];
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) return;
+    if (ts.isReturnStatement(node) && node.expression) found.push(node.expression);
+    ts.forEachChild(node, visit);
+  };
+  ts.forEachChild(body, visit);
+  return found;
 }
 
 /** The symbol `name` exported by the module a specifier points at, when TS can resolve that module. */
@@ -137,6 +174,7 @@ function expressionFromModules(
 ): boolean {
   let expr = unwrapExpression(expression);
   if (ts.isAwaitExpression(expr)) expr = unwrapExpression(expr.expression);
+  if (dynamicImportFrom(expr, modules)) return true;
   if (ts.isCallExpression(expr) || ts.isNewExpression(expr)) expr = unwrapExpression(expr.expression);
   const fromName = (name: ts.Node): boolean =>
     ts.isIdentifier(name) && symbolFromModules(symbolAt(name, checker), checker, modules, hops);
@@ -145,7 +183,9 @@ function expressionFromModules(
   // `amplitude.getInstance()` hang off an import, so the chain's root decides.
   let root: ts.Expression = expr;
   while (ts.isPropertyAccessExpression(root)) root = unwrapExpression(root.expression);
-  return fromName(expr.name) || fromName(root);
+  // `(await import("posthog-js")).default`
+  if (ts.isAwaitExpression(root)) root = unwrapExpression(root.expression);
+  return fromName(expr.name) || fromName(root) || dynamicImportFrom(root, modules);
 }
 
 function declarationFromModules(
@@ -180,17 +220,45 @@ function declarationFromModules(
     return expressionFromModules(decl.expression, checker, modules, hops + 1);
   }
 
+  // function useAnalytics() { return usePostHog() } / const load = () => import("posthog-js"): a function
+  // gives back what it returns (or what its return annotation names)
+  const fn = ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)
+    ? decl
+    : (ts.isVariableDeclaration(decl) || ts.isPropertyDeclaration(decl)) &&
+        decl.initializer &&
+        (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))
+      ? decl.initializer
+      : undefined;
+  if (fn) {
+    if (fn.type && typeFromModules(fn.type, checker, modules, hops)) return true;
+    if (fn.body && returnedExpressions(fn.body).some((returned) => expressionFromModules(returned, checker, modules, hops + 1))) {
+      return true;
+    }
+  }
+
   // const { posthog } = usePostHog(): the binding's own declaration is the enclosing variable.
   const owner = ts.isBindingElement(decl) ? decl.parent.parent : decl;
+
+  // promise.then(({ default: posthog }) => ...) / promise.then((mod) => ...): the parameter holds what the promise resolves to
+  if (ts.isParameter(owner)) {
+    const callback = owner.parent;
+    const call = callback.parent;
+    if (
+      (ts.isArrowFunction(callback) || ts.isFunctionExpression(callback)) &&
+      ts.isCallExpression(call) &&
+      call.arguments[0] === callback &&
+      ts.isPropertyAccessExpression(call.expression) &&
+      call.expression.name.text === "then"
+    ) {
+      return expressionFromModules(call.expression.expression, checker, modules, hops + 1);
+    }
+  }
   // Variables, properties, parameters, functions (return type) and type aliases all keep their
   // annotation in `type`; variables, properties and parameters keep a default/initial value in
   // `initializer`. Anything else (classes, interfaces, ...) simply has neither.
   const { type, initializer } = owner as { type?: ts.TypeNode; initializer?: ts.Expression };
   // let client: PostHog | null / private client: PostHog / (client: PostHog) => ... / type Client = PostHog
-  if (
-    type &&
-    typeReferenceRoots(type).some((id) => symbolFromModules(symbolAt(id, checker), checker, modules, hops + 1))
-  ) {
+  if (type && typeFromModules(type, checker, modules, hops)) {
     return true;
   }
   // const ph = usePostHog() / new PostHog(k) / client = new PostHog(k) / const useTrack = usePostHog

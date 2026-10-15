@@ -8,7 +8,7 @@ function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
 }
 
-function resolveDeclaration(declaration: ts.Declaration): ts.FunctionLikeDeclaration | null {
+function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker): ts.FunctionLikeDeclaration | null {
   // function foo() {}
   if (isFunctionLike(declaration)) {
     return declaration;
@@ -24,6 +24,20 @@ function resolveDeclaration(declaration: ts.Declaration): ts.FunctionLikeDeclara
   // { trackFeature() {} }
   if (ts.isPropertyAssignment(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
     return declaration.initializer;
+  }
+  // `return { capture }` / `return { capture: capture }`: a hook or factory that hands back functions
+  // it defined, so `analytics.capture(...)` is a call of the `capture` declared next to the return
+  const target = ts.isShorthandPropertyAssignment(declaration)
+    ? checker.getShorthandAssignmentValueSymbol(declaration)
+    : ts.isPropertyAssignment(declaration) && ts.isIdentifier(declaration.initializer)
+      ? checker.getSymbolAtLocation(declaration.initializer)
+      : undefined;
+  // the target is a variable, never another property, so this does not recurse into a cycle
+  for (const next of target?.getDeclarations() ?? []) {
+    const resolved = resolveDeclaration(next, checker);
+    if (resolved) {
+      return resolved;
+    }
   }
   return null;
 }
@@ -70,7 +84,7 @@ export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.T
   // declaration resolution
   const declarations = symbol.getDeclarations() ?? [];
   for (const declaration of declarations) {
-    const resolved = resolveDeclaration(declaration);
+    const resolved = resolveDeclaration(declaration, checker);
     if (!resolved) {
       continue;
     }
