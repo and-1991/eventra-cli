@@ -97,7 +97,12 @@ function isEventraNewExpression(node: ts.NewExpression, checker: ts.TypeChecker)
     return false;
   }
   const symbol = checker.getSymbolAtLocation(expr);
-  return symbol ? isEventraSymbol(symbol, checker) : false;
+  if (symbol && isEventraSymbol(symbol, checker)) {
+    return true;
+  }
+  // `const { Eventra } = await import("@eventra_dev/eventra-sdk")`: the binding is not an import, but
+  // the instance it builds is still typed as the SDK's class
+  return typeLooksLikeEventra(checker.getTypeAtLocation(node), checker);
 }
 
 function typeLooksLikeEventra(type: ts.Type, checker: ts.TypeChecker, depth = 0): boolean {
@@ -127,10 +132,74 @@ function typeLooksLikeEventra(type: ts.Type, checker: ts.TypeChecker, depth = 0)
   return false;
 }
 
+const MAX_RECEIVER_HOPS = 6;
+
+/** `return expr` statements of a function body, not looking into functions nested in it. */
+function returnedExpressions(fn: ts.FunctionLikeDeclaration): ts.Expression[] {
+  if (!fn.body) {
+    return [];
+  }
+  if (!ts.isBlock(fn.body)) {
+    return [fn.body];
+  }
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) {
+      found.push(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return found;
+}
+
+function functionOf(decl: ts.Declaration): ts.FunctionLikeDeclaration | undefined {
+  if (ts.isFunctionDeclaration(decl) || ts.isMethodDeclaration(decl)) {
+    return decl;
+  }
+  if (ts.isVariableDeclaration(decl) && decl.initializer && (ts.isArrowFunction(decl.initializer) || ts.isFunctionExpression(decl.initializer))) {
+    return decl.initializer;
+  }
+  return undefined;
+}
+
+/** `t = new Eventra(...)` anywhere in the file of a variable's declaration: a lazily filled `let t: any`. */
+function assignedValues(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Expression[] {
+  const values: ts.Expression[] = [];
+  const files = new Set((symbol.getDeclarations() ?? []).map((decl) => decl.getSourceFile()));
+  for (const file of files) {
+    const visit = (node: ts.Node): void => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isIdentifier(node.left) &&
+        checker.getSymbolAtLocation(node.left) === symbol
+      ) {
+        values.push(node.right);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(file);
+  }
+  return values;
+}
+
 function isEventraReceiverExpression(
   receiver: ts.Expression,
   checker: ts.TypeChecker,
+  hops = 0,
 ): boolean {
+  if (hops > MAX_RECEIVER_HOPS) {
+    return false;
+  }
+  // `(await getTracker()).track(...)`, `(tracker as Eventra).track(...)`, `tracker!.track(...)`
+  if (ts.isParenthesizedExpression(receiver) || ts.isAwaitExpression(receiver) || ts.isNonNullExpression(receiver) || ts.isAsExpression(receiver)) {
+    return isEventraReceiverExpression(receiver.expression, checker, hops + 1);
+  }
+
   if (ts.isNewExpression(receiver)) {
     return isEventraNewExpression(receiver, checker);
   }
@@ -144,6 +213,19 @@ function isEventraReceiverExpression(
     return true;
   }
 
+  // `getTracker().track(...)` where the getter's type is lost (`any`) but what it returns is a tracker
+  if (ts.isCallExpression(receiver)) {
+    const callee = ts.isIdentifier(receiver.expression) || ts.isPropertyAccessExpression(receiver.expression)
+      ? checker.getSymbolAtLocation(ts.isIdentifier(receiver.expression) ? receiver.expression : receiver.expression.name)
+      : undefined;
+    for (const decl of callee?.getDeclarations() ?? []) {
+      const fn = functionOf(decl);
+      if (fn && returnedExpressions(fn).some((returned) => isEventraReceiverExpression(returned, checker, hops + 1))) {
+        return true;
+      }
+    }
+  }
+
   if (ts.isIdentifier(receiver)) {
     const symbol = checker.getSymbolAtLocation(receiver);
     if (!symbol) {
@@ -152,6 +234,9 @@ function isEventraReceiverExpression(
     // See the identical `?? []` above isEventraSymbol's declaration loop: a
     // real ts.Symbol here always has a declarations array.
     /* v8 ignore next */
+    if (assignedValues(symbol, checker).some((value) => isEventraReceiverExpression(value, checker, hops + 1))) {
+      return true;
+    }
     for (const decl of symbol.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(decl) && decl.initializer) {
         if (ts.isNewExpression(decl.initializer) && isEventraNewExpression(decl.initializer, checker)) {
@@ -188,7 +273,7 @@ function isEventraReceiverExpression(
   }
 
   if (ts.isPropertyAccessExpression(receiver) || ts.isPropertyAccessChain(receiver)) {
-    return isEventraReceiverExpression(receiver.expression, checker);
+    return isEventraReceiverExpression(receiver.expression, checker, hops + 1);
   }
 
   return false;

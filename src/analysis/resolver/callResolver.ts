@@ -8,6 +8,62 @@ function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
 }
 
+/** `return expr` statements of a function body, not looking into functions nested in it. */
+function returnedExpressions(fn: ts.FunctionLikeDeclaration): ts.Expression[] {
+  if (!fn.body) {
+    return [];
+  }
+  if (!ts.isBlock(fn.body)) {
+    return [fn.body];
+  }
+  const found: ts.Expression[] = [];
+  const visit = (node: ts.Node): void => {
+    if (ts.isFunctionLike(node)) {
+      return;
+    }
+    if (ts.isReturnStatement(node) && node.expression) {
+      found.push(node.expression);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(fn.body);
+  return found;
+}
+
+const MAX_RETURN_HOPS = 4;
+
+/**
+ * The function a call hands back: `useTracker()` for `function useTracker() { return (n) => t.track(n) }`,
+ * where the returned value is a function expression or a name bound to one.
+ */
+function resolveReturnedFunction(call: ts.CallExpression, checker: ts.TypeChecker, callCache: ResolvedCallCache, exportCache: ResolvedExportCache, hops: number): ts.FunctionLikeDeclaration | null {
+  if (hops > MAX_RETURN_HOPS) {
+    return null;
+  }
+  const factory = resolveFunctionFromCall(call.expression, checker, callCache, exportCache, hops + 1);
+  if (!factory) {
+    return null;
+  }
+  for (const returned of returnedExpressions(factory)) {
+    let value: ts.Expression = returned;
+    while (ts.isParenthesizedExpression(value) || ts.isAsExpression(value) || ts.isNonNullExpression(value)) {
+      value = value.expression;
+    }
+    if (isFunctionLike(value)) {
+      return value;
+    }
+    if (ts.isIdentifier(value)) {
+      for (const next of checker.getSymbolAtLocation(value)?.getDeclarations() ?? []) {
+        const resolved = resolveDeclaration(next, checker);
+        if (resolved) {
+          return resolved;
+        }
+      }
+    }
+  }
+  return null;
+}
+
 function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker): ts.FunctionLikeDeclaration | null {
   // function foo() {}
   if (isFunctionLike(declaration)) {
@@ -65,7 +121,15 @@ function getExpressionSymbol(expression: ts.Expression, checker: ts.TypeChecker)
   return checker.getSymbolAtLocation(expression);
 }
 
-export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.TypeChecker, callCache: ResolvedCallCache, exportCache: ResolvedExportCache): ts.FunctionLikeDeclaration | null {
+export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.TypeChecker, callCache: ResolvedCallCache, exportCache: ResolvedExportCache, hops = 0): ts.FunctionLikeDeclaration | null {
+  // useTracker()("x")
+  let callee = expression;
+  while (ts.isParenthesizedExpression(callee)) {
+    callee = callee.expression;
+  }
+  if (ts.isCallExpression(callee)) {
+    return resolveReturnedFunction(callee, checker, callCache, exportCache, hops);
+  }
   let symbol = getExpressionSymbol(expression, checker);
   if (!symbol) {
     return null;
@@ -84,7 +148,12 @@ export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.T
   // declaration resolution
   const declarations = symbol.getDeclarations() ?? [];
   for (const declaration of declarations) {
-    const resolved = resolveDeclaration(declaration, checker);
+    // const track = useTracker(); track("x")
+    const resolved = resolveDeclaration(declaration, checker) ?? (
+      ts.isVariableDeclaration(declaration) && declaration.initializer && ts.isCallExpression(declaration.initializer)
+        ? resolveReturnedFunction(declaration.initializer, checker, callCache, exportCache, hops)
+        : null
+    );
     if (!resolved) {
       continue;
     }

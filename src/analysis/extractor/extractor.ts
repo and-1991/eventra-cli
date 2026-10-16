@@ -10,6 +10,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import {extractPropagationEvents} from "./propagationExtractor";
+import {wrapperName} from "../symbols/symbolUtils";
 import {normalizeEventName} from "../shared/eventValidation";
 import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
 
@@ -44,7 +45,7 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
 
   return {
     events,
-    detectedFunctionWrappers: new Set(index.wrappers.map(wrapper => wrapper.symbol.getName())),
+    detectedFunctionWrappers: new Set(index.wrappers.map(wrapper => wrapperName(wrapper.declaration, wrapper.symbol))),
     dynamicOccurrences,
   };
 }

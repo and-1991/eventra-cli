@@ -176,3 +176,55 @@ describe("posthog-js loaded with a dynamic import", () => {
     ).toEqual([]);
   });
 });
+
+describe("a hook that returns a bare function", () => {
+  const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });`;
+
+  it("follows `const track = useTracker(); track(...)`", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          export function useTracker() { return (n: string) => t.track(n); }
+          const track = useTracker();
+          track("hook2_event");`,
+      }),
+    ).toEqual(["hook2_event"]);
+  });
+
+  it("follows an inline `useTracker()(...)`", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          export function useTracker() { return (n: string) => t.track(n); }
+          useTracker()("hook2_inline");`,
+      }),
+    ).toEqual(["hook2_inline"]);
+  });
+
+  it("follows a returned function declaration and a returned identifier", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          export function useTracker() { const send = (n: string) => { t.track(n); }; return send; }
+          const track = useTracker();
+          track("hook2_ident");`,
+      }),
+    ).toEqual(["hook2_ident"]);
+  });
+});
+
+describe("a cached lazy getter for the tracker", () => {
+  it("follows `(await getT()).track(...)` through a wrapper", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `let t: any;
+          export async function getT() {
+            if (!t) { const { Eventra } = await import("@eventra_dev/eventra-sdk"); t = new Eventra({ apiKey: "x" }); }
+            return t;
+          }
+          export async function track(n: string) { (await getT()).track(n); }
+          track("lazy3_event");`,
+      }),
+    ).toEqual(["lazy3_event"]);
+  });
+});
