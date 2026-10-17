@@ -7,7 +7,8 @@ import type { DynamicEventReporter } from "../types";
 // paths are printed relative to where the command runs, with forward slashes
 function displayPath(fileName: string): string {
   const relative = path.relative(process.cwd(), fileName);
-  const outside = relative === ".." || relative.startsWith(`..${path.sep}`) || relative.startsWith("../");
+  // path.relative always joins with path.sep, so that is the only separator to look for
+  const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
   const shown = relative && !outside && !path.isAbsolute(relative) ? relative : fileName;
   return shown.replace(/\\/g, "/");
 }

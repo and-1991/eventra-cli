@@ -2,18 +2,23 @@
 
 import ts from "typescript";
 
+/** A node that only wraps an expression without changing what it is: `(x)`, `x as T`, `<T>x`, `x!`, `x satisfies T`. */
+export function isExpressionWrapper(node: ts.Node): node is ts.Expression & { readonly expression: ts.Expression } {
+  return (
+    ts.isAsExpression(node) ||
+    ts.isTypeAssertionExpression(node) ||
+    ts.isNonNullExpression(node) ||
+    ts.isParenthesizedExpression(node) ||
+    ts.isSatisfiesExpression(node)
+  );
+}
+
 // track(payload?.event as string)
 // track((payload.event))
 // track(payload!.event)
 export function unwrapExpression(expression: ts.Expression): ts.Expression {
   let current = expression;
-  while (
-    ts.isAsExpression(current) ||
-    ts.isTypeAssertionExpression(current) ||
-    ts.isNonNullExpression(current) ||
-    ts.isParenthesizedExpression(current) ||
-    ts.isSatisfiesExpression(current)
-  ) {
+  while (isExpressionWrapper(current)) {
     current = current.expression;
   }
   return current;

@@ -1,5 +1,7 @@
 import ts from "typescript";
 
+import { isExpressionWrapper } from "../shared/utils";
+
 /**
  * Symbol an identifier *refers to*. For the name in a shorthand property (`{ event }`) a plain
  * `getSymbolAtLocation` yields the property's own symbol, not the variable/parameter it reads.
@@ -57,23 +59,19 @@ export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.
   return undefined;
 }
 
-/** An arrow/function expression that is the value of a `return`, or the concise body of an arrow. */
+/** An arrow/function expression that is the value of a `return`, or the concise body of an arrow, possibly in parentheses, `as` or `!`. */
 export function isReturnedFunction(node: ts.FunctionLikeDeclaration): boolean {
   if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) {
     return false;
   }
+  // `inner` is the outermost wrapper around the function, or the function itself
+  let inner: ts.Node = node;
   let outer: ts.Node = node.parent;
-  while (ts.isParenthesizedExpression(outer)) {
+  while (isExpressionWrapper(outer)) {
+    inner = outer;
     outer = outer.parent;
   }
-  return ts.isReturnStatement(outer) || (ts.isArrowFunction(outer) && unparen(outer.body) === node);
-}
-
-function unparen(node: ts.Node): ts.Node {
-  while (ts.isParenthesizedExpression(node)) {
-    node = node.expression;
-  }
-  return node;
+  return ts.isReturnStatement(outer) || (ts.isArrowFunction(outer) && outer.body === inner);
 }
 
 /**

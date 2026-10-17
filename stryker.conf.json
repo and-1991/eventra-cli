@@ -6,7 +6,7 @@
   ],
   "testRunner": "vitest",
   "vitest": {
-    "configFile": "vitest.config.ts"
+    "configFile": "vitest.stryker.config.ts"
   },
   "coverageAnalysis": "perTest",
   "mutate": [
@@ -14,7 +14,14 @@
     "src/plugin/builtins/sinkPresets.ts",
     "src/cli/projectDependencies.ts",
     "src/cli/init.ts",
-    "scripts/preset-packages-lib.ts"
+    "scripts/preset-packages-lib.ts",
+    "src/plugin/registry.ts",
+    "src/plugin/loadPlugins.ts",
+    "src/core/scanFilters.ts",
+    "src/core/fileLimits.ts",
+    "src/core/skipped.ts",
+    "src/core/catalogMeta.ts",
+    "src/plugin/builtins/consoleDynamicEventReporter.ts"
   ],
   "reporters": [
     "clear-text",

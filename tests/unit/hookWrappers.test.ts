@@ -228,3 +228,191 @@ describe("a cached lazy getter for the tracker", () => {
     ).toEqual(["lazy3_event"]);
   });
 });
+
+describe("a hook whose returned function has no block around it", () => {
+  const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });`;
+
+  it("follows an arrow hook with a concise body: `const useTracker = () => (n) => t.track(n)`", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          const useTracker = () => (n: string) => { t.track(n); };
+          useTracker()("concise_hook");`,
+      }),
+    ).toEqual(["concise_hook"]);
+  });
+
+  it("sees through parentheses around the returned function, in the hook and in the call", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          const useTracker = () => ((n: string) => { t.track(n); });
+          useTracker()("paren_hook");`,
+      }),
+    ).toEqual(["paren_hook"]);
+  });
+
+  it("sees through `as`, `!`, `satisfies` and angle brackets around a returned function", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          type Fn = (n: string) => void;
+          function useCast() { return ((n: string) => { t.track(n); }) as Fn; }
+          function useNonNull() { return ((n: string) => { t.track(n); })!; }
+          function useSatisfies() { return ((n: string) => { t.track(n); }) satisfies Fn; }
+          function useAngle() { return <Fn>((n: string) => { t.track(n); }); }
+          function useNested() { return (((n: string) => { t.track(n); }) as Fn)!; }
+          useCast()("cast_hook");
+          useNonNull()("nonnull_hook");
+          useSatisfies()("satisfies_hook");
+          useAngle()("angle_hook");
+          useNested()("nested_hook");`,
+      }),
+    ).toEqual(["angle_hook", "cast_hook", "nested_hook", "nonnull_hook", "satisfies_hook"]);
+  });
+
+  it("sees through `as` and `!` around the concise body of an arrow hook", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          type Fn = (n: string) => void;
+          const useCast = () => ((n: string) => { t.track(n); }) as Fn;
+          const useNonNull = () => ((n: string) => { t.track(n); })!;
+          useCast()("concise_cast");
+          useNonNull()("concise_nonnull");`,
+      }),
+    ).toEqual(["concise_cast", "concise_nonnull"]);
+  });
+
+  it("does not take a function for a returned one when it is only an argument or a default", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          function run(cb: (n: string) => void) { cb("arg_cb"); }
+          function wrap(fn = (n: string) => { t.track(n); }) { return 1; }
+          const holder = () => run((n: string) => { t.track(n); });
+          holder();`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("follows an anonymous hook held by an object member or a function expression", async () => {
+    // an anonymous hook held by an object member and one held by a function expression both resolve
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          const hooks = { useTracker: () => (n: string) => { t.track(n); } };
+          hooks.useTracker()("member_hook");
+          const useOther = function () { return (n: string) => { t.track(n); }; };
+          useOther()("expr_hook");`,
+      }),
+    ).toEqual(["expr_hook", "member_hook"]);
+  });
+
+  it("gives up on a factory chain that is deeper than it will follow", async () => {
+    const calls = (depth: number) => "()".repeat(depth);
+    const chain = (depth: number) => `const c = ${"() => ".repeat(depth)}(n: string) => { t.track(n); };`;
+    expect(await eventsOf({ "a.ts": `${SDK}\n${chain(3)}\nc${calls(3)}("shallow_chain");` })).toEqual(["shallow_chain"]);
+    expect(await eventsOf({ "a.ts": `${SDK}\n${chain(8)}\nc${calls(8)}("deep_chain");` })).toEqual([]);
+  });
+
+  it("resolves nothing when the factory is not a function it can see", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          function run(make: () => (n: string) => void) { make()("param_factory"); }
+          declare const external: () => (n: string) => void;
+          external()("declared_factory");`,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("a getter that hands back a tracker whose type is lost", () => {
+  const HEAD = `import { Eventra } from "@eventra_dev/eventra-sdk"; let t: any = new Eventra({ apiKey: "x" });`;
+
+  it("follows a getter with a concise arrow body", async () => {
+    expect(await eventsOf({ "a.ts": `${HEAD}\nconst getT = () => t;\ngetT().track("getter_arrow");` })).toEqual(["getter_arrow"]);
+  });
+
+  it("follows a getter written as a function expression", async () => {
+    expect(await eventsOf({ "a.ts": `${HEAD}\nconst getT = function () { return t; };\ngetT().track("getter_expr");` })).toEqual(["getter_expr"]);
+  });
+
+  it("follows a getter that is a method", async () => {
+    expect(
+      await eventsOf({ "a.ts": `${HEAD}\nconst svc = { getT() { return t; } };\nsvc.getT().track("getter_method");` }),
+    ).toEqual(["getter_method"]);
+  });
+
+  it("ignores a return inside a function nested in the getter", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          let other: any;
+          function getT() { const inner = () => { return t; }; inner(); return other; }
+          getT().track("nested_return");`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("follows a chain of getters up to a point, and no further", async () => {
+    const chain = (depth: number) =>
+      [`const g${depth} = () => t;`, ...Array.from({ length: depth }, (_, i) => `const g${depth - 1 - i} = () => g${depth - i}();`)].join("\n");
+    expect(await eventsOf({ "a.ts": `${HEAD}\n${chain(3)}\ng0().track("short_chain");` })).toEqual(["short_chain"]);
+    expect(await eventsOf({ "a.ts": `${HEAD}\n${chain(9)}\ng0().track("long_chain");` })).toEqual([]);
+  });
+});
+
+describe("a hook that returns something that is not a function", () => {
+  const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });`;
+
+  it("resolves nothing for a returned literal, an unknown name, or a variable holding a non-function", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          function useNumber() { return 1; }
+          function useMissing() { return missing; }
+          function useVariable() { const v = 1; return v; }
+          useNumber()("literal_hook");
+          useMissing()("missing_hook");
+          useVariable()("variable_hook");`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("keeps looking at the other returns after one that is not a function", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          function useTracker(flag: boolean) {
+            const v = 1;
+            if (flag) return v;
+            return (n: string) => { t.track(n); };
+          }
+          useTracker(true)("second_return");`,
+      }),
+    ).toEqual(["second_return"]);
+  });
+});
+
+describe("a tracker reached through a receiver that cannot be followed", () => {
+  const HEAD = `import { Eventra } from "@eventra_dev/eventra-sdk"; let t: any = new Eventra({ apiKey: "x" });`;
+
+  it("does not resolve a receiver whose symbol has no declarations at all (`arguments`)", async () => {
+    expect(
+      await eventsOf({ "a.ts": `${HEAD}\nfunction f() { arguments.track("arguments_receiver"); }\nglobalThis.track("global_receiver");` }),
+    ).toEqual([]);
+  });
+
+  it("does not resolve a getter that is called through an element access or an unknown name", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          declare const fns: any;
+          fns["get"]().track("element_callee");
+          unknownGetter().track("unknown_callee");`,
+      }),
+    ).toEqual([]);
+  });
+});

@@ -37,9 +37,9 @@ function templateRegionOf(content: string): TemplateRegion | undefined {
 
 // `__eventra_x_template_event__(expr)` (callText may be cut with an ellipsis)
 function templateExpression(occurrence: DynamicOccurrence): string {
-  const open = occurrence.callText.indexOf("(");
-  let expression = open === -1 ? occurrence.callText : occurrence.callText.slice(open + 1);
-  expression = expression.endsWith(")") ? expression.slice(0, -1) : expression;
+  // no "(" gives indexOf -1, so slice(0) keeps the whole text
+  const afterOpen = occurrence.callText.slice(occurrence.callText.indexOf("(") + 1);
+  const expression = afterOpen.endsWith(")") ? afterOpen.slice(0, -1) : afterOpen;
   // Angular qualifies a bare name with `this.`; the template never writes it
   return occurrence.calleeText.includes("_angular_") ? expression.replace(/^this\./, "") : expression;
 }
@@ -110,11 +110,8 @@ export class PluginRegistry {
 
   /** Disk paths produced by the last preprocess run for a source file (for watch unlink). */
   getVirtualPathsForSource(fileName: string): readonly string[] {
-    const mapped = this.sourceToVirtuals.get(this.normalizePath(fileName));
-    if (mapped && mapped.length > 0) {
-      return mapped;
-    }
-    return [this.normalizePath(fileName)];
+    // a source is only recorded with at least one virtual file, so a hit is never empty
+    return this.sourceToVirtuals.get(this.normalizePath(fileName)) ?? [this.normalizePath(fileName)];
   }
 
   async preprocessFile(input: FilePreprocessInput): Promise<readonly VirtualFile[]> {

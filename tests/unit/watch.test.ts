@@ -367,6 +367,16 @@ describe("watch: imported files outside include", () => {
     expect(readEvents()).toEqual(["shared.three"]);
   }, 60_000);
 
+  it("reacts to an imported file being deleted as the very first change", async () => {
+    handle = await watch();
+    await sleep(1200);
+    expect(readEvents()).toEqual(["shared.one"]);
+
+    fs.rmSync(path.join(cwd, "shared/events.ts"));
+    await waitFor(() => readEvents().length === 0);
+    expect(readEvents()).toEqual([]);
+  }, 60_000);
+
   it("does not rewrite or log when a new file outside include changes nothing", async () => {
     handle = await watch();
     await sleep(1200);

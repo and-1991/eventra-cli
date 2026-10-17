@@ -192,3 +192,32 @@ describe("EventraEngine lazy checker", () => {
     }
   });
 });
+
+describe("EventraEngine incremental update through files that are only imported", () => {
+  it("re-extracts the scanned file when a file two imports away changes, skipping the imported-only file between", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "engine-imported-only-"));
+    try {
+      const files: Record<string, string> = {
+        // a.ts is scanned; shared.ts and deep.ts are only reached through its imports
+        "a.ts": `import { NAME } from "./shared";\n${HEADER}sdk.track(NAME);\n`,
+        "shared.ts": `export { NAME } from "./deep";\n`,
+        "deep.ts": `export const NAME = "deep.one";\n`,
+      };
+      for (const [rel, content] of Object.entries(files)) fs.writeFileSync(path.join(root, rel), content);
+
+      const engine = new EventraEngine(root);
+      engine.beginPreload();
+      await engine.preloadFile(SDK_TYPES, EVENTRA_SDK_SHIM);
+      await engine.preloadFile(path.join(root, "a.ts"), files["a.ts"]!);
+      engine.endPreload();
+      await engine.runFullAnalysis([SDK_TYPES, path.join(root, "a.ts")], CONFIG);
+      expect(engine.getAllEvents()).toEqual(["deep.one"]);
+      expect(engine.hasProgramFile(path.join(root, "shared.ts"))).toBe(true);
+
+      await engine.updateFile(path.join(root, "deep.ts"), `export const NAME = "deep.two";\n`, CONFIG);
+      expect(engine.getAllEvents()).toEqual(["deep.two"]);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

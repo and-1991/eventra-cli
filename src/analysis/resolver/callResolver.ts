@@ -3,6 +3,7 @@ import ts from "typescript";
 import {resolveExportedSymbol} from "./exportResolver";
 import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
+import {unwrapExpression} from "../shared/utils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
@@ -45,10 +46,7 @@ function resolveReturnedFunction(call: ts.CallExpression, checker: ts.TypeChecke
     return null;
   }
   for (const returned of returnedExpressions(factory)) {
-    let value: ts.Expression = returned;
-    while (ts.isParenthesizedExpression(value) || ts.isAsExpression(value) || ts.isNonNullExpression(value)) {
-      value = value.expression;
-    }
+    const value = unwrapExpression(returned);
     if (isFunctionLike(value)) {
       return value;
     }

@@ -259,6 +259,8 @@ export async function watch(): Promise<WatchHandle | undefined> {
     .on("add", schedule)
     .on("unlink", (file): void => {
       const abs = normalize(file);
+      // chokidar's `ignored` already drops excluded paths, so this only guards against a stray event
+      /* v8 ignore next */
       if (filter.isExcluded(abs)) return;
       // a file that failed to analyse is in no set but is still remembered as skipped
       if (!sourceFiles.has(abs) && !trackedFiles.has(abs) && !skippedNow.has(abs)) {

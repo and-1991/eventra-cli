@@ -13,10 +13,11 @@ export async function sync({ strict = false }: { strict?: boolean } = {}): Promi
   // report what was saved: with skipped files that is the union of the known and
   // the found events, not just what this scan found
   const saved = await persistScanResults(config, engine, { preserveKnown: skipped.length > 0 });
+  // normalizeConfig always fills functionWrappers; the type only marks it optional
+  /* v8 ignore next */
+  const wrapperCount = saved.functionWrappers?.length ?? 0;
   console.log(
-    chalk.green(
-      `Found ${plural(saved.events?.length ?? 0, "event")}, ${plural(saved.functionWrappers?.length ?? 0, "function wrapper")}`,
-    ),
+    chalk.green(`Found ${plural(saved.events.length, "event")}, ${plural(wrapperCount, "function wrapper")}`),
   );
   await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
   reportSkipped(skipped);
