@@ -11,12 +11,13 @@ import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import {extractPropagationEvents} from "./propagationExtractor";
 import {wrapperName} from "../symbols/symbolUtils";
-import {normalizeEventName} from "../shared/eventValidation";
-import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
+import {eventNameRejection, normalizeEventName} from "../shared/eventValidation";
+import {DynamicOccurrence, RejectedName, recordDynamicOccurrence, recordRejectedName} from "../shared/dynamicOccurrence";
 
 export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker, _config: EventraConfig, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, wrapperRegistry: WrapperRegistry): ScanResult {
   const events = new Set<string>();
   const dynamicOccurrences: DynamicOccurrence[] = [];
+  const rejectedNames: RejectedName[] = [];
   // direct track sinks
   for (const call of index.trackCalls) {
     for (const argument of call.trackedArguments) {
@@ -25,6 +26,8 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
         const normalized = normalizeEventName(value);
         if (normalized) {
           events.add(normalized);
+        } else {
+          recordRejectedName(call.node, call.calleeText, value, eventNameRejection(value)!, rejectedNames);
         }
       }
       if (resolved.dynamic) {
@@ -36,7 +39,7 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
 
   function visit(node: ts.Node): void {
     if (ts.isCallExpression(node) || ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) {
-      extractPropagationEvents(node, checker, wrapperRegistry, resolvedCallCache, returnPropagationCache, evaluationCache, exportCache, events, propagationVisited, dynamicOccurrences);
+      extractPropagationEvents(node, checker, wrapperRegistry, resolvedCallCache, returnPropagationCache, evaluationCache, exportCache, events, propagationVisited, dynamicOccurrences, rejectedNames);
     }
     ts.forEachChild(node, visit);
   }
@@ -47,5 +50,6 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
     events,
     detectedFunctionWrappers: new Set(index.wrappers.map(wrapper => wrapperName(wrapper.declaration, wrapper.symbol))),
     dynamicOccurrences,
+    rejectedNames,
   };
 }

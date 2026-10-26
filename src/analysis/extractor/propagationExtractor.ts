@@ -10,8 +10,8 @@ import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {EvaluationCache} from "../cache/evaluationCache";
 import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {getValueSymbol} from "../symbols/symbolUtils";
-import {normalizeEventName} from "../shared/eventValidation";
-import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
+import {eventNameRejection, normalizeEventName} from "../shared/eventValidation";
+import {DynamicOccurrence, RejectedName, recordDynamicOccurrence, recordRejectedName} from "../shared/dynamicOccurrence";
 import {callSiteArgument, callSiteExpression, WrapperCallSite} from "../shared/callSite";
 
 function resolveObjectPath(expression: ts.Expression, path: readonly string[],): ts.Expression | null {
@@ -40,7 +40,7 @@ function resolveObjectPath(expression: ts.Expression, path: readonly string[],):
   return current;
 }
 
-export function extractPropagationEvents(call: WrapperCallSite, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>, dynamicOccurrences: DynamicOccurrence[]): void {
+export function extractPropagationEvents(call: WrapperCallSite, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>, dynamicOccurrences: DynamicOccurrence[], rejectedNames: RejectedName[]): void {
   const callee = callSiteExpression(call);
   const resolved = callee && resolveFunctionFromCall(callee, checker, resolvedCallCache, exportCache);
   if (!resolved) {
@@ -71,14 +71,14 @@ export function extractPropagationEvents(call: WrapperCallSite, checker: ts.Type
       if (!ts.isCallExpression(call) && (propagation.sourceParameterIndex !== 0 || propagation.propertyPath.length === 0)) {
         continue;
       }
-      extractPropagation(propagation, call, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events, dynamicOccurrences);
+      extractPropagation(propagation, call, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events, dynamicOccurrences, rejectedNames);
     }
   } finally {
     visited.delete(signature);
   }
 }
 
-function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSite, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[]): void {
+function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSite, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[], rejectedNames: RejectedName[]): void {
   // Call site can omit the argument and rely on the parameter's own default
   // value (`function f(event = "x") {}` called as `f()`) - that default is a
   // real static literal, so fall back to it instead of dropping the call site.
@@ -143,6 +143,8 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
     const normalized = normalizeEventName(value);
     if (normalized) {
       events.add(normalized);
+    } else {
+      recordRejectedName(call, callSiteExpression(call)!.getText(), value, eventNameRejection(value)!, rejectedNames);
     }
   }
   if (resolved.dynamic) {

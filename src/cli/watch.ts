@@ -15,6 +15,7 @@ import {
   errorMessage,
   plural,
   reportIgnored,
+  reportRejectedNames,
   reportSkipped,
   skippedFrom,
 } from "../core/skipped";
@@ -114,6 +115,7 @@ export async function watch(): Promise<WatchHandle | undefined> {
     config,
   );
   await persist();
+  reportRejectedNames(plugins.attributeToSources(engine.getAllRejectedNames()));
 
   const initialEvents = engine.getAllEvents();
   const initialWrappers = engine.getAllFunctionWrappers();

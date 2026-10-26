@@ -7,6 +7,8 @@ const state = vi.hoisted(() => ({
     wrappers: string[];
     skipped: Array<{ file: string; reason: string }>;
     ignored?: Array<{ file: string; reason: string }>;
+    syntaxErrors?: Array<{ file: string; reason: string }>;
+    rejected?: Array<Record<string, unknown>>;
   },
   saved: [] as Array<Record<string, unknown>>,
 }));
@@ -34,10 +36,12 @@ vi.mock("../../src/core/projectScanner", () => ({
       getAllEvents: () => state.scan!.events,
       getAllFunctionWrappers: () => state.scan!.wrappers,
       getAllDynamicOccurrences: () => [],
+      getAllRejectedNames: () => state.scan!.rejected ?? [],
     },
-    plugins: { runDynamicEventReporters: async () => {} },
+    plugins: { runDynamicEventReporters: async () => {}, attributeToSources: <T>(items: T[]) => items },
     skipped: state.scan!.skipped,
     ignored: state.scan!.ignored ?? [],
+    syntaxErrors: state.scan!.syntaxErrors ?? [],
     files: [],
     results: new Map(),
   }),
@@ -129,6 +133,44 @@ describe("sync", () => {
     state.scan!.skipped = SKIP;
     await sync({ strict: true });
     expect(process.exitCode).toBe(1);
+  });
+});
+
+const REJECTED = [
+  { fileName: "/p/src/a.ts", line: 7, character: 0, calleeText: "sdk.track", callText: "", resolvedValues: ["x"], name: "bad name!", reason: "the name has characters other than letters" },
+];
+
+describe("notes after a scan", () => {
+  it("sync lists files with syntax errors and event names it cannot accept, without failing --strict", async () => {
+    state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
+    state.scan!.rejected = REJECTED;
+    await sync({ strict: true });
+
+    expect(printed(err)).toContain("Syntax errors in 1 file (events after the error may be missed):");
+    expect(printed(err)).toContain("src/broken.ts: line 3: ';' expected.");
+    expect(printed(err)).toContain('Skipped 1 event name the CLI cannot accept:');
+    expect(printed(err)).toContain('src/a.ts:7 "bad name!": the name has characters other than letters');
+    expect(state.saved[0].events).toEqual(["kept.event", "new.event"]);
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("check prints them in a plain run and with --fix, and says nothing when there are none", async () => {
+    await check({});
+    expect(printed(err)).not.toContain("Syntax errors");
+    expect(printed(err)).not.toContain("cannot accept");
+
+    state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
+    state.scan!.rejected = REJECTED;
+    err.mockClear();
+    await check({});
+    expect(printed(err)).toContain("src/broken.ts: line 3");
+    expect(printed(err)).toContain('"bad name!"');
+
+    err.mockClear();
+    await check({ fix: true, strict: true });
+    expect(printed(err)).toContain("src/broken.ts: line 3");
+    expect(printed(err)).toContain('"bad name!"');
+    expect(process.exitCode).toBeUndefined();
   });
 });
 

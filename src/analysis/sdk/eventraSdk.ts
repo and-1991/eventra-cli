@@ -18,15 +18,23 @@ export function isEventraSdkModuleSpecifier(specifier: string): boolean {
  */
 const EVENT_NAME_PATTERN = /^[a-zA-Z0-9$:_./ -]+$/;
 
-export function normalizeEventName(value: string): string | null {
+/** Why `value` cannot be an event name, or null when it can. The reason is shown to the user. */
+export function eventNameRejection(value: string): string | null {
   const trimmed = value.trim();
-  if (!trimmed || trimmed.length > MAX_EVENT_NAME_LENGTH) {
-    return null;
+  if (!trimmed) {
+    return "the name is empty";
+  }
+  if (trimmed.length > MAX_EVENT_NAME_LENGTH) {
+    return `the name is longer than ${MAX_EVENT_NAME_LENGTH} characters`;
   }
   if (!EVENT_NAME_PATTERN.test(trimmed)) {
-    return null;
+    return "the name has characters other than letters, digits and $ : _ . / - and space";
   }
-  return trimmed;
+  return null;
+}
+
+export function normalizeEventName(value: string): string | null {
+  return eventNameRejection(value) === null ? value.trim() : null;
 }
 
 export function isValidEventName(value: string): boolean {

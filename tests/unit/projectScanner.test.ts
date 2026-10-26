@@ -110,3 +110,28 @@ describe("scanProject: extensionless relative imports", () => {
     expect(engine.getAllEvents()).toEqual(["util.event"]);
   });
 });
+
+describe("scanProject: syntax errors and rejected names", () => {
+  it("lists a file with a syntax error, still reads the events before it, and does not skip it", async () => {
+    write("src/ok.ts", `${SDK_IMPORT}t.track("fine.one");\n`);
+    write("src/broken.ts", `${SDK_IMPORT}t.track("before.error");\nconst x = ;\n`);
+
+    const { engine, skipped, syntaxErrors } = await scanProject(config());
+
+    expect(skipped).toEqual([]);
+    expect(syntaxErrors.map((s) => [path.relative(cwd, s.file), s.reason])).toEqual([
+      ["src/broken.ts", expect.stringMatching(/^line 4: /)],
+    ]);
+    expect(engine.getAllEvents()).toEqual(["before.error", "fine.one"]);
+  });
+
+  it("reports nothing for a project without syntax errors, and names that cannot be accepted by the engine", async () => {
+    write("src/ok.ts", `${SDK_IMPORT}t.track("fine.one");\nt.track("not fine!");\n`);
+
+    const { engine, syntaxErrors } = await scanProject(config());
+
+    expect(syntaxErrors).toEqual([]);
+    expect(engine.getAllEvents()).toEqual(["fine.one"]);
+    expect(engine.getAllRejectedNames().map((r) => r.name)).toEqual(["not fine!"]);
+  });
+});

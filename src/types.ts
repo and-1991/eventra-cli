@@ -1,9 +1,11 @@
-import type { DynamicOccurrence } from "./analysis/shared/dynamicOccurrence";
+import type { DynamicOccurrence, RejectedName } from "./analysis/shared/dynamicOccurrence";
 
 export interface ScanResult {
   readonly events: Set<string>;
   readonly detectedFunctionWrappers: Set<string>;
   readonly dynamicOccurrences: readonly DynamicOccurrence[];
+  /** Plain-string event names the CLI could not accept (see eventNameRejection). */
+  readonly rejectedNames: readonly RejectedName[];
 }
 
 export interface FunctionWrapperConfig {

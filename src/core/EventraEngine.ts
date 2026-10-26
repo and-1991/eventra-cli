@@ -11,7 +11,7 @@ import { ReturnPropagationCache } from "../analysis/cache/returnPropagationCache
 import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFile";
 import { resolveWrapperChains } from "../analysis/scanner/wrapperChains";
 import { FileSemanticIndex } from "../analysis/shared/types";
-import { DynamicOccurrence } from "../analysis/shared/dynamicOccurrence";
+import { DynamicOccurrence, RejectedName } from "../analysis/shared/dynamicOccurrence";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
 import { createBuiltinPluginRegistry } from "../plugin/loadPlugins";
@@ -21,6 +21,7 @@ const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
   detectedFunctionWrappers: new Set(),
   dynamicOccurrences: [],
+  rejectedNames: [],
 });
 
 export class EventraEngine {
@@ -435,9 +436,22 @@ export class EventraEngine {
     for (const result of this.fileResults.values()) {
       occurrences.push(...result.dynamicOccurrences);
     }
-    const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
-    return occurrences.sort(
-      (a, b) => byText(a.fileName, b.fileName) || a.line - b.line || a.character - b.character,
-    );
+    return sortByPosition(occurrences);
   }
+
+  /** Plain-string event names the CLI could not accept, in file and line order. */
+  getAllRejectedNames(): RejectedName[] {
+    const rejected: RejectedName[] = [];
+    for (const result of this.fileResults.values()) {
+      rejected.push(...result.rejectedNames);
+    }
+    return sortByPosition(rejected);
+  }
+}
+
+function sortByPosition<T extends DynamicOccurrence>(occurrences: T[]): T[] {
+  const byText = (a: string, b: string): number => (a < b ? -1 : a > b ? 1 : 0);
+  return occurrences.sort(
+    (a, b) => byText(a.fileName, b.fileName) || a.line - b.line || a.character - b.character,
+  );
 }

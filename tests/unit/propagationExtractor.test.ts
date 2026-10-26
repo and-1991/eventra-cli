@@ -11,7 +11,7 @@ import { ResolvedExportCache } from "../../src/analysis/cache/resolvedExportCach
 import { ResolvedCallCache } from "../../src/analysis/cache/resolvedCallCache";
 import { ReturnPropagationCache } from "../../src/analysis/cache/returnPropagationCache";
 import { EvaluationCache } from "../../src/analysis/cache/evaluationCache";
-import { DynamicOccurrence } from "../../src/analysis/shared/dynamicOccurrence";
+import { DynamicOccurrence, RejectedName } from "../../src/analysis/shared/dynamicOccurrence";
 import { WrapperPropagation } from "../../src/analysis/shared/propagation";
 
 function makeProject(): { root: string; cleanup: () => void } {
@@ -94,6 +94,7 @@ function extract(
   events: Set<string>,
   visited: Set<ts.Signature>,
   dynamicOccurrences: DynamicOccurrence[],
+  rejectedNames: RejectedName[] = [],
 ): void {
   extractPropagationEvents(
     call,
@@ -106,6 +107,7 @@ function extract(
     events,
     visited,
     dynamicOccurrences,
+    rejectedNames,
   );
 }
 
@@ -299,8 +301,14 @@ describe("extractPropagationEvents", () => {
       ]);
       const call = findCall(env.sourceFile, "wrapperIdentifierInvalid");
       const events = new Set<string>();
-      extract(env, call, events, new Set(), []);
+      const rejected: RejectedName[] = [];
+      extract(env, call, events, new Set(), [], rejected);
       expect(events.size).toBe(0);
+      // seen, but said so instead of vanishing
+      expect(rejected).toHaveLength(1);
+      expect(rejected[0].name).toBe("invalid event!");
+      expect(rejected[0].calleeText).toBe("wrapperIdentifierInvalid");
+      expect(rejected[0].reason).toMatch(/characters other than/);
     } finally {
       env.cleanup();
     }

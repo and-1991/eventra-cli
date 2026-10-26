@@ -43,4 +43,17 @@ describe("processFile", () => {
     const out = await processFile("/x.ts", "import { from './broken");
     expect(Array.isArray(out.dependencies)).toBe(true);
   });
+
+  it("reports the first syntax error with its line, and still returns the file", async () => {
+    const out = await processFile("/x.ts", "const a = 1;\nconst b = ;\nconst c = (;\n");
+    expect(out.syntaxError?.line).toBe(2);
+    expect(out.syntaxError?.message).toMatch(/expression expected/i);
+    expect(out.content).toContain("const c");
+  });
+
+  it("does not report a valid file, a type error, or TypeScript syntax in a script", async () => {
+    expect((await processFile("/x.ts", "export const A: number = 'not a number';")).syntaxError).toBeUndefined();
+    expect((await processFile("/x.tsx", "export const A = () => <div>{1}</div>;")).syntaxError).toBeUndefined();
+    expect((await processFile("/x.js", "export const A = (a: number) => a;")).syntaxError).toBeUndefined();
+  });
 });

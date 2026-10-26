@@ -29,6 +29,8 @@ export interface ProjectScanResult {
   readonly skipped: readonly SkippedFile[];
   /** Files deliberately not analysed (over the size limit). Not failures: see formatIgnored. */
   readonly ignored: readonly SkippedFile[];
+  /** Files the parser reported a syntax error in. They are still analysed; events after the error may be missed. */
+  readonly syntaxErrors: readonly SkippedFile[];
 }
 
 export async function scanProject(config: EventraConfig): Promise<ProjectScanResult> {
@@ -45,6 +47,7 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
   const toScan = new Set<string>();
   const skipped: SkippedFile[] = [];
   const ignored: SkippedFile[] = [];
+  const syntaxErrors: SkippedFile[] = [];
 
   for (const file of files) {
     try {
@@ -58,6 +61,10 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
 
       for (const virtualFile of virtualFiles) {
         const parsed = await processFile(virtualFile.fileName, virtualFile.content);
+        // a module a plugin generated reports its own parse errors as a skipped file; only a plain file is checked here
+        if (parsed.syntaxError && virtualFile.fileName === file) {
+          syntaxErrors.push({ file, reason: `line ${parsed.syntaxError.line}: ${parsed.syntaxError.message}` });
+        }
         const scanPath = path.resolve(virtualFile.fileName);
         cache.set(scanPath, parsed);
         toScan.add(scanPath);
@@ -91,5 +98,6 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     plugins,
     skipped,
     ignored,
+    syntaxErrors,
   };
 }

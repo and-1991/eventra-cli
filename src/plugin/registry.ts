@@ -176,7 +176,7 @@ export class PluginRegistry {
    * at the file the user wrote, and flag the ones that come from generated
    * code so reporters do not print a line number that exists nowhere.
    */
-  private attributeToSources(occurrences: readonly DynamicOccurrence[]): readonly DynamicOccurrence[] {
+  attributeToSources<T extends DynamicOccurrence>(occurrences: readonly T[]): readonly T[] {
     if (this.sourceToVirtuals.size === 0) {
       return occurrences;
     }

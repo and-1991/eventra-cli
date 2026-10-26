@@ -3,13 +3,13 @@ import chalk from "chalk";
 import { requireConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { persistScanResults } from "../core/scanResults";
-import { plural, reportIgnored, reportSkipped } from "../core/skipped";
+import { plural, reportIgnored, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
 
 export async function sync({ strict = false }: { strict?: boolean } = {}): Promise<void> {
   const config = await requireConfig();
   if (!config) return;
   console.log(chalk.blue("Scanning..."));
-  const { engine, plugins, skipped, ignored } = await scanProject(config);
+  const { engine, plugins, skipped, ignored, syntaxErrors } = await scanProject(config);
   // report what was saved: with skipped files that is the union of the known and
   // the found events, not just what this scan found
   const saved = await persistScanResults(config, engine, { preserveKnown: skipped.length > 0 });
@@ -22,5 +22,7 @@ export async function sync({ strict = false }: { strict?: boolean } = {}): Promi
   await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
   reportSkipped(skipped);
   reportIgnored(ignored);
+  reportSyntaxErrors(syntaxErrors);
+  reportRejectedNames(plugins.attributeToSources(engine.getAllRejectedNames()));
   if (strict && skipped.length > 0) process.exitCode = 1;
 }

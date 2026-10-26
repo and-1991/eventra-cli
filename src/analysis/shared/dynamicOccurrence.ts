@@ -38,15 +38,38 @@ const CALL_TEXT_MAX_LENGTH = 120;
 // `calleeText` is supplied by the caller since it's derived differently per
 // node kind (a call's callee text vs. a JSX element's tag name).
 export function recordDynamicOccurrence(node: ts.Node, calleeText: string, resolvedValues: readonly string[], out: DynamicOccurrence[]): void {
+  out.push(occurrenceAt(node, calleeText, resolvedValues));
+}
+
+/**
+ * A track() call whose event name is a plain string the CLI cannot accept (too long, or with characters
+ * outside the allowed set). It is not added to the events; this is what tells the user it was seen.
+ */
+export interface RejectedName extends DynamicOccurrence {
+  readonly name: string;
+  readonly reason: string;
+}
+
+const NAME_MAX_LENGTH = 60;
+
+export function recordRejectedName(node: ts.Node, calleeText: string, name: string, reason: string, out: RejectedName[]): void {
+  out.push({
+    ...occurrenceAt(node, calleeText, [name]),
+    name: name.length > NAME_MAX_LENGTH ? `${name.slice(0, NAME_MAX_LENGTH)}…` : name,
+    reason,
+  });
+}
+
+function occurrenceAt(node: ts.Node, calleeText: string, resolvedValues: readonly string[]): DynamicOccurrence {
   const sourceFile = node.getSourceFile();
   const { line, character } = ts.getLineAndCharacterOfPosition(sourceFile, node.getStart(sourceFile));
   const callText = node.getText(sourceFile);
-  out.push({
+  return {
     fileName: sourceFile.fileName,
     line: line + 1,
     character,
     calleeText,
     callText: callText.length > CALL_TEXT_MAX_LENGTH ? `${callText.slice(0, CALL_TEXT_MAX_LENGTH)}…` : callText,
     resolvedValues,
-  });
+  };
 }

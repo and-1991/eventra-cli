@@ -6,10 +6,14 @@ import {
   cleanSkipReason,
   errorMessage,
   formatIgnored,
+  formatRejectedNames,
   formatSkipped,
+  formatSyntaxErrors,
   plural,
   reportIgnored,
+  reportRejectedNames,
   reportSkipped,
+  reportSyntaxErrors,
   skippedFrom,
 } from "../../src/core/skipped";
 
@@ -114,6 +118,71 @@ describe("formatIgnored / reportIgnored", () => {
     const err = vi.spyOn(console, "error").mockImplementation(() => {});
     reportIgnored([{ file: path.join(process.cwd(), "big.js"), reason: "file is larger than 2 MB" }]);
     expect(String(err.mock.calls[0][0])).toContain("  big.js:");
+  });
+});
+
+const rejected = (over: Record<string, unknown> = {}) => ({
+  fileName: "/p/src/a.ts",
+  line: 4,
+  character: 2,
+  calleeText: "sdk.track",
+  callText: "sdk.track(...)",
+  resolvedValues: ["x"],
+  name: "bad name!",
+  reason: "the name has characters other than letters",
+  ...over,
+}) as never;
+
+describe("formatSyntaxErrors / reportSyntaxErrors", () => {
+  it("lists each file with its error, worded as a heads-up", () => {
+    expect(formatSyntaxErrors([], "/p")).toEqual([]);
+    expect(
+      formatSyntaxErrors([{ file: "/p/src/a.ts", reason: "line 3: ';' expected." }], "/p"),
+    ).toEqual(["Syntax errors in 1 file (events after the error may be missed):", "  src/a.ts: line 3: ';' expected."]);
+    expect(
+      formatSyntaxErrors([{ file: "/p/a.ts", reason: "x" }, { file: "/p/b.ts", reason: "y" }], "/p")[0],
+    ).toBe("Syntax errors in 2 files (events after the error may be missed):");
+  });
+
+  it("writes one note to stderr, or nothing", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    reportSyntaxErrors([], "/p");
+    expect(err).not.toHaveBeenCalled();
+    reportSyntaxErrors([{ file: "/p/a.ts", reason: "line 1: boom" }], "/p");
+    expect(err).toHaveBeenCalledTimes(1);
+    err.mockRestore();
+  });
+});
+
+describe("formatRejectedNames / reportRejectedNames", () => {
+  it("names the file and line, or the template, with the reason", () => {
+    expect(formatRejectedNames([], "/p")).toEqual([]);
+    expect(formatRejectedNames([rejected()], "/p")).toEqual([
+      "Skipped 1 event name the CLI cannot accept:",
+      '  src/a.ts:4 "bad name!": the name has characters other than letters',
+    ]);
+    const lines = formatRejectedNames(
+      [
+        rejected({ fileName: "/p/src/A.vue", inTemplate: true, name: "tpl" }),
+        rejected({ fileName: "/p/src/B.vue", inTemplateCode: true, name: "code" }),
+        rejected({ fileName: "/p/src/c.html", inGeneratedCode: true, name: "copy" }),
+      ],
+      "/p",
+    );
+    expect(lines[0]).toBe("Skipped 2 event names the CLI cannot accept:");
+    expect(lines[1]).toBe('  template of src/A.vue "tpl": the name has characters other than letters');
+    expect(lines[2]).toBe('  template of src/B.vue "code": the name has characters other than letters');
+    expect(lines).toHaveLength(3);
+  });
+
+  it("writes the list and the rule to stderr, or nothing", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    reportRejectedNames([], "/p");
+    expect(err).not.toHaveBeenCalled();
+    reportRejectedNames([rejected()], "/p");
+    expect(err).toHaveBeenCalledTimes(2);
+    expect(String(err.mock.calls[1][0])).toContain("up to 64 characters");
+    err.mockRestore();
   });
 });
 

@@ -5,6 +5,8 @@ export interface ProcessedFile {
   readonly scriptKind: ts.ScriptKind;
   readonly content: string;
   readonly dependencies: readonly string[];
+  /** The first syntax error the TypeScript parser reported, if any. The file is still analysed. */
+  readonly syntaxError?: { readonly line: number; readonly message: string };
 }
 
 function getScriptKind(fileName: string): ts.ScriptKind {
@@ -36,5 +38,21 @@ export async function processFile(fileName: string, content: string): Promise<Pr
     scriptKind,
     content,
     dependencies,
+    ...firstSyntaxError(source),
+  };
+}
+
+// `parseDiagnostics` is not in the public typings; it holds only real syntax errors (the checker's
+// own findings, such as type errors, are not parse diagnostics)
+function firstSyntaxError(source: ts.SourceFile): Pick<ProcessedFile, "syntaxError"> {
+  const [first] = (source as ts.SourceFile & { parseDiagnostics: readonly ts.Diagnostic[] }).parseDiagnostics;
+  if (!first) {
+    return {};
+  }
+  return {
+    syntaxError: {
+      line: ts.getLineAndCharacterOfPosition(source, first.start!).line + 1,
+      message: ts.flattenDiagnosticMessageText(first.messageText, " "),
+    },
   };
 }

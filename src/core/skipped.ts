@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import path from "path";
 
+import type { RejectedName } from "../analysis/shared/dynamicOccurrence";
+
 export interface SkippedFile {
   readonly file: string;
   readonly reason: string;
@@ -68,6 +70,53 @@ export function reportIgnored(ignored: readonly SkippedFile[], cwd: string = pro
   const lines = formatIgnored(ignored, cwd);
   if (lines.length === 0) return;
   console.error(chalk.gray(lines.join("\n")));
+}
+
+const relativeTo = (cwd: string, file: string): string => path.relative(cwd, file).replace(/\\/g, "/");
+
+/**
+ * Files the parser reported a syntax error in. They are analysed all the same, so this is a heads-up,
+ * not a failure: what comes after the error in such a file may not have been read.
+ */
+export function formatSyntaxErrors(files: readonly SkippedFile[], cwd: string): string[] {
+  if (files.length === 0) return [];
+  const lines = [`Syntax errors in ${files.length} file${files.length === 1 ? "" : "s"} (events after the error may be missed):`];
+  for (const { file, reason } of files) {
+    lines.push(`  ${relativeTo(cwd, file)}: ${reason}`);
+  }
+  return lines;
+}
+
+/** Prints one note (stderr) for the files that have syntax errors. */
+export function reportSyntaxErrors(files: readonly SkippedFile[], cwd: string = process.cwd()): void {
+  const lines = formatSyntaxErrors(files, cwd);
+  if (lines.length === 0) return;
+  console.error(chalk.yellow(lines.join("\n")));
+}
+
+/**
+ * Event names the CLI read as plain text but cannot accept. `rejected` must already be attributed to the
+ * files the user wrote (PluginRegistry.attributeToSources), so a template is named, not its generated module.
+ */
+export function formatRejectedNames(rejected: readonly RejectedName[], cwd: string): string[] {
+  // the copy of a component class inside an Angular template module repeats a call the class file already reports
+  const shown = rejected.filter((item) => !item.inGeneratedCode);
+  if (shown.length === 0) return [];
+  const lines = [`Skipped ${shown.length} event name${shown.length === 1 ? "" : "s"} the CLI cannot accept:`];
+  for (const item of shown) {
+    const file = relativeTo(cwd, item.fileName);
+    const where = item.inTemplate || item.inTemplateCode ? `template of ${file}` : `${file}:${item.line}`;
+    lines.push(`  ${where} "${item.name}": ${item.reason}`);
+  }
+  return lines;
+}
+
+/** Prints one note (stderr) for the event names that were seen but not added. */
+export function reportRejectedNames(rejected: readonly RejectedName[], cwd: string = process.cwd()): void {
+  const lines = formatRejectedNames(rejected, cwd);
+  if (lines.length === 0) return;
+  console.error(chalk.yellow(lines.join("\n")));
+  console.error(chalk.gray("These names are not in your events. A name can use letters, digits and $ : _ . / - and space, up to 64 characters."));
 }
 
 export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
