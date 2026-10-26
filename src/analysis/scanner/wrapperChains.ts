@@ -5,6 +5,7 @@ import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {resolveFunctionFromCall} from "../resolver/callResolver";
 import {TrackSink, WrapperPropagation, WrapperSemanticInfo} from "../shared/propagation";
 import {FileSemanticIndex} from "../shared/types";
+import {callSiteArgument, callSiteExpression, WrapperCallSite} from "../shared/callSite";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
 
@@ -15,15 +16,25 @@ import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
  */
 const MAX_ROUNDS = 8;
 
-/** Every call inside `fn`, nested functions included (the same reach the direct sinks have). */
-function callsWithin(fn: ts.FunctionLikeDeclaration): ts.CallExpression[] {
-  const calls: ts.CallExpression[] = [];
+function isIntrinsicTag(tagName: ts.JsxTagNameExpression): boolean {
+  return ts.isIdentifier(tagName) && /^[a-z]/.test(tagName.text);
+}
+
+/**
+ * Every call inside `fn`, nested functions included (the same reach the direct sinks have). A JSX
+ * element counts as the call of its component, so a component that hands a prop on to another
+ * component (`<Inner name={track} />`) is chained exactly like a function calling a wrapper.
+ */
+function callsWithin(fn: ts.FunctionLikeDeclaration): WrapperCallSite[] {
+  const calls: WrapperCallSite[] = [];
   const visit = (node: ts.Node): void => {
     if (ts.isCallExpression(node)) calls.push(node);
+    // `<div>` and the like are intrinsic elements, never a component that could be a wrapper
+    else if ((ts.isJsxOpeningElement(node) || ts.isJsxSelfClosingElement(node)) && !isIntrinsicTag(node.tagName)) calls.push(node);
     ts.forEachChild(node, visit);
   };
-  /* v8 ignore else -- only functions with a body are collected */
-  if (fn.body) visit(fn.body);
+  // only functions with a body are collected
+  visit(fn.body!);
   return calls;
 }
 
@@ -36,31 +47,32 @@ function callsWithin(fn: ts.FunctionLikeDeclaration): ts.CallExpression[] {
  * to point at, so it is not chained rather than guessed.
  */
 function wrapperCallAsSink(
-  call: ts.CallExpression,
+  call: WrapperCallSite,
   self: ts.FunctionLikeDeclaration,
   checker: ts.TypeChecker,
   registry: WrapperRegistry,
   callCache: ResolvedCallCache,
   exportCache: ResolvedExportCache,
 ): TrackSink | null {
-  const callee = resolveFunctionFromCall(call.expression, checker, callCache, exportCache);
+  const calleeExpression = callSiteExpression(call);
+  const callee = calleeExpression && resolveFunctionFromCall(calleeExpression, checker, callCache, exportCache);
   if (!callee || callee === self) return null;
   const wrapper = registry.get(callee);
   if (!wrapper) return null;
   const trackedArguments = wrapper.propagations
     .filter((p) => {
-      const argument = call.arguments[p.sourceParameterIndex];
+      const argument = callSiteArgument(call, p.sourceParameterIndex);
       if (!argument) return false;
+      // a component only receives props, so it can only forward a named prop, never the whole object
+      if (!ts.isCallExpression(call) && p.propertyPath.length === 0) return false;
       return p.propertyPath.length === 0 || ts.isObjectLiteralExpression(argument);
     })
     .map((p) => ({index: p.sourceParameterIndex, propertyPath: p.propertyPath}));
   return trackedArguments.length > 0 ? {call, trackedArguments} : null;
 }
 
-const sameNode = (a: WrapperPropagation, b: WrapperPropagation): boolean =>
-  a.targetNode === b.targetNode &&
-  a.sourceParameterIndex === b.sourceParameterIndex &&
-  a.propertyPath.join("\0") === b.propertyPath.join("\0");
+// the same node of the same function always reads the same parameter at the same path
+const sameNode = (a: WrapperPropagation, b: WrapperPropagation): boolean => a.targetNode === b.targetNode;
 
 /**
  * Finds the wrappers that only reach a sink through another wrapper (`trackEvent(event)` calls
@@ -78,14 +90,11 @@ export function resolveWrapperChains(
   const found = new Map<string, WrapperSemanticInfo[]>();
   const files = [...indices].filter((index) => (index.functions?.length ?? 0) > 0);
   // the calls of a function never change between rounds, so they are collected once; a function with
-  // none (most of them) costs nothing in the rounds that follow
-  const callsOf = new Map<ts.FunctionLikeDeclaration, ts.CallExpression[]>();
+  // none (most of them) has nothing to look at in the rounds that follow
+  const callsOf = new Map<ts.FunctionLikeDeclaration, WrapperCallSite[]>();
   for (const index of files) {
     for (const fn of index.functions!) {
-      if (fn.body) {
-        const calls = callsWithin(fn);
-        if (calls.length > 0) callsOf.set(fn, calls);
-      }
+      if (fn.body) callsOf.set(fn, callsWithin(fn));
     }
   }
 

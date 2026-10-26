@@ -21,12 +21,16 @@
     "src/core/fileLimits.ts",
     "src/core/skipped.ts",
     "src/core/catalogMeta.ts",
-    "src/plugin/builtins/consoleDynamicEventReporter.ts"
+    "src/plugin/builtins/consoleDynamicEventReporter.ts",
+    "src/analysis/shared/callSite.ts",
+    "src/analysis/scanner/wrapperChains.ts",
+    "src/analysis/scanner/analyzer/propagationAnalyzer.ts"
   ],
   "reporters": [
     "clear-text",
     "progress",
-    "html"
+    "html",
+    "json"
   ],
   "htmlReporter": {
     "fileName": "reports/mutation/mutation.html"

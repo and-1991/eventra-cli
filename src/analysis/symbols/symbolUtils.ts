@@ -1,6 +1,6 @@
 import ts from "typescript";
 
-import { isExpressionWrapper } from "../shared/utils";
+import { isExpressionWrapper, unwrapExpression } from "../shared/utils";
 
 /**
  * Symbol an identifier *refers to*. For the name in a shorthand property (`{ event }`) a plain
@@ -12,6 +12,49 @@ export function getValueSymbol(node: ts.Identifier, checker: ts.TypeChecker): ts
     return checker.getShorthandAssignmentValueSymbol(parent);
   }
   return checker.getSymbolAtLocation(node);
+}
+
+// React higher-order wrappers that hand the component back unchanged: `memo(fn)`, `forwardRef(fn)`
+const COMPONENT_WRAPPERS = new Set(["memo", "forwardRef"]);
+
+function isComponentWrapperCall(node: ts.Node): node is ts.CallExpression {
+  if (!ts.isCallExpression(node)) {
+    return false;
+  }
+  const callee = unwrapExpression(node.expression);
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+  return name !== undefined && COMPONENT_WRAPPERS.has(name);
+}
+
+/**
+ * The function inside `memo(fn)` / `forwardRef(fn)` / `memo(forwardRef(fn))`, which is the component
+ * the variable holding that call is rendered as.
+ */
+export function unwrapComponentWrapper(expression: ts.Expression): ts.FunctionLikeDeclaration | null {
+  let current = unwrapExpression(expression);
+  while (isComponentWrapperCall(current)) {
+    const first = current.arguments[0];
+    if (!first) {
+      return null;
+    }
+    current = unwrapExpression(first);
+  }
+  return ts.isArrowFunction(current) || ts.isFunctionExpression(current) ? current : null;
+}
+
+/** `const Button = memo(({ track }) => ...)`: the variable declaration a component function is wrapped into. */
+function componentWrapperHolder(node: ts.FunctionLikeDeclaration): ts.VariableDeclaration | undefined {
+  if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) {
+    return undefined;
+  }
+  let current: ts.Node = node;
+  let wrapped = false;
+  while (current.parent && (isExpressionWrapper(current.parent) || (isComponentWrapperCall(current.parent) && unwrapExpression(current.parent.arguments[0] ?? current.parent) === current))) {
+    wrapped ||= isComponentWrapperCall(current.parent);
+    current = current.parent;
+  }
+  const holder = current.parent;
+  return wrapped && holder && ts.isVariableDeclaration(holder) && holder.initializer === current ? holder : undefined;
 }
 
 export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.TypeChecker,): ts.Symbol | undefined {
@@ -49,6 +92,11 @@ export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.
   // export default function() {}
   if (ts.isExportAssignment(parent)) {
     return checker.getSymbolAtLocation(node);
+  }
+  // const Button = memo(() => {}) / forwardRef(...)
+  const holder = componentWrapperHolder(node);
+  if (holder && ts.isIdentifier(holder.name)) {
+    return checker.getSymbolAtLocation(holder.name);
   }
   // `return (name) => ...` / `() => (name) => ...`: a function a hook or factory hands back has no
   // name of its own, but the binder still gives it a symbol, and that is what a call of the result

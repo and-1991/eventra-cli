@@ -12,6 +12,7 @@ import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {getValueSymbol} from "../symbols/symbolUtils";
 import {normalizeEventName} from "../shared/eventValidation";
 import {DynamicOccurrence, recordDynamicOccurrence} from "../shared/dynamicOccurrence";
+import {callSiteArgument, callSiteExpression, WrapperCallSite} from "../shared/callSite";
 
 function resolveObjectPath(expression: ts.Expression, path: readonly string[],): ts.Expression | null {
   let current: ts.Expression = expression;
@@ -37,41 +38,6 @@ function resolveObjectPath(expression: ts.Expression, path: readonly string[],):
     current = matched;
   }
   return current;
-}
-
-export type WrapperCallSite = ts.CallExpression | ts.JsxOpeningElement | ts.JsxSelfClosingElement;
-
-/**
- * A JSX element is a call of its component with one argument: the props object. Rebuilt here as an
- * object literal from the attributes so the existing call-site machinery (`resolveObjectPath`,
- * parameter bindings) works unchanged. Spread attributes and children are ignored, and each
- * attribute value is the original AST node, so symbol resolution still sees real code.
- */
-function jsxPropsAsObjectLiteral(element: ts.JsxOpeningElement | ts.JsxSelfClosingElement): ts.ObjectLiteralExpression {
-  const properties: ts.PropertyAssignment[] = [];
-  for (const attribute of element.attributes.properties) {
-    if (!ts.isJsxAttribute(attribute) || !ts.isIdentifier(attribute.name) || !attribute.initializer) {
-      continue;
-    }
-    const value = ts.isJsxExpression(attribute.initializer) ? attribute.initializer.expression : attribute.initializer;
-    if (value && !ts.isJsxElement(value) && !ts.isJsxSelfClosingElement(value) && !ts.isJsxFragment(value)) {
-      properties.push(ts.factory.createPropertyAssignment(attribute.name, value));
-    }
-  }
-  return ts.factory.createObjectLiteralExpression(properties);
-}
-
-/** The expression naming the called function/component; null for `<ns:tag>`, which is never a component. */
-function callSiteExpression(site: WrapperCallSite): ts.Expression | null {
-  if (ts.isCallExpression(site)) {
-    return site.expression;
-  }
-  return ts.isJsxNamespacedName(site.tagName) ? null : site.tagName;
-}
-
-function callSiteArgument(site: WrapperCallSite, index: number): ts.Expression | undefined {
-  // A JSX site only reaches here for index 0 (the props object): see the guard in extractPropagationEvents.
-  return ts.isCallExpression(site) ? site.arguments[index] : jsxPropsAsObjectLiteral(site);
 }
 
 export function extractPropagationEvents(call: WrapperCallSite, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>, dynamicOccurrences: DynamicOccurrence[]): void {
@@ -122,7 +88,15 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
   }
   const context = createEvaluationContext();
   let directTarget: ts.Expression | undefined;
-  if (ts.isIdentifier(propagation.sourceParameter.name)) {
+  if (propagation.viaAlias) {
+    // `const { track } = props; sdk.track(track)`: the sink's own node is a local, not the parameter,
+    // so the value is whatever the call site passes at the path the alias reads
+    const leaf = propagation.propertyPath.length === 0 ? argument : resolveObjectPath(argument, propagation.propertyPath);
+    if (!leaf) {
+      return;
+    }
+    directTarget = leaf;
+  } else if (ts.isIdentifier(propagation.sourceParameter.name)) {
     // sourceParameter is a plain identifier (`function f(payload)`), so
     // propagation.targetNode — `payload`, `payload.event`, or any expression
     // a plugin builds from it (e.g. a template literal) — can resolve its own

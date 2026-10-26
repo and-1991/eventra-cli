@@ -2,13 +2,16 @@
 
 import ts from "typescript";
 
+import {WrapperCallSite} from "./callSite";
+
 export interface TrackedArgument {
   readonly index: number;
   readonly propertyPath: readonly string[];
 }
 
 export interface TrackSink {
-  readonly call: ts.CallExpression;
+  // a JSX element is the call of its component, with the props object as its one argument
+  readonly call: WrapperCallSite;
   readonly trackedArguments: readonly TrackedArgument[];
 }
 
@@ -26,6 +29,9 @@ export interface WrapperPropagation {
   // semantic target
   // track(name)
   readonly targetNode: ts.Expression;
+  // The sink reads the parameter through a local alias (`const { track } = props`), so `targetNode`
+  // is not the parameter itself: the value is read off the call site's argument by `propertyPath` instead.
+  readonly viaAlias?: boolean;
 }
 
 export interface WrapperSemanticInfo {

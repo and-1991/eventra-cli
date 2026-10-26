@@ -4,6 +4,7 @@ import {resolveExportedSymbol} from "./exportResolver";
 import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
+import {unwrapComponentWrapper} from "../symbols/symbolUtils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
@@ -70,6 +71,13 @@ function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker
   // const foo = () => {}
   if (ts.isVariableDeclaration(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
     return declaration.initializer;
+  }
+  // const Button = memo(() => {}) / forwardRef((props, ref) => {})
+  if (ts.isVariableDeclaration(declaration) && declaration.initializer) {
+    const component = unwrapComponentWrapper(declaration.initializer);
+    if (component) {
+      return component;
+    }
   }
   // class field = () => {}
   if (ts.isPropertyDeclaration(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
