@@ -1,3 +1,4 @@
+import chalk from "chalk";
 import fs from "fs-extra";
 import path from "path";
 
@@ -104,10 +105,29 @@ export async function describeConfigProblem(): Promise<string> {
  */
 export async function requireConfig(): Promise<EventraConfig | null> {
   const config = await loadConfig();
-  if (config) return config;
+  if (config) {
+    warnInlineApiKey(config);
+    return config;
+  }
   console.error(await describeConfigProblem());
   process.exitCode = 1;
   return null;
+}
+
+/**
+ * Tells the user when `eventra.json` holds an API key. The file is meant to be committed, so a key in it
+ * is readable by everyone with access to the repository. Goes to stderr, never prints the key itself, and
+ * says nothing when the field is empty (what `init` writes).
+ */
+export function warnInlineApiKey(config: EventraConfig): void {
+  if (!config.apiKey) return;
+  console.error(
+    chalk.yellow(
+      `${CONFIG_NAME} contains an "apiKey". This file is meant to be committed, so anyone who can read the repository can read the key.\n` +
+        `Set "apiKey" to "" and use the EVENTRA_API_KEY environment variable (CI) or ${LOCAL_CONFIG_NAME} (local, gitignored) instead.\n` +
+        `If the file was ever committed or pushed, create a new key in the dashboard and revoke this one.`,
+    ),
+  );
 }
 
 /** Writes eventra.json only when its content actually changed (watch mode re-saves often). */

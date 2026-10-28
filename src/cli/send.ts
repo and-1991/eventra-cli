@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import inquirer from "inquirer";
 
-import {getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint} from "../config/config";
+import {getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint, warnInlineApiKey} from "../config/config";
 import { collectCatalogMeta } from "../core/catalogMeta";
 import pkg from "../../package.json";
 
@@ -90,6 +90,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     process.exitCode = 1;
     return;
   }
+  warnInlineApiKey(config);
 
   const endpoint = config.endpoint || process.env.EVENTRA_ENDPOINT || undefined;
 

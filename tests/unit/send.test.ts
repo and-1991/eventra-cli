@@ -57,6 +57,15 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(process.exitCode).toBe(0);
   });
 
+  it("warns about an apiKey inside eventra.json, still sends, and does not print the key", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    await saveConfig(normalizeConfig({ events: ["a"], apiKey: "inline-secret", endpoint: DEFAULT_ENDPOINT }));
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(err).toHaveBeenCalledTimes(1);
+    expect(String(err.mock.calls[0]?.[0])).not.toContain("inline-secret");
+  });
+
   it("blocks an unapproved custom endpoint from eventra.json instead of sending, and fails the process", async () => {
     await setEndpoint(CUSTOM_ENDPOINT);
 

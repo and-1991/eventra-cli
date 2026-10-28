@@ -143,7 +143,7 @@ A name has to be a plain string the CLI can resolve. Anything it cannot is liste
 
 Each import is resolved with the compiler options of the nearest `tsconfig.json` above the file that writes it (a config that sets no `paths` keeps the root's aliases; `node_modules` is never read for options), so an app with its own `@/*` or `~/*` aliases works without a tsconfig at the repository root. When a root `tsconfig.json` only lists `references` (the usual Vite and Vue layout), the aliases of the referenced config are used. Packages of the same repository (`workspaces` or `pnpm-workspace.yaml`) are found by their folder (`@acme/lib`, `@acme/lib/hooks/use-x`, also when the package keeps its sources in `src/`), so the scan does not need `node_modules` to link them. A real install still takes precedence.
 
-`sync`, `check`, `watch` and `send` on a machine with room to spare (a container's memory limit counts) start themselves again with a larger memory limit (half of the machine's memory, at most 8 GB), unless you set `--max-old-space-size` yourself; `init` and `--version` never do. A new `eventra.json` written by `init` leaves out tests and coverage output (see `sync.exclude`); a config that already exists keeps scanning what it scanned.
+`sync`, `check`, `watch` and `send` on a machine with room to spare (a container's memory limit counts) start themselves again with a larger memory limit (half of the machine's memory, at most 8 GB), unless you set `--max-old-space-size` yourself (for a shared CI runner, `NODE_OPTIONS=--max-old-space-size=2048 eventra check` keeps one process with exactly that limit); `init` and `--version` never do. A new `eventra.json` written by `init` leaves out tests and coverage output (see `sync.exclude`); a config that already exists keeps scanning what it scanned.
 
 ### Variables, templates, conditionals
 
@@ -295,7 +295,7 @@ Uploads `events` from config to the Eventra API. Requires an API key and (option
 
 1. `EVENTRA_API_KEY` environment variable — recommended for CI
 2. `eventra.local.json` (created by `eventra init`/`eventra send`, automatically gitignored)
-3. legacy inline `apiKey` in `eventra.json` (deprecated — avoid committing real keys here)
+3. legacy inline `apiKey` in `eventra.json` (deprecated; `sync`, `check`, `watch` and `send` print a warning when it is set. If a real key was ever committed, create a new one in the dashboard and revoke the old one)
 
 `eventra.json` is meant to be committed so CI can diff it via `eventra check`; keeping the key out of it avoids leaking it into source control. In a non-interactive shell (no TTY), `send` fails fast with a message pointing at `EVENTRA_API_KEY` instead of hanging on a prompt.
 
@@ -595,4 +595,4 @@ pnpm --filter @eventra_dev/eventra-cli test:e2e   # fixtures + check exit codes
 
 ## License
 
-MIT, copyright (c) 2026 [and-1991](https://github.com/and-1991). See [LICENSE](LICENSE).
+MIT, copyright (c) 2026 [Yuriy Korolik](https://github.com/and-1991). See [LICENSE](LICENSE).

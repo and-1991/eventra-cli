@@ -15,6 +15,7 @@ import {
   saveConfig,
   saveLocalApiKey,
   trustEndpoint,
+  warnInlineApiKey,
 } from "../../src/config/config";
 import { EventraConfig } from "../../src/types";
 
@@ -211,9 +212,32 @@ describe("config problems and saving", () => {
   });
 
   it("requireConfig returns the config without touching the exit code", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => {});
     await fs.writeJSON(path.join(tmp, CONFIG_NAME), { apiKey: "k" });
     expect((await requireConfig())?.apiKey).toBe("k");
     expect(process.exitCode).toBeUndefined();
+  });
+
+  it("requireConfig warns about an inline apiKey without printing it, and stays quiet for an empty one", async () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await fs.writeJSON(path.join(tmp, CONFIG_NAME), { apiKey: "" });
+    await requireConfig();
+    expect(err).not.toHaveBeenCalled();
+
+    await fs.writeJSON(path.join(tmp, CONFIG_NAME), { apiKey: "secret-key-123" });
+    await requireConfig();
+    expect(err).toHaveBeenCalledTimes(1);
+    const message = String(err.mock.calls[0]?.[0]);
+    expect(message).toContain("EVENTRA_API_KEY");
+    expect(message).toContain(LOCAL_CONFIG_NAME);
+    expect(message).not.toContain("secret-key-123");
+  });
+
+  it("warnInlineApiKey does nothing when the field is empty", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    warnInlineApiKey(normalizeConfig({}));
+    expect(err).not.toHaveBeenCalled();
   });
 
   it("requireConfig reports the reason and sets exit code 1 for a missing or malformed file", async () => {
