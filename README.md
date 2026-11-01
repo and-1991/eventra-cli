@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-783%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-1096%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -289,7 +289,7 @@ Incremental scan with the same rules as `sync`.
 
 ### `eventra send`
 
-Uploads `events` from config to the Eventra API. Requires an API key and (optionally) an `endpoint`. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
+Uploads `events` from config to the Eventra API. Requires an API key and an endpoint (`init` writes the default `https://api.eventra.dev/api/v1/cli/events`; `EVENTRA_ENDPOINT` is only used when `eventra.json` has none). Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
 
 **API key resolution** (checked in this order, never written to `eventra.json`):
 
@@ -479,6 +479,8 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
 }
 ```
 
+This is the full shape. A file written by `eventra init` only contains `plugins` and `sinks` when they are not empty (and its `sync.exclude` also lists `coverage`, test files and `__tests__` / `__mocks__` folders); add them by hand when needed.
+
 | Field | Description |
 |-------|-------------|
 | `apiKey` | Legacy inline API key — leave empty. Use `EVENTRA_API_KEY` or `eventra.local.json` instead (see [`eventra send`](#eventra-send)) so a real key never ends up in this committed file |
@@ -519,11 +521,11 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **925 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1096 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** - 47 suites covering core modules:
+**Unit tests (vitest)** - 66 test files covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -589,7 +591,7 @@ pnpm --filter @eventra_dev/eventra-cli test:unit  # vitest only
 pnpm --filter @eventra_dev/eventra-cli test:e2e   # fixtures + check exit codes
 ```
 
-> **Node version note:** the CLI itself supports Node 18+ (see `engines`), but `vitest@4` depends on `node:util`'s `styleText`, which requires Node **≥ 20.12** — running the test suite on an older Node 20.x patch (or Node 18) fails to start. CI runs the matrix on Node 20 and 22; locally, use the version pinned in the repo's `.nvmrc`.
+> **Node version note:** the CLI itself supports Node 18+ (see `engines`), but `vitest@4` depends on `node:util`'s `styleText`, which requires Node **≥ 20.12** - running the test suite on an older Node 20.x patch (or Node 18) fails to start. CI runs the matrix on Node 20 and 22; locally, use Node 20.19 or newer (20.x or 22.x).
 
 ---
 
