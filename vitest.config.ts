@@ -5,6 +5,10 @@ export default defineConfig({
     environment: "node",
     include: ["tests/unit/**/*.test.ts"],
     globals: false,
+    // Most tests build a real TypeScript program; the 5s default is not
+    // enough on a loaded or small CI runner and fails the suite at random.
+    testTimeout: 60_000,
+    hookTimeout: 60_000,
     coverage: {
       provider: "v8",
       // resolverTestUtils.ts is fixture/test-support code (its `throw new
