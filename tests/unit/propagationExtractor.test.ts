@@ -286,7 +286,7 @@ describe("extractPropagationEvents", () => {
   it("skips a resolved value that fails event-name normalization", () => {
     const env = setup(`
       function wrapperIdentifierInvalid(payload) {}
-      wrapperIdentifierInvalid("invalid event!");
+      wrapperIdentifierInvalid("invalid\\tevent");
     `);
     try {
       const decl = findFunctionDeclaration(env.sourceFile, "wrapperIdentifierInvalid");
@@ -306,9 +306,9 @@ describe("extractPropagationEvents", () => {
       expect(events.size).toBe(0);
       // seen, but said so instead of vanishing
       expect(rejected).toHaveLength(1);
-      expect(rejected[0].name).toBe("invalid event!");
+      expect(rejected[0].name).toBe("invalid\tevent");
       expect(rejected[0].calleeText).toBe("wrapperIdentifierInvalid");
-      expect(rejected[0].reason).toMatch(/characters other than/);
+      expect(rejected[0].reason).toMatch(/control characters/);
     } finally {
       env.cleanup();
     }

@@ -11,7 +11,7 @@ import { createPluginRegistry } from "../plugin/loadPlugins";
 import type { PluginRegistry } from "../plugin/registry";
 import { expandExcludePatterns } from "./scanFilters";
 import { type SkippedFile, skippedFrom } from "./skipped";
-import { OVERSIZED_REASON, isOversized } from "./fileLimits";
+import { fileLimit, isOversized, oversizedReason } from "./fileLimits";
 
 const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 
@@ -29,6 +29,8 @@ export interface ProjectScanResult {
   readonly skipped: readonly SkippedFile[];
   /** Files deliberately not analysed (over the size limit). Not failures: see formatIgnored. */
   readonly ignored: readonly SkippedFile[];
+  /** What plugins said about files that is not an error (a binding Angular rejects, say), by file. Not a failure. */
+  readonly notes: readonly SkippedFile[];
   /** Files the parser reported a syntax error in. They are still analysed; events after the error may be missed. */
   readonly syntaxErrors: readonly SkippedFile[];
 }
@@ -48,12 +50,13 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
   const skipped: SkippedFile[] = [];
   const ignored: SkippedFile[] = [];
   const syntaxErrors: SkippedFile[] = [];
+  const limit = fileLimit(config.sync.maxFileSize);
 
   for (const file of files) {
     try {
       const raw = await fs.readFile(file, "utf8");
-      if (isOversized(raw)) {
-        ignored.push({ file, reason: OVERSIZED_REASON });
+      if (isOversized(raw, limit)) {
+        ignored.push({ file, reason: oversizedReason(limit) });
         continue;
       }
 
@@ -99,5 +102,6 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     skipped,
     ignored,
     syntaxErrors,
+    notes: plugins.getPluginNotes(),
   };
 }

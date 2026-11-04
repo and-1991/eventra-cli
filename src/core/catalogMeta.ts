@@ -87,9 +87,10 @@ function sameSet(a: readonly string[], b: readonly string[]): boolean {
 
 // An Angular template module embeds a copy of its component class, so the same
 // call is reported twice: once from the class file and once from that copy
-// (inGeneratedCode). Only the real one is counted.
+// (inGeneratedCode). Only the real one is counted. A call inside a wrapper is not counted either: it tracks
+// what its callers pass, and each caller is counted on its own.
 export function countUnresolved(occurrences: readonly DynamicOccurrence[]): number {
-  return occurrences.filter((o) => o.resolvedValues.length === 0 && !o.inGeneratedCode).length;
+  return occurrences.filter((o) => o.resolvedValues.length === 0 && !o.inGeneratedCode && o.kind !== "wrapper").length;
 }
 
 /**

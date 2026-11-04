@@ -46,6 +46,29 @@ async function preloadEngine(
   return [SDK_TYPES, ...fileNames];
 }
 
+describe("EventraEngine: declared dynamicEvents", () => {
+  it("counts the declared names as found events, beside the ones read from code", async () => {
+    const { root, cleanup } = makeProject();
+    try {
+      const engine = new EventraEngine(root);
+      const files = await preloadEngine(engine, root, {
+        "app.ts": `
+          import { Eventra } from "@eventra_dev/eventra-sdk";
+          const sdk = new Eventra({ apiKey: "k" });
+          declare const name: string;
+          sdk.track("read.from.code");
+          sdk.track(name);
+        `,
+      });
+      await engine.runFullAnalysis(files, { ...CONFIG, dynamicEvents: ["declared.b", "declared.a", "bad\tname"] });
+      expect(engine.getAllEvents()).toEqual(["declared.a", "declared.b", "read.from.code"]);
+      expect(engine.getAllDynamicOccurrences()).toHaveLength(1);
+    } finally {
+      cleanup();
+    }
+  });
+});
+
 describe("EventraEngine", () => {
   it("extracts direct track() calls from a single file", async () => {
     const { root, cleanup } = makeProject();

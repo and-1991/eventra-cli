@@ -22,6 +22,8 @@ export interface ExternalCliPlugin {
     readonly source: string;
   }): Promise<{
     readonly modules: readonly { readonly path: string; readonly content: string }[];
+    /** Things to tell the user about the file that are not errors. Optional: a plugin without any need not return it. */
+    readonly notes?: readonly string[];
   }>;
 }
 
@@ -116,13 +118,15 @@ export function registerExternalCliPlugin(
     name: plugin.id,
     test: (fileName) => plugin.match(fileName),
     process: async ({ fileName, content }) => {
-      let result: { modules: unknown };
+      let result: { modules: unknown; notes?: unknown };
       try {
         result = await plugin.transform({ path: fileName, source: content });
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         throw new Error(`Plugin "${plugin.id}" failed to transform ${fileName}: ${message}`);
       }
+      // what the plugin has to say about the file, kept for the report after the scan; anything but text is ignored
+      registry.setPluginNotes(fileName, Array.isArray(result?.notes) ? result.notes.filter((note): note is string => typeof note === "string" && note.trim() !== "") : []);
       return mapTransformModules(plugin, fileName, result?.modules);
     },
   });

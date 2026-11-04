@@ -6,6 +6,7 @@ import {TrackSink, WrapperSemanticInfo} from "../shared/propagation";
 import {detectTrackSink} from "./sinkDetector";
 import {detectJsxEventAttribute} from "./jsxEventAttribute";
 import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
+import {componentClassOfRender} from "../symbols/classComponent";
 import {WrapperRegistry} from "../symbols/wrapperRegistry";
 import type { PluginRegistry } from "../../plugin/registry";
 
@@ -90,10 +91,12 @@ export function scanSource(
     if (!fn.body) {
       continue;
     }
+    // the render() of a class component reads the props in every method of the class, not only its own body
+    const scope: ts.Node = componentClassOfRender(fn) ?? fn;
     const localSinks = sinks.filter(sink => {
         let current: ts.Node | undefined = sink.call;
         while (current) {
-          if (current === fn) {
+          if (current === scope) {
             return true;
           }
           current = current.parent;

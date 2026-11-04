@@ -89,6 +89,19 @@ describe("scanProject: skipped files", () => {
     expect(ignored).toEqual([{ file: path.join(cwd, "src/big.ts"), reason: "file is larger than 2 MB" }]);
   });
 
+  it("uses the project's sync.maxFileSize, and says so in the reason", async () => {
+    write("src/big.ts", `${SDK_IMPORT}t.track("big.event");\n// ${"x".repeat(300)}\n`);
+    write("src/app.ts", `${SDK_IMPORT}t.track("real.event");\n`);
+
+    const small = await scanProject(config({ sync: { include: ["**/*.{ts,tsx,js,jsx}"], exclude: ["node_modules", "dist"], maxFileSize: 200 } }));
+    expect(small.engine.getAllEvents()).toEqual(["real.event"]);
+    expect(small.ignored).toEqual([{ file: path.join(cwd, "src/big.ts"), reason: "file is larger than 200 characters (sync.maxFileSize)" }]);
+
+    const roomy = await scanProject(config({ sync: { include: ["**/*.{ts,tsx,js,jsx}"], exclude: ["node_modules", "dist"], maxFileSize: 10_000 } }));
+    expect(roomy.engine.getAllEvents()).toEqual(["big.event", "real.event"]);
+    expect(roomy.ignored).toEqual([]);
+  });
+
   it("returns an empty list for a clean project", async () => {
     write("src/app.ts", `${SDK_IMPORT}t.track("real.event");\n`);
     expect((await scanProject(config())).skipped).toEqual([]);
@@ -126,12 +139,12 @@ describe("scanProject: syntax errors and rejected names", () => {
   });
 
   it("reports nothing for a project without syntax errors, and names that cannot be accepted by the engine", async () => {
-    write("src/ok.ts", `${SDK_IMPORT}t.track("fine.one");\nt.track("not fine!");\n`);
+    write("src/ok.ts", `${SDK_IMPORT}t.track("fine.one");\nt.track("not\\tfine");\n`);
 
     const { engine, syntaxErrors } = await scanProject(config());
 
     expect(syntaxErrors).toEqual([]);
     expect(engine.getAllEvents()).toEqual(["fine.one"]);
-    expect(engine.getAllRejectedNames().map((r) => r.name)).toEqual(["not fine!"]);
+    expect(engine.getAllRejectedNames().map((r) => r.name)).toEqual(["not\tfine"]);
   });
 });

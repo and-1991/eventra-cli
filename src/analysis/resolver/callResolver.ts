@@ -4,6 +4,7 @@ import {resolveExportedSymbol} from "./exportResolver";
 import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
+import {renderMethodOf} from "../symbols/classComponent";
 import {unwrapComponentWrapper} from "../symbols/symbolUtils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
@@ -64,6 +65,10 @@ function resolveReturnedFunction(call: ts.CallExpression, checker: ts.TypeChecke
 }
 
 function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker): ts.FunctionLikeDeclaration | null {
+  // class Button extends Component { render() {} }: <Button /> renders it, so its props reach render()
+  if (ts.isClassDeclaration(declaration) || ts.isClassExpression(declaration)) {
+    return renderMethodOf(declaration);
+  }
   // function foo() {}
   if (isFunctionLike(declaration)) {
     return declaration;

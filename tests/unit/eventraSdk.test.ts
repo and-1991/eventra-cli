@@ -46,9 +46,9 @@ describe("normalizeEventName", () => {
     expect(normalizeEventName("   ")).toBeNull();
   });
 
-  it("rejects a value longer than the max length", () => {
+  it("cuts a value longer than the max length, as the SDK does", () => {
     const tooLong = "a".repeat(MAX_EVENT_NAME_LENGTH + 1);
-    expect(normalizeEventName(tooLong)).toBeNull();
+    expect(normalizeEventName(tooLong)).toBe("a".repeat(MAX_EVENT_NAME_LENGTH));
   });
 
   it("accepts a value exactly at the max length", () => {
@@ -56,9 +56,12 @@ describe("normalizeEventName", () => {
     expect(normalizeEventName(exact)).toBe(exact);
   });
 
-  it("rejects a value with disallowed characters", () => {
-    expect(normalizeEventName("user signup!")).toBeNull();
-    expect(normalizeEventName("emoji🎉event")).toBeNull();
+  it("accepts punctuation and emoji, which the SDK sends as they are", () => {
+    expect(normalizeEventName("user signup!")).toBe("user signup!");
+    expect(normalizeEventName("emoji🎉event")).toBe("emoji🎉event");
+  });
+
+  it("rejects a value with control characters", () => {
     expect(normalizeEventName("tab\tseparated")).toBeNull();
     expect(normalizeEventName("line\nbreak")).toBeNull();
   });
@@ -78,11 +81,11 @@ describe("normalizeEventName", () => {
     expect(normalizeEventName("  App: User Sign Up  ")).toBe("App: User Sign Up");
   });
 
-  it("applies the 64 character limit to names with spaces too", () => {
+  it("cuts names with spaces at 64 characters too", () => {
     const exact = `${"a ".repeat(31)}ab`;
     expect(exact).toHaveLength(MAX_EVENT_NAME_LENGTH);
     expect(normalizeEventName(exact)).toBe(exact);
-    expect(normalizeEventName(`${exact}x`)).toBeNull();
+    expect(normalizeEventName(`${exact}x`)).toBe(exact);
   });
 });
 
@@ -94,7 +97,7 @@ describe("isValidEventName", () => {
 
   it("returns false for an invalid event name", () => {
     expect(isValidEventName("")).toBe(false);
-    expect(isValidEventName("has!bang")).toBe(false);
+    expect(isValidEventName("has\tTab")).toBe(false);
     expect(isValidEventName("   ")).toBe(false);
   });
 });

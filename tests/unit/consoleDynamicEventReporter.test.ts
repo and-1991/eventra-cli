@@ -204,3 +204,35 @@ describe("console dynamic event reporter: paths", () => {
     expect(printed()[1]).toEqual([line("~ template of /elsewhere/App.vue: sdk.track(...)")]);
   });
 });
+
+describe("calls inside a wrapper and names that are not known", () => {
+  it("lists them under separate headings, with the cause for the unknown ones only", async () => {
+    await report(
+      occurrence({ line: 3, kind: "unresolved", cause: "env" }),
+      occurrence({ line: 4, kind: "unresolved", cause: "template" }),
+      occurrence({ line: 5, kind: "wrapper", cause: "parameter" }),
+    );
+    const lines = printed().map((call) => String(call[0]));
+    expect(lines).toEqual([
+      HEADER,
+      chalk.yellow("~ src/a.ts:3 sdk.track(...) [env: read from the environment]"),
+      chalk.yellow("~ src/a.ts:4 sdk.track(...) [template: a template string with a part that is not known]"),
+      chalk.blue("\nInside a wrapper (each caller is checked on its own):"),
+      chalk.gray("~ src/a.ts:5 sdk.track(...)"),
+    ]);
+  });
+
+  it("prints only the wrapper heading when every call is inside a wrapper, and no cause when there is none", async () => {
+    await report(occurrence({ kind: "wrapper", cause: "parameter" }));
+    expect(printed().map((call) => String(call[0]))).toEqual([chalk.blue("\nInside a wrapper (each caller is checked on its own):"), chalk.gray("~ src/a.ts:10 sdk.track(...)")]);
+
+    log.mockClear();
+    await report(occurrence({ cause: "unknown-cause" as never }), occurrence({ line: 11, kind: "unresolved", inTemplate: true, eventExpression: "x", cause: "variable" }), occurrence({ line: 12, inTemplateCode: true, cause: "call" }));
+    expect(printed().map((call) => String(call[0]))).toEqual([
+      HEADER,
+      chalk.yellow("~ src/a.ts:10 sdk.track(...)"),
+      chalk.yellow('~ template of src/a.ts: event="x" [variable: a variable with no known value]'),
+      chalk.yellow("~ template of src/a.ts: sdk.track(...) [call: the result of a call]"),
+    ]);
+  });
+});

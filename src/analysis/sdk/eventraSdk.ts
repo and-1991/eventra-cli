@@ -11,12 +11,12 @@ export function isEventraSdkModuleSpecifier(specifier: string): boolean {
 }
 
 /**
- * Letters, digits and `$ : _ . / -`, plus the plain space - so third-party names such as
- * `App: User Sign Up` and PostHog's own `$pageview` survive. The SDK and the API accept any text up
- * to the length limit; the CLI stays stricter so that a name read out of code is a clean identifier:
- * tabs, newlines and every other character are rejected.
+ * Control characters (tabs, newlines, NUL and the like) cannot be part of a name. Everything else is
+ * accepted, as the SDK and the API accept it: letters of any language, digits, punctuation, emoji and
+ * the plain space, so third-party names such as `App: User Sign Up`, PostHog's `$pageview` or
+ * `Rocket 🚀` survive.
  */
-const EVENT_NAME_PATTERN = /^[a-zA-Z0-9$:_./ -]+$/;
+const CONTROL_CHARACTERS = /[\u0000-\u001f\u007f-\u009f]/;
 
 /** Why `value` cannot be an event name, or null when it can. The reason is shown to the user. */
 export function eventNameRejection(value: string): string | null {
@@ -24,17 +24,29 @@ export function eventNameRejection(value: string): string | null {
   if (!trimmed) {
     return "the name is empty";
   }
-  if (trimmed.length > MAX_EVENT_NAME_LENGTH) {
-    return `the name is longer than ${MAX_EVENT_NAME_LENGTH} characters`;
-  }
-  if (!EVENT_NAME_PATTERN.test(trimmed)) {
-    return "the name has characters other than letters, digits and $ : _ . / - and space";
+  if (CONTROL_CHARACTERS.test(trimmed)) {
+    return "the name has control characters such as a tab or a line break";
   }
   return null;
 }
 
+/**
+ * The name the SDK would send: trimmed, and cut to 64 characters exactly as `track()` does, so a longer
+ * name is the same event in the catalog as it is at runtime. Null when it cannot be a name at all.
+ */
 export function normalizeEventName(value: string): string | null {
-  return eventNameRejection(value) === null ? value.trim() : null;
+  if (eventNameRejection(value) !== null) {
+    return null;
+  }
+  const trimmed = value.trim();
+  return trimmed.length > MAX_EVENT_NAME_LENGTH ? trimmed.slice(0, MAX_EVENT_NAME_LENGTH) : trimmed;
+}
+
+/** The declared dynamic names that are usable event names, trimmed and cut like the SDK does, once each, in order. */
+export function normalizeDynamicEvents(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const names = value.flatMap((item) => (typeof item === "string" ? [normalizeEventName(item)] : [])).filter((name): name is string => name !== null);
+  return [...new Set(names)].sort();
 }
 
 export function isValidEventName(value: string): boolean {

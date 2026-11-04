@@ -9,6 +9,8 @@ const state = vi.hoisted(() => ({
     ignored?: Array<{ file: string; reason: string }>;
     syntaxErrors?: Array<{ file: string; reason: string }>;
     rejected?: Array<Record<string, unknown>>;
+    notes?: Array<{ file: string; reason: string }>;
+    dynamic?: Array<Record<string, unknown>>;
   },
   saved: [] as Array<Record<string, unknown>>,
 }));
@@ -35,13 +37,14 @@ vi.mock("../../src/core/projectScanner", () => ({
     engine: {
       getAllEvents: () => state.scan!.events,
       getAllFunctionWrappers: () => state.scan!.wrappers,
-      getAllDynamicOccurrences: () => [],
+      getAllDynamicOccurrences: () => state.scan!.dynamic ?? [],
       getAllRejectedNames: () => state.scan!.rejected ?? [],
     },
     plugins: { runDynamicEventReporters: async () => {}, attributeToSources: <T>(items: T[]) => items },
     skipped: state.scan!.skipped,
     ignored: state.scan!.ignored ?? [],
     syntaxErrors: state.scan!.syntaxErrors ?? [],
+    notes: state.scan!.notes ?? [],
     files: [],
     results: new Map(),
   }),
@@ -137,11 +140,11 @@ describe("sync", () => {
 });
 
 const REJECTED = [
-  { fileName: "/p/src/a.ts", line: 7, character: 0, calleeText: "sdk.track", callText: "", resolvedValues: ["x"], name: "bad name!", reason: "the name has characters other than letters" },
+  { fileName: "/p/src/a.ts", line: 7, character: 0, calleeText: "sdk.track", callText: "", resolvedValues: ["x"], name: "bad\tname", reason: "the name has control characters" },
 ];
 
 describe("notes after a scan", () => {
-  it("sync lists files with syntax errors and event names it cannot accept, without failing --strict", async () => {
+  it("sync lists files with syntax errors and event names it cannot accept, and --strict fails on them", async () => {
     state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
     state.scan!.rejected = REJECTED;
     await sync({ strict: true });
@@ -149,8 +152,21 @@ describe("notes after a scan", () => {
     expect(printed(err)).toContain("Syntax errors in 1 file (events after the error may be missed):");
     expect(printed(err)).toContain("src/broken.ts: line 3: ';' expected.");
     expect(printed(err)).toContain('Skipped 1 event name the CLI cannot accept:');
-    expect(printed(err)).toContain('src/a.ts:7 "bad name!": the name has characters other than letters');
+    expect(printed(err)).toContain('src/a.ts:7 "bad\tname": the name has control characters');
     expect(state.saved[0].events).toEqual(["kept.event", "new.event"]);
+    expect(printed(err)).toContain("The scan was not clean: 1 file with a syntax error, 1 event name the CLI cannot accept.");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("sync without --strict reports a clean scan as such and does not fail on notes", async () => {
+    state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
+    await sync();
+    expect(process.exitCode).toBeUndefined();
+
+    err.mockClear();
+    state.scan!.syntaxErrors = [];
+    await sync({ strict: true });
+    expect(printed(err)).not.toContain("not clean");
     expect(process.exitCode).toBeUndefined();
   });
 
@@ -164,13 +180,125 @@ describe("notes after a scan", () => {
     err.mockClear();
     await check({});
     expect(printed(err)).toContain("src/broken.ts: line 3");
-    expect(printed(err)).toContain('"bad name!"');
+    expect(printed(err)).toContain('"bad\tname"');
 
     err.mockClear();
     await check({ fix: true, strict: true });
     expect(printed(err)).toContain("src/broken.ts: line 3");
-    expect(printed(err)).toContain('"bad name!"');
+    expect(printed(err)).toContain('"bad\tname"');
+    expect(process.exitCode).toBe(1);
+  });
+});
+
+const DYNAMIC = (resolvedValues: string[], extra: Record<string, unknown> = {}) => ({
+  fileName: "/p/src/d.ts", line: 2, character: 0, calleeText: "track", callText: "track(x)", resolvedValues, ...extra,
+});
+
+describe("notes from plugins", () => {
+  const NOTES = [{ file: "/p/src/a.component.html", reason: "[event] on <button> is a property binding" }];
+
+  it("sync and check print them and never let them change the result", async () => {
+    state.scan!.notes = NOTES;
+    await sync({ strict: true });
+    expect(printed(err)).toContain("Notes from plugins on 1 file:");
+    expect(printed(err)).toContain("src/a.component.html: [event] on <button> is a property binding");
     expect(process.exitCode).toBeUndefined();
+
+    state.config!.events = ["kept.event", "new.event"];
+    state.config!.functionWrappers = [];
+    err.mockClear();
+    await check({ strict: true });
+    expect(printed(err)).toContain("Notes from plugins on 1 file:");
+    expect(printed(log)).toContain("All good");
+    expect(exit).not.toHaveBeenCalled();
+
+    err.mockClear();
+    await check({ fix: true, strict: true });
+    expect(printed(err)).toContain("Notes from plugins on 1 file:");
+  });
+});
+
+describe("check: honest result", () => {
+  beforeEach(() => {
+    state.config!.events = ["kept.event", "new.event"];
+    state.config!.functionWrappers = [];
+  });
+
+  it("says All good only for a clean scan", async () => {
+    await check({ strict: true });
+    expect(printed(log)).toContain("All good");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("does not say All good when names are dynamic, and points at --strict", async () => {
+    state.scan!.dynamic = [DYNAMIC([])];
+    await check({});
+    expect(printed(log)).toContain("No drift, but the scan was not clean: 1 dynamic event name.");
+    expect(printed(log)).not.toContain("All good");
+    expect(printed(err)).toContain("Use --strict");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("--strict fails on an unresolved dynamic name, but a name with resolved values is neither noted nor failed", async () => {
+    state.scan!.dynamic = [DYNAMIC([])];
+    await check({ strict: true });
+    expect(exit).toHaveBeenCalledWith(1);
+
+    exit.mockClear();
+    log.mockClear();
+    state.scan!.dynamic = [DYNAMIC(["a", "b"])];
+    await check({ strict: true });
+    expect(exit).not.toHaveBeenCalled();
+    expect(printed(log)).toContain("All good");
+  });
+
+  it("ignores generated copies of a call and does not count them", async () => {
+    state.scan!.dynamic = [DYNAMIC([], { inGeneratedCode: true })];
+    await check({ strict: true });
+    expect(printed(log)).toContain("All good");
+  });
+
+  it("--strict fails on syntax errors and rejected names, and lists oversized files without failing", async () => {
+    state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
+    await check({ strict: true });
+    expect(exit).toHaveBeenCalledWith(1);
+
+    exit.mockClear();
+    state.scan!.syntaxErrors = [];
+    state.scan!.ignored = [{ file: "/p/vendor.min.js", reason: "file is larger than 2 MB" }];
+    await check({ strict: true });
+    expect(printed(log)).toContain("1 file over the size limit");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("--fix with --strict fails on dynamic names and says the scan was not clean", async () => {
+    state.scan!.dynamic = [DYNAMIC([])];
+    await check({ fix: true, strict: true });
+    expect(process.exitCode).toBe(1);
+    expect(printed(err)).toContain("The scan was not clean: 1 dynamic event name.");
+  });
+
+  it("declared dynamicEvents acknowledge the dynamic names: no note, and --strict passes", async () => {
+    state.config!.dynamicEvents = ["declared.one"];
+    state.scan!.dynamic = [DYNAMIC([])];
+    await check({ strict: true });
+    expect(printed(log)).toContain("All good");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("an empty or unusable dynamicEvents acknowledges nothing", async () => {
+    state.config!.dynamicEvents = ["", 5, "\t"];
+    state.scan!.dynamic = [DYNAMIC([])];
+    await check({ strict: true });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("names a drift and an unclean scan together", async () => {
+    state.config!.events = ["kept.event"];
+    state.scan!.skipped = SKIP;
+    await check({});
+    expect(printed(log)).toContain("Drift found, and the scan was not clean: 1 skipped file.");
+    expect(exit).toHaveBeenCalledWith(1);
   });
 });
 
@@ -198,7 +326,8 @@ describe("check", () => {
     expect(printed(err)).toContain("src/Bad.vue");
     expect(printed(err)).toContain("1 known entry could not be verified");
     expect(exit).not.toHaveBeenCalled();
-    expect(printed(log)).toContain("All good");
+    expect(printed(log)).not.toContain("All good");
+    expect(printed(log)).toContain("No drift, but the scan was not clean: 1 skipped file.");
   });
 
   it("--strict fails the check when a file was skipped even without drift", async () => {

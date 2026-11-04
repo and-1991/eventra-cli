@@ -1,6 +1,7 @@
 import chalk from "chalk";
 import path from "path";
 
+import type { DynamicOccurrence } from "../../analysis/shared/dynamicOccurrence";
 import type { PluginRegistry } from "../registry";
 import type { DynamicEventReporter } from "../types";
 
@@ -13,6 +14,27 @@ function displayPath(fileName: string): string {
   return shown.replace(/\\/g, "/");
 }
 
+const CAUSE_TEXT: Readonly<Record<string, string>> = {
+  env: "read from the environment",
+  variable: "a variable with no known value",
+  template: "a template string with a part that is not known",
+  call: "the result of a call",
+  expression: "an expression that is not a plain value",
+};
+
+function line(occ: DynamicOccurrence, withCause: boolean): string {
+  const values = occ.resolvedValues.length > 0 ? ` (resolved: ${occ.resolvedValues.join(", ")})` : "";
+  const cause = withCause && occ.cause && CAUSE_TEXT[occ.cause] ? ` [${occ.cause}: ${CAUSE_TEXT[occ.cause]}]` : "";
+  const file = displayPath(occ.fileName);
+  if (occ.inTemplate) {
+    return `~ template of ${file}: event="${occ.eventExpression ?? ""}"${values}${cause}`;
+  }
+  if (occ.inTemplateCode) {
+    return `~ template of ${file}: ${occ.calleeText}(...)${values}${cause}`;
+  }
+  return `~ ${file}:${occ.line} ${occ.calleeText}(...)${values}${cause}`;
+}
+
 const consoleDynamicEventReporter: DynamicEventReporter = {
   name: "console",
   report({ occurrences: all }) {
@@ -21,16 +43,20 @@ const consoleDynamicEventReporter: DynamicEventReporter = {
     if (occurrences.length === 0) {
       return;
     }
-    console.log(chalk.blue("\nDynamic event names:"));
-    for (const occ of occurrences) {
-      const values = occ.resolvedValues.length > 0 ? ` (resolved: ${occ.resolvedValues.join(", ")})` : "";
-      const file = displayPath(occ.fileName);
-      if (occ.inTemplate) {
-        console.log(chalk.yellow(`~ template of ${file}: event="${occ.eventExpression ?? ""}"${values}`));
-      } else if (occ.inTemplateCode) {
-        console.log(chalk.yellow(`~ template of ${file}: ${occ.calleeText}(...)${values}`));
-      } else {
-        console.log(chalk.yellow(`~ ${file}:${occ.line} ${occ.calleeText}(...)${values}`));
+    // a call inside a wrapper tracks whatever each caller passes, and the callers are checked on their own;
+    // it is not an event that is missing, so it is listed apart from the names that are not known where they are written
+    const inWrappers = occurrences.filter((occ) => occ.kind === "wrapper");
+    const unknown = occurrences.filter((occ) => occ.kind !== "wrapper");
+    if (unknown.length > 0) {
+      console.log(chalk.blue("\nDynamic event names:"));
+      for (const occ of unknown) {
+        console.log(chalk.yellow(line(occ, true)));
+      }
+    }
+    if (inWrappers.length > 0) {
+      console.log(chalk.blue("\nInside a wrapper (each caller is checked on its own):"));
+      for (const occ of inWrappers) {
+        console.log(chalk.gray(line(occ, false)));
       }
     }
   },

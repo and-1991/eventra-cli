@@ -131,7 +131,8 @@ describe("dynamic occurrence output for framework files", () => {
 
       const scriptLine = VUE_SOURCE.split("\n").findIndex((l) => l.includes("sdk.track(name)")) + 1;
       expect(printed).toContain(`~ src/A.vue:${scriptLine} sdk.track(...)`);
-      expect(printed).toContain('~ template of src/A.vue: event="pick"');
+      // a template event whose name is not known says why, after the line
+      expect(printed.some((line: string) => line.startsWith('~ template of src/A.vue: event="pick" [variable: '))).toBe(true);
       expect(printed.join("\n")).not.toContain("__eventra_");
       expect(printed.join("\n")).not.toContain(".vue.ts");
       expect(printed).toContain("~ lib/plain.ts:3 s.track(...)");
@@ -146,7 +147,7 @@ describe("dynamic occurrence output for framework files", () => {
     try {
       const { printed } = await report(root, { "x/c.component.html": "<p></p>" }, [angularShaped]);
 
-      expect(printed).toContain('~ template of x/c.component.html: event="name + Math.random()"');
+      expect(printed.some((line: string) => line.startsWith('~ template of x/c.component.html: event="name + Math.random()" ['))).toBe(true);
       // the embedded copy of the component class repeats a call the class file already reports
       expect(printed.some((line: string) => line.includes("component class"))).toBe(false);
       expect(printed.filter((line: string) => line.includes("this.sdk.track"))).toEqual([]);

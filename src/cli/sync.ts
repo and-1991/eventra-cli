@@ -1,15 +1,16 @@
 import chalk from "chalk";
 
+import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { requireConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { persistScanResults } from "../core/scanResults";
-import { plural, reportIgnored, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
+import { describeProblems, hasStrictProblems, plural, reportIgnored, reportPluginNotes, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
 
 export async function sync({ strict = false }: { strict?: boolean } = {}): Promise<void> {
   const config = await requireConfig();
   if (!config) return;
   console.log(chalk.blue("Scanning..."));
-  const { engine, plugins, skipped, ignored, syntaxErrors } = await scanProject(config);
+  const { engine, plugins, skipped, ignored, syntaxErrors, notes: pluginNotes } = await scanProject(config);
   // report what was saved: with skipped files that is the union of the known and
   // the found events, not just what this scan found
   const saved = await persistScanResults(config, engine, { preserveKnown: skipped.length > 0 });
@@ -19,10 +20,16 @@ export async function sync({ strict = false }: { strict?: boolean } = {}): Promi
   console.log(
     chalk.green(`Found ${plural(saved.events.length, "event")}, ${plural(wrapperCount, "function wrapper")}`),
   );
-  await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
+  const dynamic = engine.getAllDynamicOccurrences();
+  await plugins.runDynamicEventReporters(dynamic);
+  const rejected = plugins.attributeToSources(engine.getAllRejectedNames());
   reportSkipped(skipped);
   reportIgnored(ignored);
   reportSyntaxErrors(syntaxErrors);
-  reportRejectedNames(plugins.attributeToSources(engine.getAllRejectedNames()));
-  if (strict && skipped.length > 0) process.exitCode = 1;
+  reportRejectedNames(rejected);
+  reportPluginNotes(pluginNotes);
+  const problems = { skipped, ignored, syntaxErrors, rejected, dynamic, dynamicDeclared: normalizeDynamicEvents(config.dynamicEvents).length > 0 };
+  const notes = describeProblems(problems);
+  if (notes.length > 0) console.error(chalk.yellow(`The scan was not clean: ${notes.join(", ")}.`));
+  if (strict && hasStrictProblems(problems)) process.exitCode = 1;
 }

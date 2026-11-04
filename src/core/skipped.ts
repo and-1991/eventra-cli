@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import path from "path";
 
-import type { RejectedName } from "../analysis/shared/dynamicOccurrence";
+import type { DynamicOccurrence, RejectedName } from "../analysis/shared/dynamicOccurrence";
 
 export interface SkippedFile {
   readonly file: string;
@@ -94,6 +94,23 @@ export function reportSyntaxErrors(files: readonly SkippedFile[], cwd: string = 
   console.error(chalk.yellow(lines.join("\n")));
 }
 
+/** What plugins said about files that is not an error: a hint, not a failure, so it never changes an exit code. */
+export function formatPluginNotes(notes: readonly SkippedFile[], cwd: string): string[] {
+  if (notes.length === 0) return [];
+  const lines = [`Notes from plugins on ${notes.length} file${notes.length === 1 ? "" : "s"}:`];
+  for (const { file, reason } of notes) {
+    lines.push(`  ${relativeTo(cwd, file)}: ${reason}`);
+  }
+  return lines;
+}
+
+/** Prints one note (stderr) for what plugins said about files. */
+export function reportPluginNotes(notes: readonly SkippedFile[], cwd: string = process.cwd()): void {
+  const lines = formatPluginNotes(notes, cwd);
+  if (lines.length === 0) return;
+  console.error(chalk.gray(lines.join("\n")));
+}
+
 /**
  * Event names the CLI read as plain text but cannot accept. `rejected` must already be attributed to the
  * files the user wrote (PluginRegistry.attributeToSources), so a template is named, not its generated module.
@@ -116,9 +133,60 @@ export function reportRejectedNames(rejected: readonly RejectedName[], cwd: stri
   const lines = formatRejectedNames(rejected, cwd);
   if (lines.length === 0) return;
   console.error(chalk.yellow(lines.join("\n")));
-  console.error(chalk.gray("These names are not in your events. A name can use letters, digits and $ : _ . / - and space, up to 64 characters."));
+  console.error(chalk.gray("These names are not in your events. A name must not be empty or contain control characters (tab, line break)."));
 }
 
 export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {
   return `${count} ${count === 1 ? singular : pluralForm}`;
+}
+
+/** Everything a scan reported besides the events themselves. */
+export interface ScanProblems {
+  readonly skipped: readonly SkippedFile[];
+  readonly ignored: readonly SkippedFile[];
+  readonly syntaxErrors: readonly SkippedFile[];
+  /** Already attributed to the user's files (PluginRegistry.attributeToSources). */
+  readonly rejected: readonly RejectedName[];
+  readonly dynamic: readonly DynamicOccurrence[];
+  /** The config declares `dynamicEvents`: the dynamic names are known and accepted, so they are not a problem. */
+  readonly dynamicDeclared?: boolean;
+}
+
+// a call copied into a generated module repeats one the user's own file already reports
+const written = <T extends { readonly inGeneratedCode?: boolean }>(items: readonly T[]): T[] => items.filter((item) => !item.inGeneratedCode);
+
+// a name with resolved values is read (the listing shows them), and a call inside a wrapper tracks what its
+// callers pass, which is checked at each caller; what is left is a name that is not known where it is written
+const unresolvedDynamic = (problems: ScanProblems): DynamicOccurrence[] =>
+  written(problems.dynamic).filter((occurrence) => occurrence.resolvedValues.length === 0 && occurrence.kind !== "wrapper");
+
+/**
+ * One phrase per kind of problem, in the order they are reported. An empty list means the scan was clean:
+ * only then may a command say that everything is fine.
+ */
+export function describeProblems(problems: ScanProblems): string[] {
+  const phrases: string[] = [];
+  const add = (count: number, singular: string, pluralForm: string): void => {
+    if (count > 0) phrases.push(plural(count, singular, pluralForm));
+  };
+  add(problems.skipped.length, "skipped file", "skipped files");
+  add(problems.syntaxErrors.length, "file with a syntax error", "files with syntax errors");
+  add(written(problems.rejected).length, "event name the CLI cannot accept", "event names the CLI cannot accept");
+  if (!problems.dynamicDeclared) add(unresolvedDynamic(problems).length, "dynamic event name", "dynamic event names");
+  add(problems.ignored.length, "file over the size limit", "files over the size limit");
+  return phrases;
+}
+
+/**
+ * What `--strict` fails on. Dynamic names count only when nothing could be resolved for them and the config
+ * has not declared `dynamicEvents`, and files
+ * over the size limit are a deliberate choice, not a failure: see formatIgnored.
+ */
+export function hasStrictProblems(problems: ScanProblems): boolean {
+  return (
+    problems.skipped.length > 0 ||
+    problems.syntaxErrors.length > 0 ||
+    written(problems.rejected).length > 0 ||
+    (!problems.dynamicDeclared && unresolvedDynamic(problems).length > 0)
+  );
 }

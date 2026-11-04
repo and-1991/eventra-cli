@@ -27,7 +27,7 @@ function run(): void {
 
   program
     .command("sync")
-    .option("--strict", "exit with a non-zero code if any file could not be analysed")
+    .option("--strict", "exit with a non-zero code on skipped files, syntax errors, rejected names or unresolved dynamic names")
     .action(async (opts) => {
       const { sync } = await import("./cli/sync");
       await sync({ strict: opts.strict });
@@ -36,7 +36,7 @@ function run(): void {
   program
     .command("check")
     .option("--fix", "auto fix issues")
-    .option("--strict", "exit with a non-zero code if any file could not be analysed")
+    .option("--strict", "exit with a non-zero code on skipped files, syntax errors, rejected names or unresolved dynamic names")
     .action(async (opts) => {
       const { check } = await import("./cli/check");
       await check({ fix: opts.fix, strict: opts.strict });

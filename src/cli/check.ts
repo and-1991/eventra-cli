@@ -1,9 +1,10 @@
 import chalk from "chalk";
 
+import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { requireConfig, saveConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { buildConfigFromScan } from "../core/scanResults";
-import { plural, reportIgnored, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
+import { describeProblems, hasStrictProblems, plural, reportIgnored, reportPluginNotes, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
 
 function diffSets(found: Set<string>, known: Set<string>): { added: string[]; removed: string[] } {
   return {
@@ -16,12 +17,18 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
   const config = await requireConfig();
   if (!config) return;
   console.log(chalk.blue("Checking events and function wrappers..."));
-  const { engine, plugins, skipped, ignored, syntaxErrors } = await scanProject(config);
+  const { engine, plugins, skipped, ignored, syntaxErrors, notes: pluginNotes } = await scanProject(config);
+  const rejected = plugins.attributeToSources(engine.getAllRejectedNames());
+  const dynamic = engine.getAllDynamicOccurrences();
   const reportNotes = (): void => {
     reportSyntaxErrors(syntaxErrors);
-    reportRejectedNames(plugins.attributeToSources(engine.getAllRejectedNames()));
+    reportRejectedNames(rejected);
+    reportPluginNotes(pluginNotes);
   };
-  await plugins.runDynamicEventReporters(engine.getAllDynamicOccurrences());
+  await plugins.runDynamicEventReporters(dynamic);
+  const problems = { skipped, ignored, syntaxErrors, rejected, dynamic, dynamicDeclared: normalizeDynamicEvents(config.dynamicEvents).length > 0 };
+  const notes = describeProblems(problems);
+  const strictFailure = strict && hasStrictProblems(problems);
   const partial = skipped.length > 0;
 
   const foundEvents = new Set(engine.getAllEvents());
@@ -46,7 +53,8 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
     reportSkipped(skipped);
     reportIgnored(ignored);
     reportNotes();
-    if (strict && partial) process.exitCode = 1;
+    if (notes.length > 0) console.error(chalk.yellow(`The scan was not clean: ${notes.join(", ")}.`));
+    if (strictFailure) process.exitCode = 1;
     return;
   }
 
@@ -75,8 +83,14 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
     );
   }
 
-  if (hasDiff || (strict && partial)) {
+  if (notes.length > 0) {
+    // the events match, but a scan with problems proves less than a clean one: do not call it good
+    console.log(chalk.yellow(`${hasDiff ? "Drift found, and the" : "No drift, but the"} scan was not clean: ${notes.join(", ")}.`));
+    if (!strict) console.error(chalk.gray("Use --strict to fail on skipped files, syntax errors, rejected names and dynamic names."));
+  }
+
+  if (hasDiff || strictFailure) {
     process.exit(1);
   }
-  console.log(chalk.green("All good"));
+  if (notes.length === 0) console.log(chalk.green("All good"));
 }

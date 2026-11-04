@@ -12,6 +12,7 @@ import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFil
 import { resolveWrapperChains } from "../analysis/scanner/wrapperChains";
 import { FileSemanticIndex } from "../analysis/shared/types";
 import { DynamicOccurrence, RejectedName } from "../analysis/shared/dynamicOccurrence";
+import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { EventraConfig, ScanResult } from "../types";
 import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
 import { createBuiltinPluginRegistry } from "../plugin/loadPlugins";
@@ -406,7 +407,8 @@ export class EventraEngine {
   }
 
   getAllEvents(): string[] {
-    const events = new Set<string>();
+    // names the project declares for calls the scan cannot read count as found: sync, check and watch all agree
+    const events = new Set<string>(normalizeDynamicEvents(this.lastConfig.dynamicEvents));
     for (const result of this.fileResults.values()) {
       for (const event of result.events) {
         events.add(event);

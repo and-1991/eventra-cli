@@ -51,6 +51,8 @@ export class PluginRegistry {
   private readonly dynamicEventReporters: DynamicEventReporter[] = [];
   private readonly includePatterns: string[] = [];
   private readonly sourceToVirtuals = new Map<string, string[]>();
+  // what plugins said about a file that is not an error, by file; replaced each time the file is transformed
+  private readonly pluginNotes = new Map<string, readonly string[]>();
   private readonly templateRegions = new Map<string, TemplateRegion>();
 
   registerFilePreprocessor(preprocessor: FilePreprocessor): void {
@@ -112,6 +114,18 @@ export class PluginRegistry {
   getVirtualPathsForSource(fileName: string): readonly string[] {
     // a source is only recorded with at least one virtual file, so a hit is never empty
     return this.sourceToVirtuals.get(this.normalizePath(fileName)) ?? [this.normalizePath(fileName)];
+  }
+
+  /** Records (or, when empty, forgets) what a plugin has to say about a source file. */
+  setPluginNotes(fileName: string, notes: readonly string[]): void {
+    const key = this.normalizePath(fileName);
+    if (notes.length > 0) this.pluginNotes.set(key, notes);
+    else this.pluginNotes.delete(key);
+  }
+
+  /** Every note a plugin left about a file, as `{ file, reason }`, in the order the files were read. */
+  getPluginNotes(): { file: string; reason: string }[] {
+    return [...this.pluginNotes].flatMap(([file, notes]) => notes.map((reason) => ({ file, reason })));
   }
 
   async preprocessFile(input: FilePreprocessInput): Promise<readonly VirtualFile[]> {

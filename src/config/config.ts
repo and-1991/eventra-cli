@@ -2,6 +2,8 @@ import chalk from "chalk";
 import fs from "fs-extra";
 import path from "path";
 
+import { MAX_FILE_CHARS, fileLimit } from "../core/fileLimits";
+import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { EventraConfig, SinkRuleConfig } from "../types";
 
 export const CONFIG_NAME = "eventra.json";
@@ -52,6 +54,7 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
   });
 
   const sinks = normalizeSinks(config.sinks);
+  const dynamicEvents = normalizeDynamicEvents(config.dynamicEvents);
 
   return {
     apiKey: config.apiKey ?? "",
@@ -61,10 +64,13 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
     // not depend on the machine's ICU locale
     functionWrappers: uniqueWrappers.sort((a, b) => (a.name < b.name ? -1 : 1)),
     plugins: [...(config.plugins ?? [])],
+    ...(dynamicEvents.length > 0 ? { dynamicEvents } : {}),
     ...(sinks.length > 0 ? { sinks } : {}),
     sync: {
       include: config.sync?.include ?? DEFAULT_INCLUDE,
       exclude: config.sync?.exclude ?? DEFAULT_EXCLUDE,
+      // kept only when it changes something: a config that never set it stays as it was
+      ...(fileLimit(config.sync?.maxFileSize) !== MAX_FILE_CHARS ? { maxFileSize: fileLimit(config.sync?.maxFileSize) } : {}),
     },
   };
 }

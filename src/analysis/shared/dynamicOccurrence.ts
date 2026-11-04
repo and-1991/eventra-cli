@@ -2,6 +2,8 @@
 
 import ts from "typescript";
 
+import { classifyDynamic, type DynamicCause, type DynamicKind } from "./dynamicCause";
+
 /** A track() call site whose event-name argument could not be resolved to a plain string literal. */
 export interface DynamicOccurrence {
   readonly fileName: string;
@@ -29,6 +31,10 @@ export interface DynamicOccurrence {
    * module): `line` points into generated text and is not meaningful.
    */
   readonly inGeneratedCode?: boolean;
+  /** `wrapper`: the name is a parameter of the function around the call. `unresolved`: not known where the call is made. */
+  readonly kind?: DynamicKind;
+  /** Why the name is not known (`env`, `variable`, `template`, `call`, `expression`), or `parameter` for a wrapper. */
+  readonly cause?: DynamicCause;
 }
 
 const CALL_TEXT_MAX_LENGTH = 120;
@@ -37,8 +43,14 @@ const CALL_TEXT_MAX_LENGTH = 120;
 // a JSX `event="..."`/`event={expr}` binding (see jsxEventAttribute.ts) -
 // `calleeText` is supplied by the caller since it's derived differently per
 // node kind (a call's callee text vs. a JSX element's tag name).
-export function recordDynamicOccurrence(node: ts.Node, calleeText: string, resolvedValues: readonly string[], out: DynamicOccurrence[]): void {
-  out.push(occurrenceAt(node, calleeText, resolvedValues));
+export function recordDynamicOccurrence(
+  node: ts.Node,
+  calleeText: string,
+  resolvedValues: readonly string[],
+  out: DynamicOccurrence[],
+  name?: { readonly expression: ts.Expression; readonly checker: ts.TypeChecker },
+): void {
+  out.push({ ...occurrenceAt(node, calleeText, resolvedValues), ...(name ? classifyDynamic(name.expression, name.checker) : {}) });
 }
 
 /**

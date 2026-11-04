@@ -42,6 +42,36 @@ async function scan(sinks: SinkRuleConfig[], files: Record<string, string>) {
 
 const POSTHOG = [{ preset: "posthog" }];
 
+describe("sinks: a Nuxt plugin's provided function ($trackFeature)", () => {
+  const RULE = [{ callee: "$trackFeature" }];
+
+  it("reads the name from useNuxtApp().$trackFeature(...) and from a destructured $trackFeature", async () => {
+    const { events } = await scan(RULE, {
+      "a.ts": `
+        declare function useNuxtApp(): any;
+        useNuxtApp().$trackFeature("nuxt.direct");
+        const { $trackFeature } = useNuxtApp();
+        $trackFeature("nuxt.destructured");
+        const nuxtApp = useNuxtApp();
+        nuxtApp.$trackFeature("nuxt.variable");
+      `,
+    });
+    expect(events).toEqual(["nuxt.destructured", "nuxt.direct", "nuxt.variable"]);
+  });
+
+  it("reads it in a Vue-style setup call too, and reports a computed name as dynamic", async () => {
+    const { events, dynamic } = await scan(RULE, {
+      "b.ts": `
+        declare function useNuxtApp(): any;
+        declare function getName(): string;
+        export function setup() { useNuxtApp().$trackFeature("nuxt.setup"); useNuxtApp().$trackFeature(getName()); }
+      `,
+    });
+    expect(events).toEqual(["nuxt.setup"]);
+    expect(dynamic).toHaveLength(1);
+  });
+});
+
 describe("sinks: posthog preset", () => {
   it("detects posthog.capture('x') from posthog-js", async () => {
     const { events } = await scan(POSTHOG, {
@@ -242,16 +272,17 @@ describe("sinks: JSX component wrappers", () => {
     expect(events.sort()).toEqual(["plain_click", "props_click"]);
   });
 
-  it("does not invent events when the attribute is missing or spread", async () => {
+  it("reads a spread it can see into, and invents nothing when the attribute is missing or the spread is unreadable", async () => {
     const { events, dynamic } = await scan(POSTHOG, {
       "Track.tsx": WRAPPER,
       "page.tsx": `
         import { Track } from "./Track";
-        const rest = { analytics: { name: "hidden" } };
-        export const P = () => <><Track /><Track {...rest} /></>;
+        declare const unknown: any;
+        const rest = { analytics: { name: "from.spread" } };
+        export const P = () => <><Track /><Track {...unknown} /><Track {...rest} /></>;
       `,
     });
-    expect(events).toEqual([]);
+    expect(events).toEqual(["from.spread"]);
     // The wrapper's own `capture(props.x)` is always reported as dynamic; the JSX sites add nothing.
     expect(dynamic.filter((d) => d.fileName.endsWith("page.tsx"))).toEqual([]);
   });
@@ -431,7 +462,7 @@ describe("sinks: names with spaces and colons", () => {
     expect(events.sort()).toEqual(["JSX Event: Click Me", "SDK Direct: Sign Up"]);
   });
 
-  it("keeps `$` names and still drops names with other characters outside the allowed set", async () => {
+  it("keeps `$` names and punctuation, and still drops names with control characters", async () => {
     const { events } = await scan(POSTHOG, {
       "a.ts": `
         import posthog from "posthog-js";
@@ -443,17 +474,17 @@ describe("sinks: names with spaces and colons", () => {
     });
     expect(events).toContain("Ok Name");
     expect(events).toContain("$pageview");
-    expect(events).not.toContain("Bang!");
+    expect(events).toContain("Bang!");
     expect(events.some((e) => e.includes("\t"))).toBe(false);
   });
 
-  it("drops a spaced name longer than 64 characters", async () => {
+  it("cuts a spaced name longer than 64 characters, as the SDK does", async () => {
     const long = `${"word ".repeat(13)}x`;
     expect(long.length).toBeGreaterThan(64);
     const { events } = await scan(POSTHOG, {
       "a.ts": `import posthog from "posthog-js"; posthog.capture("${long}"); posthog.capture("Short Name");`,
     });
-    expect(events).toEqual(["Short Name"]);
+    expect(events.sort()).toEqual([long.slice(0, 64).trim(), "Short Name"].sort());
   });
 });
 

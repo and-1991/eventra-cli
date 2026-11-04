@@ -43,6 +43,34 @@ describe("registerExternalCliPlugin", () => {
     expect(registry.getSinkDetectors().map((d) => d.name)).toContain("test-template");
   });
 
+  it("keeps the notes a plugin returns for a file, replaces them on the next transform, and ignores what is not text", async () => {
+    const registry = createBuiltinPluginRegistry();
+    let notes: unknown = ["first note", "", 5, "second note"];
+    registerExternalCliPlugin(
+      {
+        id: "noting",
+        includeGlobs: ["**/*.html"],
+        match: () => true,
+        transform: async ({ path }) => ({ modules: [{ path: `${path}.ts`, content: "export {}" }], notes: notes as string[] }),
+      },
+      registry,
+    );
+
+    await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
+    expect(registry.getPluginNotes()).toEqual([
+      { file: "/app/a.html", reason: "first note" },
+      { file: "/app/a.html", reason: "second note" },
+    ].map((note) => ({ ...note, file: expect.stringMatching(/app\/a\.html$/) })));
+
+    notes = undefined;
+    await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
+    expect(registry.getPluginNotes()).toEqual([]);
+
+    notes = "not a list";
+    await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
+    expect(registry.getPluginNotes()).toEqual([]);
+  });
+
   it("rejects invalid transform results", async () => {
     const registry = createBuiltinPluginRegistry();
     const plugin: ExternalCliPlugin = {

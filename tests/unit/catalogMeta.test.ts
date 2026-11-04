@@ -99,6 +99,12 @@ describe("countUnresolved", () => {
     expect(countUnresolved([])).toBe(0);
   });
 
+  it("does not count a call inside a wrapper: its callers are counted on their own", () => {
+    const wrapper = { resolvedValues: [], kind: "wrapper" } as unknown as Parameters<typeof countUnresolved>[0][number];
+    const unknown = { resolvedValues: [], kind: "unresolved" } as unknown as Parameters<typeof countUnresolved>[0][number];
+    expect(countUnresolved([wrapper, unknown, occurrence([])])).toBe(2);
+  });
+
   it("does not count the copy of an Angular component class twice", () => {
     const generated = { resolvedValues: [], inGeneratedCode: true } as unknown as Parameters<typeof countUnresolved>[0][number];
     expect(countUnresolved([occurrence([]), generated])).toBe(1);

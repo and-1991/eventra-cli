@@ -4,17 +4,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   cleanSkipReason,
+  describeProblems,
   errorMessage,
   formatIgnored,
+  formatPluginNotes,
   formatRejectedNames,
   formatSkipped,
   formatSyntaxErrors,
+  hasStrictProblems,
   plural,
   reportIgnored,
+  reportPluginNotes,
   reportRejectedNames,
   reportSkipped,
   reportSyntaxErrors,
   skippedFrom,
+  type ScanProblems,
 } from "../../src/core/skipped";
 
 const FILE = "/home/u/my project/src/Bad.vue";
@@ -181,7 +186,75 @@ describe("formatRejectedNames / reportRejectedNames", () => {
     expect(err).not.toHaveBeenCalled();
     reportRejectedNames([rejected()], "/p");
     expect(err).toHaveBeenCalledTimes(2);
-    expect(String(err.mock.calls[1][0])).toContain("up to 64 characters");
+    expect(String(err.mock.calls[1][0])).toContain("control characters");
+    err.mockRestore();
+  });
+});
+
+describe("describeProblems and hasStrictProblems", () => {
+  const file = { file: "/p/a.ts", reason: "r" };
+  const rejectedName = (extra: Record<string, unknown> = {}) => ({ fileName: "/p/a.ts", line: 1, character: 0, calleeText: "t", callText: "", resolvedValues: [], name: "x", reason: "r", ...extra });
+  const occurrence = (resolvedValues: string[], extra: Record<string, unknown> = {}) => ({ fileName: "/p/a.ts", line: 1, character: 0, calleeText: "t", callText: "", resolvedValues, ...extra });
+  const clean: ScanProblems = { skipped: [], ignored: [], syntaxErrors: [], rejected: [], dynamic: [] };
+
+  it("is empty and not strict for a clean scan", () => {
+    expect(describeProblems(clean)).toEqual([]);
+    expect(hasStrictProblems(clean)).toBe(false);
+  });
+
+  it("has one phrase per kind, singular for one and plural for more, in the order they are reported", () => {
+    expect(
+      describeProblems({ skipped: [file], syntaxErrors: [file], rejected: [rejectedName()], dynamic: [occurrence([])], ignored: [file] }),
+    ).toEqual(["1 skipped file", "1 file with a syntax error", "1 event name the CLI cannot accept", "1 dynamic event name", "1 file over the size limit"]);
+    expect(
+      describeProblems({ skipped: [file, file], syntaxErrors: [file, file], rejected: [rejectedName(), rejectedName()], dynamic: [occurrence([]), occurrence([])], ignored: [file, file] }),
+    ).toEqual(["2 skipped files", "2 files with syntax errors", "2 event names the CLI cannot accept", "2 dynamic event names", "2 files over the size limit"]);
+  });
+
+  it("does not count a call inside a wrapper, but counts an unresolved one", () => {
+    const wrapper = { ...occurrence([]), kind: "wrapper" };
+    const unknown = { ...occurrence([]), kind: "unresolved", cause: "env" };
+    expect(describeProblems({ ...clean, dynamic: [wrapper] })).toEqual([]);
+    expect(hasStrictProblems({ ...clean, dynamic: [wrapper] })).toBe(false);
+    expect(describeProblems({ ...clean, dynamic: [wrapper, unknown] })).toEqual(["1 dynamic event name"]);
+    expect(hasStrictProblems({ ...clean, dynamic: [wrapper, unknown] })).toBe(true);
+  });
+
+  it("does not count a generated copy of a call, or a dynamic name that has resolved values", () => {
+    const problems = { ...clean, rejected: [rejectedName({ inGeneratedCode: true })], dynamic: [occurrence([], { inGeneratedCode: true }), occurrence(["a"])] };
+    expect(describeProblems(problems)).toEqual([]);
+    expect(hasStrictProblems(problems)).toBe(false);
+  });
+
+  it("fails --strict on each of skipped, syntax errors, rejected names and unresolved dynamic names, but not on ignored files", () => {
+    expect(hasStrictProblems({ ...clean, skipped: [file] })).toBe(true);
+    expect(hasStrictProblems({ ...clean, syntaxErrors: [file] })).toBe(true);
+    expect(hasStrictProblems({ ...clean, rejected: [rejectedName()] })).toBe(true);
+    expect(hasStrictProblems({ ...clean, dynamic: [occurrence([])] })).toBe(true);
+    expect(hasStrictProblems({ ...clean, ignored: [file] })).toBe(false);
+  });
+
+  it("declared dynamic events acknowledge the dynamic names, and only those", () => {
+    const problems = { ...clean, dynamic: [occurrence([])], dynamicDeclared: true };
+    expect(describeProblems(problems)).toEqual([]);
+    expect(hasStrictProblems(problems)).toBe(false);
+    expect(hasStrictProblems({ ...problems, skipped: [file] })).toBe(true);
+  });
+});
+
+describe("plugin notes", () => {
+  it("lists each file with what the plugin said, singular for one file", () => {
+    expect(formatPluginNotes([], "/p")).toEqual([]);
+    expect(formatPluginNotes([{ file: "/p/a.html", reason: "r1" }], "/p")).toEqual(["Notes from plugins on 1 file:", "  a.html: r1"]);
+    expect(formatPluginNotes([{ file: "/p/a.html", reason: "r1" }, { file: "/p/b.html", reason: "r2" }], "/p")).toEqual(["Notes from plugins on 2 files:", "  a.html: r1", "  b.html: r2"]);
+  });
+
+  it("writes the list to stderr, or nothing", () => {
+    const err = vi.spyOn(console, "error").mockImplementation(() => {});
+    reportPluginNotes([], "/p");
+    expect(err).not.toHaveBeenCalled();
+    reportPluginNotes([{ file: "/p/a.html", reason: "r1" }], "/p");
+    expect(err).toHaveBeenCalledTimes(1);
     err.mockRestore();
   });
 });

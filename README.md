@@ -123,7 +123,7 @@ function Button({ analyticsName }: { analyticsName: string }) {
 <Button label="Pay" />                    // label never reaches track(): not an event
 ```
 
-This covers a prop handed on through other components, `React.memo` and `forwardRef`, and local aliases of the props (`const { track } = props`, `const name = props.track`). It works in React and, with the framework plugins, in Vue (`defineProps`), Svelte (`export let` and `$props()`), Astro (`Astro.props`) and Angular (`@Input()`, `input()`); see each plugin below. A prop the component never tracks is not an event. The plain `event="..."` attribute keeps working on any tag.
+This covers a prop handed on through other components, `React.memo` and `forwardRef`, local aliases of the props (`const { track } = props`, `const name = props.track`), spreads the analysis can see (`<B {...{ n: "x" }} />`, `<B {...consts} />`, `<Inner {...props} />` and `<Inner {...rest} />` that forward what they were given, except the props named beside the rest; a property written after the spread wins, as at runtime; `v-bind="obj"` in Vue and `{...obj}` in Svelte and Astro are read the same way on a component) and class components (`class C extends React.Component` or `PureComponent`: `this.props.x`, and `const { x } = this.props` in any method of the class). It works in React and, with the framework plugins, in Vue (`defineProps`), Svelte (`export let` and `$props()`), Astro (`Astro.props`) and Angular (`@Input()`, `input()`); see each plugin below. A prop the component never tracks is not an event. The plain `event="..."` attribute keeps working on any tag.
 
 #### What is not followed
 
@@ -131,13 +131,13 @@ These are limits, not bugs: the component is scanned as before, so nothing alrea
 
 | Where | Not followed |
 |-------|--------------|
-| React / JSX | `{...props}` spreads; class components (`this.props.x`); rest props (`...rest`); a prop's default when the attribute is omitted; components from `node_modules`; a value that comes from a loop variable (`items.map(i => <B n={i.name} />)`) is a dynamic occurrence, not an event |
-| Vue | Options API (`props: [...]` read through `this`); `v-bind="obj"`; components registered by name and `<component :is>`; Nuxt auto-imported components (no `import`); a normal `<script>` with its own `export default` |
-| Svelte | `{...props}`; `<svelte:component this={X}>`; `$$props` / `$$restProps`; mixed values (`y="p-{x}"`); an instance script with `export default`, `export *` or an import after code |
-| Astro | `<script define:vars={{ ... }}>` (client scripts are separate modules); spreads; boolean attributes; template literals in props; member tags (`<Foo.Bar>`); non-default imports; a value `export` or an import after code in the frontmatter; a prop put into an attribute string (`onclick={`track("${x}")`}`) is text, not a call |
-| Angular | a child with an inline `template:` (only `.html` files are read); a child reached only through an NgModule in another folder; `inputs: []` metadata; directives; aliases that are not plain identifiers; class selectors and `:not()` |
+| React / JSX | a spread of something the analysis cannot see into (`{...load()}`, `{...unknownProps}`); a prop's default when the attribute is omitted; components from `node_modules`; a value that comes from a loop variable (`items.map(i => <B n={i.name} />)`) is a dynamic occurrence, not an event |
+| Vue | an Options API component whose `export default` is not the last statement, or whose `props` is not written out in the object; `this` inside a nested `function`; components registered by name and `<component :is>`; Nuxt auto-imported components (no `import`); a normal `<script>` with its own `export default` |
+| Svelte | `<svelte:component this={X}>`; `$$props` / `$$restProps`; a mixed prop value (`y="p-{x}"`; on `event` it is read as a template literal); an instance script with `export default`, `export *` or an import after code |
+| Astro | `define:vars` that is not an object written out (`define:vars={vars}`) or a script that has imports of its own; boolean attributes; template literals in props (on `event` they are read); member tags (`<Foo.Bar>`); non-default imports; a value `export` or an import after code in the frontmatter; a prop put into an attribute string (`onclick={`track("${x}")`}`) is text, not a call |
+| Angular | an inline `template:` with `${}` in it; a child reached only through an NgModule in another folder; `inputs: []` metadata; directives; aliases that are not plain identifiers; class selectors and `:not()` |
 
-A name has to be a plain string the CLI can resolve. Anything it cannot is listed under "Dynamic event names" after `sync` and `check` instead of becoming an event. That list also has one line for the tracking call inside a wrapper or component itself, because what it tracks is whatever each caller passes; the callers that pass a literal are still found.
+A name has to be a plain string the CLI can resolve. Anything it cannot is listed under "Dynamic event names" after `sync` and `check` instead of becoming an event. A tracking call inside a wrapper or component itself is listed apart, under "Inside a wrapper": what it tracks is whatever each caller passes, the callers that pass a literal are found, and a caller that passes something it does not know is listed above on its own line. A name that is not known where it is written says why: `env` (read from `process.env` and the like), `variable`, `template` (a template string with an unknown part), `call` (the result of a call) or `expression`. Only those count for `--strict`.
 
 ### Monorepos
 
@@ -214,13 +214,13 @@ The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events
 
 | Rule | Limit |
 |------|--------|
-| Max length | **64 characters** (same as SDK) |
-| Allowed characters | `a-zA-Z0-9$:_./-` and the space (so `App: User Sign Up` and `$pageview` work); tabs, newlines and any other character are rejected |
+| Max length | **64 characters** (same as SDK): a longer name is cut to 64, as `track()` does, so the catalog holds what is sent |
+| Characters | Anything the SDK accepts: letters of any language, digits, punctuation, emoji and the space (so `App: User Sign Up`, `$pageview` and `Launch 🚀` work). Tabs, newlines and other control characters are rejected |
 | Position | First argument of `.track(name, options?)` |
 
 The second argument (`userId`, `properties`) is **not** used as the event name.
 
-A literal name that violates either rule (too long, or a character outside the allowed set, such as an emoji or a tab) is not truncated, not added to `events` and not a dynamic occurrence. After the scan the CLI lists each one in a note, with its file, line and the reason (`longer than 64 characters`, `contains characters other than ...`), so a missing event is not a mystery. The note does not change the exit code.
+A literal name that is empty or has a control character (a tab, a line break) is not added to `events` and is not a dynamic occurrence. After the scan the CLI lists each one in a note, with its file, line and the reason, so a missing event is not a mystery. `--strict` fails on them (see [`eventra sync`](#eventra-sync)).
 
 ---
 
@@ -271,13 +271,25 @@ Full project scan → updates `eventra.json`:
 - `events` — discovered event names
 - `functionWrappers` — detected wrapper functions
 
-A file that cannot be analysed (a broken `.vue`, `.svelte`, `.astro` or `.html`, an unreadable file, or one over 2 MB) is skipped, and `sync` prints one summary at the end listing each skipped file and why. While anything is skipped, events already in `eventra.json` are kept, because a missing event may simply live in a skipped file. The exit code stays `0`; `eventra sync --strict` exits `1` if any file was skipped.
+A file that cannot be analysed (a broken `.vue`, `.svelte`, `.astro` or `.html`, an unreadable file, or one over 2 MB) is skipped, and `sync` prints one summary at the end listing each skipped file and why. While anything is skipped, events already in `eventra.json` are kept, because a missing event may simply live in a skipped file. The exit code stays `0`; `eventra sync --strict` exits `1` if any file was skipped, a file has a syntax error, an event name was rejected, or a dynamic name could not be resolved at all (see [Dynamic names](#dynamic-names)).
 
-A `.ts`/`.tsx`/`.js`/`.jsx` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events and does not make `--strict` fail. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well.
+A `.ts`/`.tsx`/`.js`/`.jsx` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`.
 
 ### `eventra check`
 
-Compares config with the current scan (events + wrappers). Exit code `1` on drift. Files with syntax errors and rejected event names are listed in notes, as for `sync`. When files were skipped, known events that were not found are not reported as removed (they cannot be verified) and the skipped files are listed; `eventra check --strict` also exits `1` if any file was skipped.
+Compares config with the current scan (events + wrappers). Exit code `1` on drift. Files with syntax errors and rejected event names are listed in notes, as for `sync`. When files were skipped, known events that were not found are not reported as removed (they cannot be verified) and the skipped files are listed.
+
+`check` prints `All good` only when the events match **and** the scan was clean. If the events match but something was skipped, has a syntax error, was rejected or is a dynamic name it could not resolve, it prints `No drift, but the scan was not clean: ...` instead. The exit code is still `0` for that, so an existing pipeline does not start failing; `eventra check --strict` exits `1` on any of them (files over the size limit are listed but do not fail it). Use `--strict` in CI.
+
+#### Dynamic names
+
+A name computed at run time (`track(getName())`, a remote import, `import()`) cannot be read from the code. List the names such a call can produce in `dynamicEvents` in `eventra.json`: they count as found events, so `sync`, `check` and `watch` agree on them, and `--strict` stops failing on the dynamic names it lists. Declaring them is your acknowledgement that the list is complete.
+
+```json
+{ "dynamicEvents": ["checkout.started", "checkout.completed"] }
+```
+
+For a Nuxt plugin that provides a tracking function (`useNuxtApp().$trackFeature("x")`, or `const { $trackFeature } = useNuxtApp()`), add a [`sinks`](#third-party-analytics-sinks) rule for it: `{ "callee": "$trackFeature" }` reads the name from the first argument whatever the receiver is.
 
 ### `eventra check --fix`
 
@@ -355,7 +367,7 @@ The plugin:
 - detects `event="feature_name"` attributes in `<template>` — both literal and dynamic (`:event="expr"`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
 - reads calls written anywhere in the template: `@click`/`v-on` handlers (several statements, multi-line arrows), `{{ }}` interpolations and the expressions of `v-bind`, `v-if`, `v-show`, `v-model`, `v-html`, `v-text`
 - Nuxt `.vue` files (pages/layouts/components) are handled the same way; auto-imported composables resolve once the project has run `nuxt prepare`/`nuxt dev`
-- finds a prop of any name that a `<script setup>` component (`defineProps`) sends to a tracking call, at every place the component is imported and used; Options API, `v-bind="obj"` and components that are not imported are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
+- finds a prop of any name that a `<script setup>` component (`defineProps`) or an Options API component (`props: [...]` read as `this.x`) sends to a tracking call, at every place the component is imported and used; components that are not imported are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
 
 `sync.include` does **not** need `**/*.vue` manually — the plugin registers `**/*.vue` via `includeGlobs`. See [`@eventra_dev/cli-plugin-vue`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-vue) for details.
 
@@ -376,8 +388,8 @@ The plugin:
 - parses each `.svelte` file with the real Svelte compiler (`svelte/compiler`) into a single virtual TypeScript module combining `context="module"` and instance `<script>` blocks
 - extracts `track()` calls from the script exactly like a regular `.ts` file (direct calls, wrappers, propagation); Svelte 5 runes (`$props`, `$state`, …) pass through untouched
 - reads calls anywhere in the markup: handlers, `{expr}`, `{@html}`, block expressions (`{#if}`, `{#each}`, `{#key}`, `{#await}`), `use:`/`class:`/`transition:` directives and attribute values
-- detects `event="feature_name"` attributes on any tag — plain elements, components, `{#if}`/`{#each}`/`{#await}`/`{#key}` blocks, slots — both literal and dynamic (`event={expr}`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable
-- finds a prop of any name (`export let` or `$props()`) that a component sends to a tracking call, at every place the component is imported and used; spreads and `<svelte:component>` are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
+- detects `event="feature_name"` attributes on any tag - plain elements, components, `{#if}`/`{#each}`/`{#await}`/`{#key}` blocks, slots - both literal and dynamic (`event={expr}`); dynamic bindings resolve through the same module scope as the script, or surface as a dynamic occurrence if unresolvable; the `{event}` shorthand and a mixed value (`event="a-{b}"`, read as a template literal) work too
+- finds a prop of any name (`export let` or `$props()`) that a component sends to a tracking call, at every place the component is imported and used; `<svelte:component>` is not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
 
 `sync.include` does **not** need `**/*.svelte` manually. See [`@eventra_dev/cli-plugin-svelte`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-svelte) for details.
 
@@ -397,13 +409,13 @@ The plugin:
 
 - parses each `.astro` file with the real Astro compiler (`@astrojs/compiler`) into a single virtual TypeScript module from the frontmatter
 - extracts `track()` calls from the frontmatter exactly like a regular `.ts` file (direct calls, wrappers, propagation); `Astro.props` and other globals pass through untouched
-- reads calls in template expressions (`{track("x")}`, `attr={expr}`, `{...spread}`) and in the page's `<script>` tags, each as a module of its own (quoted `onclick="..."` strings are browser text and are not read)
-- detects `event="feature_name"` attributes on any tag, including inside JSX expressions (`{cond && <Button event="..." />}`, `.map()`) — both literal and dynamic (`event={expr}`, including the `{event}` shorthand); dynamic bindings resolve through the same module scope as the frontmatter, or surface as a dynamic occurrence if unresolvable
-- finds a prop of any name (`Astro.props`) that a component sends to a tracking call, at every place the component is imported and used; `<script define:vars>` and spreads are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
+- reads calls in template expressions (`{track("x")}`, `attr={expr}`, `{...spread}`) and in the page's `<script>` tags, each as a module of its own, except `<script define:vars={{ ... }}>`, which is read where the frontmatter's variables are in scope (quoted `onclick="..."` strings are browser text and are not read)
+- detects `event="feature_name"` attributes on any tag, including inside JSX expressions (`{cond && <Button event="..." />}`, `.map()`) - both literal and dynamic (`event={expr}`, including the `{event}` shorthand and `` event=`a-${b}` ``); dynamic bindings resolve through the same module scope as the frontmatter, or surface as a dynamic occurrence if unresolvable
+- finds a prop of any name (`Astro.props`) that a component sends to a tracking call, at every place the component is imported and used (see [Props and inputs of any name](#props-and-inputs-of-any-name))
 
 `sync.include` does **not** need `**/*.astro` manually. See [`@eventra_dev/cli-plugin-astro`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-astro) for details.
 
-### Angular (`.html`, via `templateUrl`)
+### Angular (`.html` via `templateUrl`, and inline `template:`)
 
 ```bash
 pnpm add -D @eventra_dev/cli-plugin-angular
@@ -425,10 +437,10 @@ The plugin:
 - extracts `track()` calls from the component class exactly like a regular `.ts` file (direct calls, wrappers, propagation) - no plugin needed for that part
 - reads calls in the template: `(click)` handlers, `[input]` bindings, `{{ }}` interpolations, `*ngIf` and `@if`/`@switch`/`@for`, written against the component class (`track('x')` is `this.track('x')`); an `.html` file no component names as its `templateUrl` is skipped when it does not parse
 - detects `event="feature_name"` attributes on any tag, including `*ngIf`/`*ngFor` and the `@if`/`@for`/`@switch` block syntax - both literal and dynamic; a dynamic binding resolves against the component instance (`this.field`, including getters), or surfaces as a dynamic occurrence if unresolvable
-- finds an input of any name (`@Input()`, `input()`) that a component sends to a tracking call, at every template that uses the component by its selector; inline `template:`, NgModule-only children and `inputs: []` are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
-- use `[attr.event]="expr"`, not `[event]="expr"`, for a dynamic binding on a plain HTML element - `[event]` is a property binding that Angular's real compiler rejects (`NG8002`) unless the element is a component that actually declares `@Input() event`; both forms are detected identically by the plugin, only `[attr.event]` is guaranteed to compile
+- finds an input of any name (`@Input()`, `input()`) that a component sends to a tracking call, at every template that uses the component by its selector (a child with an inline `template:` included); NgModule-only children and `inputs: []` are not followed (see [Props and inputs of any name](#props-and-inputs-of-any-name))
+- use `[attr.event]="expr"`, not `[event]="expr"`, for a dynamic binding on a plain HTML element (the plugin tells the CLI when it sees `[event]` on a native tag, and `sync`/`check` print a note "Notes from plugins"; it never changes the exit code) - `[event]` is a property binding that Angular's real compiler rejects (`NG8002`) unless the element is a component that actually declares `@Input() event`; both forms are detected identically by the plugin, only `[attr.event]` is guaranteed to compile
 
-`sync.include` does **not** need `**/*.html` manually. Only `templateUrl`-based components are covered - an inline `template: "..."` isn't yet. Requires Node `^20.19.0 || ^22.12.0 || >=24.0.0` (higher than the other plugins' `>=18` floor - `@angular/compiler`'s own requirement). See [`@eventra_dev/cli-plugin-angular`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-angular) for details.
+`sync.include` does **not** need `**/*.html` manually. A component with an inline `template: "..."` (a string or a backtick string with no `${}`) is read from its `.ts` file the same way: the template's calls are added to the component class in that file, so the file keeps its own line numbers. The `.ts` file has to be matched by `sync.include`, as it always was; the plugin does not widen the scan. Requires Node `^20.19.0 || ^22.12.0 || >=24.0.0` (higher than the other plugins' `>=18` floor - `@angular/compiler`'s own requirement). See [`@eventra_dev/cli-plugin-angular`](https://www.npmjs.com/package/@eventra_dev/cli-plugin-angular) for details.
 
 ### Before publishing / local development
 
@@ -472,14 +484,16 @@ No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads t
   "functionWrappers": [],
   "plugins": [],
   "sinks": [],
+  "dynamicEvents": [],
   "sync": {
     "include": ["**/*.{ts,tsx,js,jsx}"],
-    "exclude": ["node_modules", "dist", ".next", ".git"]
+    "exclude": ["node_modules", "dist", ".next", ".git"],
+    "maxFileSize": 2000000
   }
 }
 ```
 
-This is the full shape. A file written by `eventra init` only contains `plugins` and `sinks` when they are not empty (and its `sync.exclude` also lists `coverage`, test files and `__tests__` / `__mocks__` folders); add them by hand when needed.
+This is the full shape. A file written by `eventra init` only contains `plugins`, `sinks` and `dynamicEvents` when they are not empty, and `sync.maxFileSize` only when it differs from the default (and its `sync.exclude` also lists `coverage`, test files and `__tests__` / `__mocks__` folders); add them by hand when needed.
 
 | Field | Description |
 |-------|-------------|
@@ -487,6 +501,8 @@ This is the full shape. A file written by `eventra init` only contains `plugins`
 | `endpoint` | Custom `eventra send` target (e.g. self-hosted). Non-default values from this file need one-time local approval — see [`eventra send`](#eventra-send) |
 | `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
 | `sinks` | Third-party analytics calls to treat as event sources, e.g. `[{ "preset": "posthog" }]` (see [Third-party analytics](#third-party-analytics-sinks)) |
+| `dynamicEvents` | Names that a computed `track(...)` call can produce, declared by hand (see [Dynamic names](#dynamic-names)) |
+| `sync.maxFileSize` | Largest file, in characters, that is analysed. Default 2,000,000; a bigger file is listed as ignored |
 | `sync.include` | Base glob patterns; plugin `includeGlobs` are merged automatically |
 | `sync.exclude` | Paths skipped during scan. Default for a config that has none: `node_modules`, `dist`, `.next`, `.git`. `eventra init` writes a longer list into a new `eventra.json`: that plus `coverage`, test files (`**/*.{test,spec}.{ts,tsx,js,jsx}`) and `__tests__`/`__mocks__` folders. A plain name such as `node_modules` or `dist` matches at any depth (nested `packages/*/node_modules` too); entries containing `/` or glob characters are used as written |
 
@@ -508,7 +524,7 @@ This is the full shape. A file written by `eventra init` only contains `plugins`
 
 No runtime execution. No monkey-patching.
 
-Scan time and memory grow with the project: a repository of several thousand files takes tens of seconds and a few GB of memory (the CLI raises its own memory limit, see [Monorepos](#monorepos)). A file over 2 MB is ignored with a warning.
+Scan time and memory grow with the project: a repository of several thousand files takes tens of seconds and a few GB of memory (the CLI raises its own memory limit, see [Monorepos](#monorepos)). A file over 2 MB (or over `sync.maxFileSize`) is ignored with a warning, listed in the closing summary, and does not fail `--strict`; raise `sync.maxFileSize` if it is your own source.
 
 ---
 
@@ -521,7 +537,7 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **1096 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1164 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 

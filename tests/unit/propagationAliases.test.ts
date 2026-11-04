@@ -209,10 +209,11 @@ function jsx(source: string): ts.JsxSelfClosingElement | ts.JsxOpeningElement {
 }
 
 describe("callSite", () => {
-  it("rebuilds the props of an element from its plain attributes", () => {
+  it("rebuilds the props of an element from its attributes, spreads included", () => {
     const props = jsxPropsAsObjectLiteral(jsx('<B a="s" b={x} c={<I />} d={<I></I>} e={<></>} f={} g {...rest} h:i="n" j={y.z} />'));
-    expect(props.properties.map((p) => (p as ts.PropertyAssignment).name.getText())).toEqual(["a", "b", "j"]);
-    expect(props.properties.map((p) => (p as ts.PropertyAssignment).initializer.getText())).toEqual(['"s"', "x", "y.z"]);
+    // a spread keeps its place among the attributes, as a spread property
+    expect(props.properties.map((p) => (ts.isSpreadAssignment(p) ? `...${p.expression.getText()}` : p.name!.getText()))).toEqual(["a", "b", "...rest", "j"]);
+    expect(props.properties.filter(ts.isPropertyAssignment).map((p) => p.initializer.getText())).toEqual(['"s"', "x", "y.z"]);
     expect(jsxPropsAsObjectLiteral(jsx("<B />")).properties).toHaveLength(0);
   });
 

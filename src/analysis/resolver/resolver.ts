@@ -1,3 +1,4 @@
+import {objectPropertyValue} from "../shared/objectLiteral";
 import ts from "typescript";
 
 import {getValueSymbol} from "../symbols/symbolUtils";
@@ -66,17 +67,7 @@ function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker,
     if (!base || !ts.isObjectLiteralExpression(base)) {
       return null;
     }
-    for (const property of base.properties) {
-      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
-        continue;
-      }
-      const objectPropertyName = ts.isIdentifier(property.name) ? property.name.text : property.name.getText();
-      if (objectPropertyName !== propertyName) {
-        continue;
-      }
-      return ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
-    }
-    return null;
+    return objectPropertyValue(base, propertyName, checker);
   }
   return null;
 }
@@ -147,15 +138,8 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
   {
     const bound = resolveBoundObjectNode(targetExpression, checker, context);
     if (bound && ts.isObjectLiteralExpression(bound)) {
-      for (const property of bound.properties) {
-        if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
-          continue;
-        }
-        const objectPropertyName = ts.isIdentifier(property.name) ? property.name.text : property.name.getText();
-        if (objectPropertyName !== propertyName) {
-          continue;
-        }
-        const initializer = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
+      const initializer = objectPropertyValue(bound, propertyName, checker);
+      if (initializer) {
         return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
       }
     }
@@ -343,7 +327,8 @@ function resolveIdentifier(node: ts.Identifier, checker: ts.TypeChecker, context
       return resolveNodeValue(bound, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
     }
   }
-  let symbol = checker.getSymbolAtLocation(node);
+  // the name in a shorthand property (`{ name }`) stands for the variable `name`, not for the property
+  let symbol = boundSymbol;
   if (!symbol) {
     return empty();
   }

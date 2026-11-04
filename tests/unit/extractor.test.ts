@@ -58,7 +58,7 @@ describe("extractEvents", () => {
         `
         declare const helperVar: string;
         function sink(...args: unknown[]): void {}
-        sink("valid_event", "invalid event!", \`dynamic-\${helperVar}\`);
+        sink("valid_event", "invalid\\tevent", \`dynamic-\${helperVar}\`);
       `,
       );
       const checker = ctx.getChecker();
@@ -93,8 +93,8 @@ describe("extractEvents", () => {
       );
 
       expect(result.events.has("valid_event")).toBe(true);
-      // fails normalizeEventName's charset check ("!") - must be skipped.
-      expect(result.events.has("invalid event!")).toBe(false);
+      // fails normalizeEventName's control-character check (tab) - must be skipped.
+      expect(result.events.has("invalid\tevent")).toBe(false);
       // the template literal resolves dynamically (an unresolved identifier
       // span), so it must be recorded as a dynamic occurrence.
       expect(result.dynamicOccurrences).toHaveLength(1);

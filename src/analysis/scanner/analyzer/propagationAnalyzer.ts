@@ -4,10 +4,13 @@ import {TrackSink, WrapperPropagation, WrapperSemanticInfo} from "../../shared/p
 import {getFunctionSymbol} from "../../symbols/symbolUtils";
 import {unwrapExpression, getPropertyName} from "../../shared/utils";
 import {callSiteArgument} from "../../shared/callSite";
+import {classPropsParameter, componentClassOfRender, thisPropsPath} from "../../symbols/classComponent";
 
 interface ResolvedParameterBinding {
   readonly parameter: ts.ParameterDeclaration;
   readonly propertyPath: readonly string[];
+  // `...rest` of the parameter's pattern: the props it holds are every one but these, which are read by name
+  readonly omitted?: readonly string[];
   // reached through a local `const` (`const { track } = props`) instead of the parameter itself
   readonly viaAlias?: boolean;
 }
@@ -45,6 +48,14 @@ function bindingKey(element: ts.BindingElement): string | null {
 
 function resolveObjectBinding(parameter: ts.ParameterDeclaration, pattern: ts.ObjectBindingPattern, identifier: ts.Identifier, parentPath: readonly string[]): ResolvedParameterBinding | null {
   for (const element of pattern.elements) {
+    // `{ a, ...rest }`: `rest` holds the props at this level that are not named beside it
+    if (element.dotDotDotToken) {
+      if (ts.isIdentifier(element.name) && element.name.text === identifier.text) {
+        const omitted = pattern.elements.flatMap((other) => (other.dotDotDotToken ? [] : [bindingKey(other) ?? ""]));
+        return {parameter, propertyPath: parentPath, omitted};
+      }
+      continue;
+    }
     const propertyName = bindingKey(element);
     if (!propertyName) {
       continue;
@@ -74,6 +85,10 @@ function resolveObjectBinding(parameter: ts.ParameterDeclaration, pattern: ts.Ob
   }
   return null;
 }
+
+/** What is read off a `...rest` can only be a prop that the pattern did not name. */
+const readable = (binding: ResolvedParameterBinding, tail: readonly string[]): boolean =>
+  !binding.omitted || tail.length === 0 || !binding.omitted.includes(tail[0]);
 
 function resolveDirectParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identifier): ResolvedParameterBinding | null {
   for (const parameter of fn.parameters) {
@@ -141,10 +156,17 @@ function resolveLocalAlias(fn: ts.FunctionLikeDeclaration, identifier: ts.Identi
   if (!ts.isVariableDeclaration(node) || !node.initializer || !isConstVariable(node)) {
     return null;
   }
-  if (!fn.body || node.pos < fn.body.pos || node.end > fn.body.end) {
+  const cls = componentClassOfRender(fn);
+  const scope: ts.Node | undefined = cls ?? fn.body;
+  if (!scope || node.pos < scope.pos || node.end > scope.end) {
     return null;
   }
   const initializer = unwrapExpression(node.initializer);
+  // `const { name } = this.props` in a class component
+  const classPath = cls && thisPropsPath(initializer, true);
+  if (cls && classPath) {
+    return {parameter: classPropsParameter(cls), propertyPath: [...classPath, ...pattern], viaAlias: true};
+  }
   let root: ts.Expression = initializer;
   let readPath: readonly string[] = [];
   if (isPropertyAccessLike(initializer)) {
@@ -160,11 +182,44 @@ function resolveLocalAlias(fn: ts.FunctionLikeDeclaration, identifier: ts.Identi
   if (!base) {
     return null;
   }
-  return {parameter: base.parameter, propertyPath: [...base.propertyPath, ...readPath, ...pattern], viaAlias: true};
+  const tail = [...readPath, ...pattern];
+  if (!readable(base, tail)) {
+    return null;
+  }
+  return {parameter: base.parameter, propertyPath: [...base.propertyPath, ...tail], viaAlias: true, ...(tail.length === 0 && base.omitted ? {omitted: base.omitted} : {})};
 }
 
 function resolveParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identifier, checker: ts.TypeChecker): ResolvedParameterBinding | null {
   return resolveDirectParameter(fn, identifier) ?? resolveLocalAlias(fn, identifier, checker, 0);
+}
+
+// a class component's props stand in for a parameter that is not in the list
+const parameterIndex = (fn: ts.FunctionLikeDeclaration, parameter: ts.ParameterDeclaration): number => Math.max(0, fn.parameters.indexOf(parameter));
+
+/** `this.props.name` in a class component: the props parameter and the path read off it. */
+function classPropRead(fn: ts.FunctionLikeDeclaration, expression: ts.Expression): ResolvedParameterBinding | null {
+  const cls = componentClassOfRender(fn);
+  const path = cls && thisPropsPath(expression);
+  return cls && path ? {parameter: classPropsParameter(cls), propertyPath: path, viaAlias: true} : null;
+}
+
+/**
+ * What a spread forwards: `{...props}`, `{...props.rest}`, `{...this.props}`. The parameter (or the class's
+ * props) it reads and the path from there, or null when it is anything else.
+ */
+function spreadSource(fn: ts.FunctionLikeDeclaration, expression: ts.Expression, checker: ts.TypeChecker): ResolvedParameterBinding | null {
+  const cls = componentClassOfRender(fn);
+  const classPath = cls && thisPropsPath(expression, true);
+  if (cls && classPath) {
+    return {parameter: classPropsParameter(cls), propertyPath: classPath, viaAlias: true};
+  }
+  const path = extractPropertyPath(expression);
+  let root: ts.Expression = unwrapExpression(expression);
+  while (isPropertyAccessLike(root)) {
+    root = unwrapExpression(root.expression);
+  }
+  const base = path && ts.isIdentifier(root) ? resolveParameter(fn, root, checker) : null;
+  return base && readable(base, path!) ? {parameter: base.parameter, propertyPath: [...base.propertyPath, ...path!], viaAlias: true, ...(path!.length === 0 && base.omitted ? {omitted: base.omitted} : {})} : null;
 }
 
 function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly TrackSink[], checker: ts.TypeChecker,): readonly WrapperPropagation[] {
@@ -182,6 +237,11 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
       // track(props?.event)
       // track(props?.event as string)
       // track(props["event"])
+      const classRead = classPropRead(fn, argument);
+      if (classRead) {
+        result.push({sourceParameter: classRead.parameter, sourceParameterIndex: 0, propertyPath: classRead.propertyPath, targetNode: argument, viaAlias: true});
+        continue;
+      }
       if (ts.isIdentifier(argument) || isPropertyAccessLike(argument)) {
         let identifier: ts.Identifier | null = null;
         let propertyPath: readonly string[] = [];
@@ -201,13 +261,13 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
           continue;
         }
         const parameter = resolveParameter(fn, identifier, checker);
-        if (!parameter) {
+        if (!parameter || !readable(parameter, propertyPath)) {
           continue;
         }
 
         result.push({
           sourceParameter: parameter.parameter,
-          sourceParameterIndex: fn.parameters.indexOf(parameter.parameter),
+          sourceParameterIndex: parameterIndex(fn, parameter.parameter),
           propertyPath: [
             ...parameter.propertyPath,
             ...propertyPath,
@@ -221,7 +281,26 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
       // track({ event: name })
       // track({ event })
       if (ts.isObjectLiteralExpression(argument)) {
-        for (const property of argument.properties) {
+        for (const [position, property] of argument.properties.entries()) {
+          // `{ ...props }` / `<Inner {...props} />`: the name the sink reads is the one the spread carries, unless
+          // a property written after it sets the same name
+          if (ts.isSpreadAssignment(property)) {
+            const name = tracked.propertyPath[0];
+            const overridden = argument.properties.slice(position + 1).some((later) => (ts.isPropertyAssignment(later) || ts.isShorthandPropertyAssignment(later)) && later.name.getText() === name);
+            const found = name !== undefined && !overridden ? spreadSource(fn, property.expression, checker) : null;
+            // a `...rest` does not hold the props named beside it
+            const source = found && readable(found, tracked.propertyPath) ? found : null;
+            if (source) {
+              result.push({
+                sourceParameter: source.parameter,
+                sourceParameterIndex: parameterIndex(fn, source.parameter),
+                propertyPath: [...source.propertyPath, ...tracked.propertyPath],
+                targetNode: property.expression,
+                viaAlias: true,
+              });
+            }
+            continue;
+          }
           if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
             continue;
           }
@@ -231,6 +310,11 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
             continue;
           }
           const initializer = ts.isShorthandPropertyAssignment(property) ? property.name : unwrapExpression(property.initializer);
+          const classPropertyRead = classPropRead(fn, initializer);
+          if (classPropertyRead) {
+            result.push({sourceParameter: classPropertyRead.parameter, sourceParameterIndex: 0, propertyPath: classPropertyRead.propertyPath, targetNode: initializer, viaAlias: true});
+            continue;
+          }
           // `{ event: name }` / `<Inner name={track} />`, and a read of a prop: `<Inner name={props.track} />`
           let identifier: ts.Identifier | null = null;
           let readPath: readonly string[] = [];
@@ -248,12 +332,12 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
             continue;
           }
           const parameter = resolveParameter(fn, identifier, checker);
-          if (!parameter) {
+          if (!parameter || !readable(parameter, readPath)) {
             continue;
           }
           result.push({
             sourceParameter: parameter.parameter,
-            sourceParameterIndex: fn.parameters.indexOf(parameter.parameter),
+            sourceParameterIndex: parameterIndex(fn, parameter.parameter),
             propertyPath: [...parameter.propertyPath, ...readPath],
             targetNode: initializer,
             ...(parameter.viaAlias ? {viaAlias: true} : {}),

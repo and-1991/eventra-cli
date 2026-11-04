@@ -5,12 +5,18 @@ export type WrapperCallSite = ts.CallExpression | ts.JsxOpeningElement | ts.JsxS
 /**
  * A JSX element is a call of its component with one argument: the props object. Rebuilt here as an
  * object literal from the attributes so the existing call-site machinery (`resolveObjectPath`,
- * parameter bindings) works unchanged. Spread attributes and children are ignored, and each
- * attribute value is the original AST node, so symbol resolution still sees real code.
+ * parameter bindings) works unchanged. A spread attribute (`{...rest}`) becomes a spread property, in
+ * its place among the attributes, so that what it holds can be read when it is an object the analysis
+ * can see; children are ignored. Each attribute value is the original AST node, so symbol resolution
+ * still sees real code.
  */
 export function jsxPropsAsObjectLiteral(element: ts.JsxOpeningElement | ts.JsxSelfClosingElement): ts.ObjectLiteralExpression {
-  const properties: ts.PropertyAssignment[] = [];
+  const properties: (ts.PropertyAssignment | ts.SpreadAssignment)[] = [];
   for (const attribute of element.attributes.properties) {
+    if (ts.isJsxSpreadAttribute(attribute)) {
+      properties.push(ts.factory.createSpreadAssignment(attribute.expression));
+      continue;
+    }
     if (!ts.isJsxAttribute(attribute) || !ts.isIdentifier(attribute.name) || !attribute.initializer) {
       continue;
     }

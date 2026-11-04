@@ -12,26 +12,17 @@ import {ReturnPropagationCache} from "../cache/returnPropagationCache";
 import {getValueSymbol} from "../symbols/symbolUtils";
 import {eventNameRejection, normalizeEventName} from "../shared/eventValidation";
 import {DynamicOccurrence, RejectedName, recordDynamicOccurrence, recordRejectedName} from "../shared/dynamicOccurrence";
+import {objectLiteralOf, objectPropertyValue} from "../shared/objectLiteral";
 import {callSiteArgument, callSiteExpression, WrapperCallSite} from "../shared/callSite";
 
-function resolveObjectPath(expression: ts.Expression, path: readonly string[],): ts.Expression | null {
+function resolveObjectPath(expression: ts.Expression, path: readonly string[], checker: ts.TypeChecker): ts.Expression | null {
   let current: ts.Expression = expression;
   for (const segment of path) {
-    if (!ts.isObjectLiteralExpression(current)) {
+    const literal = objectLiteralOf(current, checker);
+    if (!literal) {
       return null;
     }
-    let matched: ts.Expression | null = null;
-    for (const property of current.properties) {
-      if (!ts.isPropertyAssignment(property) && !ts.isShorthandPropertyAssignment(property)) {
-        continue;
-      }
-      const propertyName = ts.isIdentifier(property.name) ? property.name.text : ts.isStringLiteral(property.name) ? property.name.text : property.name.getText();
-      if (propertyName !== segment) {
-        continue;
-      }
-      matched = ts.isShorthandPropertyAssignment(property) ? property.name : property.initializer;
-      break;
-    }
+    const matched = objectPropertyValue(literal, segment, checker);
     if (!matched) {
       return null;
     }
@@ -91,7 +82,7 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
   if (propagation.viaAlias) {
     // `const { track } = props; sdk.track(track)`: the sink's own node is a local, not the parameter,
     // so the value is whatever the call site passes at the path the alias reads
-    const leaf = propagation.propertyPath.length === 0 ? argument : resolveObjectPath(argument, propagation.propertyPath);
+    const leaf = propagation.propertyPath.length === 0 ? argument : resolveObjectPath(argument, propagation.propertyPath, checker);
     if (!leaf) {
       return;
     }
@@ -120,7 +111,7 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
     if (propagation.propertyPath.length === 0) {
       return;
     }
-    const resolvedPath = resolveObjectPath(argument, propagation.propertyPath);
+    const resolvedPath = resolveObjectPath(argument, propagation.propertyPath, checker);
     if (!resolvedPath) {
       return;
     }
@@ -148,6 +139,8 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
     }
   }
   if (resolved.dynamic) {
-    recordDynamicOccurrence(call, callSiteExpression(call)!.getText(), resolved.values, dynamicOccurrences);
+    // what the caller passes at the tracked place: that is where the name is, or is not, known
+    const passed = propagation.propertyPath.length === 0 ? argument : resolveObjectPath(argument, propagation.propertyPath, checker) ?? argument;
+    recordDynamicOccurrence(call, callSiteExpression(call)!.getText(), resolved.values, dynamicOccurrences, {expression: passed, checker});
   }
 }

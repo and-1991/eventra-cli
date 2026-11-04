@@ -19,6 +19,19 @@ import {
 } from "../../src/config/config";
 import { EventraConfig } from "../../src/types";
 
+describe("normalizeConfig: dynamicEvents", () => {
+  it("keeps the usable declared names, trimmed, once each and sorted, and drops the rest", () => {
+    const out = normalizeConfig({ dynamicEvents: ["b.event", " a.event ", "b.event", "", "\t", 7 as unknown as string, "z".repeat(70)] });
+    expect(out.dynamicEvents).toEqual(["a.event", "b.event", "z".repeat(64)]);
+  });
+
+  it("leaves the key out when nothing usable is declared", () => {
+    expect(normalizeConfig({}).dynamicEvents).toBeUndefined();
+    expect(normalizeConfig({ dynamicEvents: [] }).dynamicEvents).toBeUndefined();
+    expect(normalizeConfig({ dynamicEvents: "x" as unknown as string[] }).dynamicEvents).toBeUndefined();
+  });
+});
+
 describe("normalizeConfig", () => {
   it("fills defaults for an empty input", () => {
     const out = normalizeConfig({});

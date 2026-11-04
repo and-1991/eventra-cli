@@ -189,14 +189,9 @@ describe("resolveNodeValue - object literal (direct)", () => {
       const sf = project.file("a.ts");
       const literal = findNode(sf, ts.isObjectLiteralExpression)!;
       const result = resolve(project, literal);
-      // The shorthand branch is exercised (property.name is fed into
-      // resolveNodeValue), but getSymbolAtLocation on a shorthand property's
-      // name node resolves to the property symbol (declarations: [the
-      // ShorthandPropertyAssignment itself]), not the referenced variable's
-      // own VariableDeclaration - so resolveIdentifier's declaration loop
-      // finds nothing to match and it contributes no value. Only the plain
-      // property assignment shows up.
-      expect(result.values).toEqual(["a_value"]);
+      // The shorthand name stands for the variable it names (getValueSymbol), so its value is collected
+      // next to the plain property assignment; the spread and the method add nothing.
+      expect(result.values).toEqual(["a_value", "shorthand_value"]);
       expect(result.dynamic).toBe(true);
     } finally {
       project.cleanup();
@@ -752,9 +747,8 @@ describe("resolveNodeValue - property access", () => {
     try {
       const sf = project.file("a.ts");
       const arg = findCallArgument(sf, "track(");
-      // See the direct object-literal shorthand test for why this resolves to
-      // no value rather than the referenced variable's value.
-      expect(resolve(project, arg)).toEqual({ values: [], dynamic: true });
+      // the shorthand name resolves to the variable it stands for
+      expect(resolve(project, arg).values).toEqual(["const_object_shorthand_login"]);
     } finally {
       project.cleanup();
     }

@@ -19,7 +19,7 @@ import {
   reportSkipped,
   skippedFrom,
 } from "../core/skipped";
-import { OVERSIZED_REASON, isOversized } from "../core/fileLimits";
+import { fileLimit, isOversized, oversizedReason } from "../core/fileLimits";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
 
 const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
@@ -43,6 +43,7 @@ export async function watch(): Promise<WatchHandle | undefined> {
   const plugins = await createPluginRegistry(config);
   const include = [...config.sync.include, ...plugins.getIncludePatterns()];
   const engine = new EventraEngine(process.cwd(), plugins);
+  const limit = fileLimit(config.sync.maxFileSize);
   const watchedDeps = new Set<string>();
   const trackedFiles = new Set<string>();
   const sourceFiles = new Set<string>();
@@ -89,8 +90,8 @@ export async function watch(): Promise<WatchHandle | undefined> {
       const abs = normalize(file);
       const raw = await fs.readFile(abs, "utf-8");
       // the same limit as `sync`: too big to analyse, but not a failure
-      if (isOversized(raw)) {
-        ignoredInitial.push({ file: abs, reason: OVERSIZED_REASON });
+      if (isOversized(raw, limit)) {
+        ignoredInitial.push({ file: abs, reason: oversizedReason(limit) });
         continue;
       }
       sourceFiles.add(abs);
@@ -197,10 +198,10 @@ export async function watch(): Promise<WatchHandle | undefined> {
       touchedSource = true;
       try {
         const raw = await fs.readFile(file, "utf-8");
-        if (isOversized(raw)) {
+        if (isOversized(raw, limit)) {
           // too big to analyse, like `sync`: not a failure, and its events are not kept
           await dropSource(file);
-          ignoredThisRun.push({ file, reason: OVERSIZED_REASON });
+          ignoredThisRun.push({ file, reason: oversizedReason(limit) });
           continue;
         }
         const virtualFiles = await plugins.preprocessFile({ fileName: file, content: raw });

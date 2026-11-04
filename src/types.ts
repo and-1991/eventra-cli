@@ -36,6 +36,11 @@ export interface EventraConfig {
   readonly endpoint?: string;
   readonly events: string[];
   functionWrappers?: FunctionWrapperConfig[];
+  /**
+   * Event names fired through code the scan cannot read (`track(getName())`). Declared by hand, they are
+   * part of `events` like any found name, and acknowledge the dynamic names so `--strict` accepts them.
+   */
+  dynamicEvents?: string[];
   /** Third-party analytics calls to treat as event sinks (e.g. `{ "preset": "posthog" }`). */
   sinks?: SinkRuleConfig[];
   /** Module specifiers for CLI plugins (e.g. "@eventra_dev/cli-plugin-vue"). */
@@ -43,5 +48,7 @@ export interface EventraConfig {
   readonly sync: {
     readonly include: string[];
     readonly exclude: string[];
+    /** Largest file (in characters) that is analysed; bigger ones are listed as ignored. Default 2,000,000. */
+    readonly maxFileSize?: number;
   };
 }

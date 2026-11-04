@@ -31,7 +31,7 @@ export function extractEvents(index: FileSemanticIndex, checker: ts.TypeChecker,
         }
       }
       if (resolved.dynamic) {
-        recordDynamicOccurrence(call.node, call.calleeText, resolved.values, dynamicOccurrences);
+        recordDynamicOccurrence(call.node, call.calleeText, resolved.values, dynamicOccurrences, {expression: argument, checker});
       }
     }
   }

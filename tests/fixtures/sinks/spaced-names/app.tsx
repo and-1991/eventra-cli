@@ -20,7 +20,10 @@ sdk.track("SDK Direct: Sign Up");
 posthog.capture("App: User Sign Up");
 posthog.capture("Order Completed", { total: 5 });
 posthog.capture("$pageview");
-posthog.capture("Bad!Name");
+// a tab cannot be part of a name, so this one is rejected and listed, not added
+posthog.capture("Bad\tName");
+// punctuation and emoji are fine, as the SDK sends them as they are
+posthog.capture("Launch! 🚀");
 server.capture({ distinctId: "distinct-user-1", event: "Server Side: Direct" });
 
 // custom callee rule
