@@ -5,7 +5,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
 import {renderMethodOf} from "../symbols/classComponent";
-import {unwrapComponentWrapper, unwrapHookCallback} from "../symbols/symbolUtils";
+import {hookProvidedFunction, unwrapComponentWrapper, unwrapHookCallback} from "../symbols/symbolUtils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
@@ -76,6 +76,11 @@ function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker
   // const foo = () => {}
   if (ts.isVariableDeclaration(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
     return declaration.initializer;
+  }
+  // const foo = useCallback((n) => ..., []) / useMemo(() => (n) => ..., []): the function the hook hands back
+  const provided = ts.isVariableDeclaration(declaration) && declaration.initializer ? hookProvidedFunction(declaration.initializer) : null;
+  if (provided) {
+    return provided;
   }
   // const Button = memo(() => {}) / forwardRef((props, ref) => {})
   if (ts.isVariableDeclaration(declaration) && declaration.initializer) {

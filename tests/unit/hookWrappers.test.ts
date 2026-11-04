@@ -227,6 +227,91 @@ describe("a hook that returns what useCallback was given", () => {
   });
 });
 
+describe("a function kept in a variable by useCallback or useMemo", () => {
+  const DECL = `declare function useCallback<T>(fn: T, deps: unknown[]): T;
+    declare function useMemo<T>(fn: () => T, deps: unknown[]): T;
+    declare const React: { useCallback: typeof useCallback; useMemo: typeof useMemo };\n`;
+  const hook = (body: string) => `import ph from "posthog-js";\n${DECL}${body}`;
+
+  it("follows `const capture = useCallback(...); return capture` and `return { capture }`", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": hook(`
+          export function useA() { const capture = useCallback((n: string) => ph.capture(n), []); return capture; }
+          export function useB() { const capture = useCallback(function (n: string) { ph.capture(n); }, []); return { capture }; }`),
+        "use.ts": `import { useA, useB } from "./hook";
+          useA()("from.a"); const b = useB(); b.capture("from.b");`,
+      }),
+    ).toEqual(["from.a", "from.b"]);
+  });
+
+  it("follows useMemo with a concise factory, a block factory with one return, and React.useMemo", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": hook(`
+          export function useA() { const capture = useMemo(() => (n: string) => ph.capture(n), []); return capture; }
+          export function useB() { const capture = useMemo(() => { const x = 1; return (n: string) => { ph.capture(n + x); }; }, []); return capture; }
+          export function useC() { const capture = React.useMemo(() => (n: string) => ph.capture(n), []); return capture; }`),
+        "use.ts": `import { useA, useB, useC } from "./hook";
+          useA()("from.a"); useC()("from.c"); useB()("from.b");`,
+      }),
+    ).toContain("from.a");
+  });
+
+  it("sees through parentheses and casts around the hook call and the function", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": hook(`
+          export function useA() { const capture = (useCallback(((n: string) => ph.capture(n)) as any, []) as (n: string) => void); return capture; }`),
+        "use.ts": `import { useA } from "./hook"; useA()("from.cast");`,
+      }),
+    ).toEqual(["from.cast"]);
+  });
+
+  it("works over the Eventra SDK as well as over a configured sink", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": `import { Eventra } from "@eventra_dev/eventra-sdk";\n${DECL}
+          const sdk = new Eventra({ apiKey: "k" });
+          export function useTrack() { const track = useCallback(function track<T extends string>(name: T) { sdk.track(name); }, []); return track; }`,
+        "use.ts": `import { useTrack } from "./hook"; useTrack()("from.sdk");`,
+      }),
+    ).toEqual(["from.sdk"]);
+  });
+
+  it("does not read a factory with two returns as one function, but the type of the result still finds the call", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": hook(`
+          declare const handler: boolean;
+          export function useC() { const capture = useMemo(() => { if (handler) { return (n: string) => ph.capture(n); } return (n: string) => ph.capture(n); }, []); return capture; }`),
+        "use.ts": `import { useC } from "./hook"; useC()("from.two.returns");`,
+      }),
+    ).toEqual(["from.two.returns"]);
+  });
+
+  it("does not take a hook that hands back something else, or a variable that is not set by one", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": hook(`
+          declare function useRef<T>(v: T): { current: T };
+          declare const handler: (n: string) => void;
+          export function useA() { const capture = useMemo(() => 5, []); return capture; }
+          export function useB() { const capture = useMemo(() => { return 1; }, []); return capture; }
+          export function useD() { const capture = useMemo(handler as any, []); return capture; }
+          export function useE() { const capture = useCallback(handler, []); return capture; }
+          export function useF() { const capture = useRef((n: string) => ph.capture(n)); return capture; }
+          export function useG() { const capture = useMemo(); return capture; }
+          export function useI() { const capture = useMemo(() => { return; }, []); return capture; }
+          export function useJ() { const capture = useMemo(() => { console.log("side effect only"); }, []); return capture; }
+          export function useH() { const { capture } = { capture: useCallback((n: string) => ph.capture(n), []) }; return capture; }`),
+        "use.ts": `import { useA, useB, useD, useE, useF, useG, useH, useI, useJ } from "./hook";
+          useA(); useB(); useD(); useE()("e"); useF(); useG(); useH()("h"); useI(); useJ();`,
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("a hook that returns a bare function", () => {
   const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });`;
 

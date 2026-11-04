@@ -98,6 +98,11 @@ export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.
   if (holder && ts.isIdentifier(holder.name)) {
     return checker.getSymbolAtLocation(holder.name);
   }
+  // const capture = useCallback((n) => ..., []) / useMemo(() => (n) => ..., [])
+  const hookVariable = hookHolder(node);
+  if (hookVariable) {
+    return checker.getSymbolAtLocation(hookVariable.name);
+  }
   // `return (name) => ...` / `() => (name) => ...`: a function a hook or factory hands back has no
   // name of its own, but the binder still gives it a symbol, and that is what a call of the result
   // (`const track = useTracker(); track("x")`) is matched against.
@@ -107,17 +112,82 @@ export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.
   return undefined;
 }
 
+const callName = (call: ts.CallExpression): string | undefined => {
+  const callee = unwrapExpression(call.expression);
+  return ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+};
+
 /** `useCallback(fn, deps)` / `React.useCallback(fn, deps)`: a hook that returns its first argument. */
 export function isHookCallback(call: ts.CallExpression): boolean {
-  const callee = unwrapExpression(call.expression);
-  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
-  return name === "useCallback";
+  return callName(call) === "useCallback";
 }
 
-/** The function `useCallback(fn, deps)` hands back, or the expression itself when it is anything else. */
+/** `useMemo(() => fn, deps)` / `React.useMemo(...)`: a hook that returns what its first argument returns. */
+export function isHookMemo(call: ts.CallExpression): boolean {
+  return callName(call) === "useMemo";
+}
+
+const isFunctionExpression = (node: ts.Node): node is ts.ArrowFunction | ts.FunctionExpression => ts.isArrowFunction(node) || ts.isFunctionExpression(node);
+
+/**
+ * The function a React hook hands back unchanged: `useCallback(fn, deps)`, or `useMemo(() => fn, deps)` (a concise
+ * arrow, or a block with one `return fn`). Null for anything else, so a call of another hook is never taken for it.
+ */
+export function hookProvidedFunction(expression: ts.Expression): ts.ArrowFunction | ts.FunctionExpression | null {
+  const call = unwrapExpression(expression);
+  const first = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+  if (!first || !ts.isCallExpression(call)) {
+    return null;
+  }
+  const argument = unwrapExpression(first);
+  if (isHookCallback(call)) {
+    return isFunctionExpression(argument) ? argument : null;
+  }
+  if (!isHookMemo(call) || !isFunctionExpression(argument)) {
+    return null;
+  }
+  if (!ts.isBlock(argument.body)) {
+    const value = unwrapExpression(argument.body);
+    return isFunctionExpression(value) ? value : null;
+  }
+  const returns = argument.body.statements.filter(ts.isReturnStatement);
+  const value = returns.length === 1 && returns[0].expression ? unwrapExpression(returns[0].expression) : undefined;
+  return value && isFunctionExpression(value) ? value : null;
+}
+
+/** The function a hook hands back (see `hookProvidedFunction`), or the expression itself when it is anything else. */
 export function unwrapHookCallback(expression: ts.Expression): ts.Expression {
-  const current = unwrapExpression(expression);
-  return ts.isCallExpression(current) && isHookCallback(current) && current.arguments[0] ? unwrapExpression(current.arguments[0]) : current;
+  return hookProvidedFunction(expression) ?? unwrapExpression(expression);
+}
+
+/**
+ * `const capture = useCallback((n) => ..., [])` / `const capture = useMemo(() => (n) => ..., [])`: the variable a hook
+ * result is kept in, when `node` is the function that hook hands back. The variable is what the function is called by.
+ */
+function hookHolder(node: ts.FunctionLikeDeclaration): ts.VariableDeclaration | undefined {
+  if (!isFunctionExpression(node)) {
+    return undefined;
+  }
+  let current: ts.Node = node;
+  for (;;) {
+    // every node below a source file has a parent, and the loop ends at a statement before it could run out
+    const parent: ts.Node = current.parent;
+    if (isExpressionWrapper(parent)) {
+      current = parent;
+    } else if (ts.isCallExpression(parent) && (isHookCallback(parent) || isHookMemo(parent)) && unwrapExpression(parent.arguments[0]!) === unwrapExpression(current as ts.Expression)) {
+      current = parent;
+    } else if (isFunctionExpression(parent) && parent.body === current && ts.isCallExpression(parent.parent) && isHookMemo(parent.parent)) {
+      // the concise body of the factory given to useMemo
+      current = parent;
+    } else if (ts.isReturnStatement(parent) && ts.isBlock(parent.parent) && isFunctionExpression(parent.parent.parent) && ts.isCallExpression(parent.parent.parent.parent) && isHookMemo(parent.parent.parent.parent)) {
+      // `return fn` in the block of a factory given to useMemo
+      current = parent.parent.parent;
+    } else {
+      break;
+    }
+  }
+  const holder = current.parent;
+  return holder && ts.isVariableDeclaration(holder) && holder.initializer === current && ts.isIdentifier(holder.name) ? holder : undefined;
 }
 
 /** An arrow/function expression that is the value of a `return`, or the concise body of an arrow, possibly in parentheses, `as` or `!`. */
