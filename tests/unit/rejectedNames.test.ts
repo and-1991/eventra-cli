@@ -41,17 +41,22 @@ describe("eventNameRejection", () => {
     expect(eventNameRejection("   ")).toBe("the name is empty");
     expect(eventNameRejection("")).toBe("the name is empty");
     expect(eventNameRejection("a".repeat(500))).toBeNull();
-    expect(eventNameRejection("rocket 🚀")).toBeNull();
+    expect(eventNameRejection("rocket 🚀")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
     expect(eventNameRejection("Оформление заказа")).toBeNull();
-    expect(eventNameRejection("a\tb")).toBe("the name has control characters such as a tab or a line break");
-    expect(eventNameRejection("a\nb")).toMatch(/control characters/);
-    expect(eventNameRejection("a\u0000b")).toMatch(/control characters/);
+    expect(eventNameRejection("购买完成")).toBeNull();
+    expect(eventNameRejection("[Amplitude] Page Viewed")).toBeNull();
+    expect(eventNameRejection("User's Profile Viewed")).toBeNull();
+    expect(eventNameRejection("Why?")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
+    expect(eventNameRejection("Bang!")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
+    expect(eventNameRejection("a\tb")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
+    expect(eventNameRejection("a\nb")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
+    expect(eventNameRejection("a\u0000b")).toBe("the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space");
   });
 
   it("cuts a long name to 64 characters like the SDK does", () => {
     expect(normalizeEventName("a".repeat(65))).toBe("a".repeat(64));
     expect(normalizeEventName("  " + "b".repeat(70) + "  ")).toBe("b".repeat(64));
-    expect(normalizeEventName("🚀 launch")).toBe("🚀 launch");
+    expect(normalizeEventName("🚀 launch")).toBeNull();
   });
 
   it("stays in step with normalizeEventName", () => {
@@ -66,9 +71,11 @@ describe("rejected event names", () => {
     const { events, rejected } = await scan(
       `${HEAD}sdk.track("good.one");\nsdk.track("tab\\there");\nsdk.track("rocket 🚀");\nsdk.track("${"x".repeat(70)}");\nsdk.track("");\n`,
     );
-    expect(events).toEqual(["good.one", "rocket 🚀", "x".repeat(64)]);
+    // a long name made of allowed characters is cut to 64, as the SDK does, not rejected
+    expect(events).toEqual(["good.one", "x".repeat(64)]);
     expect(rejected.map((r) => [r.line, r.name, r.reason])).toEqual([
-      [4, "tab\there", "the name has control characters such as a tab or a line break"],
+      [4, "tab\there", "the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space"],
+      [5, "rocket 🚀", "the name has characters other than letters, digits and $ : _ . / - [ ] ( ) # @ + & , ' and space"],
       [7, "", "the name is empty"],
     ]);
     expect(rejected[0].calleeText).toBe("sdk.track");

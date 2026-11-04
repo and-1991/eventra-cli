@@ -236,3 +236,16 @@ describe("calls inside a wrapper and names that are not known", () => {
     ]);
   });
 });
+
+describe("values taken from the scanned code", () => {
+  it("are shown without control characters, in the resolved values and the template expression", async () => {
+    await report(
+      occurrence({ line: 3, resolvedValues: ["ok", "evil\u001b[2Jwipe"] }),
+      occurrence({ line: 4, inTemplate: true, eventExpression: "a\u202eb" }),
+    );
+    const text = printed().map((call) => String(call[0])).join("\n");
+    expect(text).not.toMatch(/\u001b|\u202e/);
+    expect(text).toContain("evil\\x1b[2Jwipe");
+    expect(text).toContain('event="a\\u202eb"');
+  });
+});

@@ -140,7 +140,7 @@ describe("sync", () => {
 });
 
 const REJECTED = [
-  { fileName: "/p/src/a.ts", line: 7, character: 0, calleeText: "sdk.track", callText: "", resolvedValues: ["x"], name: "bad\tname", reason: "the name has control characters" },
+  { fileName: "/p/src/a.ts", line: 7, character: 0, calleeText: "sdk.track", callText: "", resolvedValues: ["x"], name: "bad\tname", reason: "the name has characters other than letters" },
 ];
 
 describe("notes after a scan", () => {
@@ -152,7 +152,7 @@ describe("notes after a scan", () => {
     expect(printed(err)).toContain("Syntax errors in 1 file (events after the error may be missed):");
     expect(printed(err)).toContain("src/broken.ts: line 3: ';' expected.");
     expect(printed(err)).toContain('Skipped 1 event name the CLI cannot accept:');
-    expect(printed(err)).toContain('src/a.ts:7 "bad\tname": the name has control characters');
+    expect(printed(err)).toContain('src/a.ts:7 "bad\\tname": the name has characters other than letters');
     expect(state.saved[0].events).toEqual(["kept.event", "new.event"]);
     expect(printed(err)).toContain("The scan was not clean: 1 file with a syntax error, 1 event name the CLI cannot accept.");
     expect(process.exitCode).toBe(1);
@@ -180,12 +180,12 @@ describe("notes after a scan", () => {
     err.mockClear();
     await check({});
     expect(printed(err)).toContain("src/broken.ts: line 3");
-    expect(printed(err)).toContain('"bad\tname"');
+    expect(printed(err)).toContain('"bad\\tname"');
 
     err.mockClear();
     await check({ fix: true, strict: true });
     expect(printed(err)).toContain("src/broken.ts: line 3");
-    expect(printed(err)).toContain('"bad\tname"');
+    expect(printed(err)).toContain('"bad\\tname"');
     expect(process.exitCode).toBe(1);
   });
 });

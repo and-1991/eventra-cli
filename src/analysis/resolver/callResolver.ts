@@ -5,7 +5,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
 import {renderMethodOf} from "../symbols/classComponent";
-import {unwrapComponentWrapper} from "../symbols/symbolUtils";
+import {unwrapComponentWrapper, unwrapHookCallback} from "../symbols/symbolUtils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
@@ -48,7 +48,7 @@ function resolveReturnedFunction(call: ts.CallExpression, checker: ts.TypeChecke
     return null;
   }
   for (const returned of returnedExpressions(factory)) {
-    const value = unwrapExpression(returned);
+    const value = unwrapHookCallback(returned);
     if (isFunctionLike(value)) {
       return value;
     }

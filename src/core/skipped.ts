@@ -20,6 +20,26 @@ export function cleanSkipReason(file: string, message: string): string {
   return text.replace(/\s+/g, " ").trim() || "unknown error";
 }
 
+// control characters (ESC among them, which starts a terminal escape sequence) and the invisible ones that reorder or hide
+// text (zero-width, bidi overrides, line and paragraph separators)
+// eslint-disable-next-line no-control-regex
+const UNSAFE_TO_PRINT = /[\u0000-\u001f\u007f-\u009f\u200b-\u200f\u2028\u2029\u202a-\u202e\u2066-\u2069\ufeff]/g;
+
+/**
+ * Text taken from the scanned code (an event name, a resolved value, a template expression) as it is safe to put on a
+ * terminal: a repository can write anything in a string, and an escape sequence in a name would be run by the terminal
+ * of whoever scans it. Such characters are shown as `\n`, `\x1b` or `\u202e`.
+ */
+export function printable(text: string): string {
+  return text.replace(UNSAFE_TO_PRINT, (char) => {
+    if (char === "\n") return "\\n";
+    if (char === "\r") return "\\r";
+    if (char === "\t") return "\\t";
+    const code = char.charCodeAt(0);
+    return code <= 0xff ? `\\x${code.toString(16).padStart(2, "0")}` : `\\u${code.toString(16).padStart(4, "0")}`;
+  });
+}
+
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
@@ -123,7 +143,7 @@ export function formatRejectedNames(rejected: readonly RejectedName[], cwd: stri
   for (const item of shown) {
     const file = relativeTo(cwd, item.fileName);
     const where = item.inTemplate || item.inTemplateCode ? `template of ${file}` : `${file}:${item.line}`;
-    lines.push(`  ${where} "${item.name}": ${item.reason}`);
+    lines.push(`  ${where} "${printable(item.name)}": ${item.reason}`);
   }
   return lines;
 }
@@ -133,7 +153,7 @@ export function reportRejectedNames(rejected: readonly RejectedName[], cwd: stri
   const lines = formatRejectedNames(rejected, cwd);
   if (lines.length === 0) return;
   console.error(chalk.yellow(lines.join("\n")));
-  console.error(chalk.gray("These names are not in your events. A name must not be empty or contain control characters (tab, line break)."));
+  console.error(chalk.gray("These names are not in your events. A name can use letters of any language, digits, space and $ : _ . / - [ ] ( ) # @ + & , ' (a longer one is cut to 64 characters)."));
 }
 
 export function plural(count: number, singular: string, pluralForm = `${singular}s`): string {

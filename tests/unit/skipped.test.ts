@@ -12,6 +12,7 @@ import {
   formatSkipped,
   formatSyntaxErrors,
   hasStrictProblems,
+  printable,
   plural,
   reportIgnored,
   reportPluginNotes,
@@ -186,7 +187,7 @@ describe("formatRejectedNames / reportRejectedNames", () => {
     expect(err).not.toHaveBeenCalled();
     reportRejectedNames([rejected()], "/p");
     expect(err).toHaveBeenCalledTimes(2);
-    expect(String(err.mock.calls[1][0])).toContain("control characters");
+    expect(String(err.mock.calls[1][0])).toContain("letters of any language");
     err.mockRestore();
   });
 });
@@ -239,6 +240,29 @@ describe("describeProblems and hasStrictProblems", () => {
     expect(describeProblems(problems)).toEqual([]);
     expect(hasStrictProblems(problems)).toBe(false);
     expect(hasStrictProblems({ ...problems, skipped: [file] })).toBe(true);
+  });
+});
+
+describe("printable", () => {
+  it("leaves ordinary text, other languages and punctuation alone", () => {
+    expect(printable("App: User Sign Up")).toBe("App: User Sign Up");
+    expect(printable("Заказ оформлен [v2] & co's")).toBe("Заказ оформлен [v2] & co's");
+  });
+
+  it("shows control characters, escape sequences and invisible text as visible escapes", () => {
+    expect(printable("a\nb\rc\td")).toBe("a\\nb\\rc\\td");
+    // an escape sequence that would recolour or rewrite the terminal
+    expect(printable("x\u001b[31mred\u001b[0m")).toBe("x\\x1b[31mred\\x1b[0m");
+    expect(printable("a\u0000b\u007fc\u009bd")).toBe("a\\x00b\\x7fc\\x9bd");
+    // text that is reordered or hidden: a right-to-left override, a zero-width space, a line separator, a BOM
+    expect(printable("a\u202eb\u200bc\u2028d\ufeffe")).toBe("a\\u202eb\\u200bc\\u2028d\\ufeffe");
+  });
+
+  it("is applied to a rejected name, so an escape sequence in code is not run by the terminal", () => {
+    const lines = formatRejectedNames([{ ...rejected(), name: "evil\u001b]0;pwned\u0007" }], "/p");
+    expect(lines.join("\n")).not.toContain("\u001b");
+    expect(lines.join("\n")).not.toContain("\u0007");
+    expect(lines.join("\n")).toContain("evil\\x1b]0;pwned\\x07");
   });
 });
 

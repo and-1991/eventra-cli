@@ -36,6 +36,8 @@ npm install -D @eventra_dev/eventra-cli
 pnpm add -D @eventra_dev/eventra-cli
 ```
 
+To try it without installing, `npx -p @eventra_dev/eventra-cli eventra init --yes` works in most folders. A repository that sets `devEngines.packageManager` to something other than npm makes npm refuse with `EBADDEVENGINES`: install the CLI as a dev dependency there and run it with that package manager (`pnpm exec eventra sync`).
+
 Your project should use the runtime SDK:
 
 ```bash
@@ -108,7 +110,7 @@ export function trackEvent<E extends string>(event: E) { capture(event); }
 trackEvent("checkout_started");
 ```
 
-Functions handed back by a hook count too (`const analytics = useAnalytics(); analytics.capture("x")`, where the hook ends with `return { capture }`), and so does a library loaded on demand (`import("posthog-js").then(({ default: ph }) => ph.capture(name))`, `await import(...)`).
+Functions handed back by a hook count too (`const analytics = useAnalytics(); analytics.capture("x")`, where the hook ends with `return { capture }`, or hands back a function through `useCallback`, as a typed capture hook does), and so does a library loaded on demand (`import("posthog-js").then(({ default: ph }) => ph.capture(name))`, `await import(...)`).
 
 ### Props and inputs of any name
 
@@ -215,12 +217,12 @@ The [name rules](#event-name-rules-aligned-with-sdk) below apply to these events
 | Rule | Limit |
 |------|--------|
 | Max length | **64 characters** (same as SDK): a longer name is cut to 64, as `track()` does, so the catalog holds what is sent |
-| Characters | Anything the SDK accepts: letters of any language, digits, punctuation, emoji and the space (so `App: User Sign Up`, `$pageview` and `Launch 🚀` work). Tabs, newlines and other control characters are rejected |
+| Characters | Letters of any language (`Заказ оформлен`, `购买完成`), digits, the space, and `$ : _ . / - [ ] ( ) # @ + & , '` (so `App: User Sign Up`, `$pageview`, `[Amplitude] Page Viewed` and `User's Profile Viewed` work). Emoji, tabs, newlines, `!`, `?` and everything else are rejected |
 | Position | First argument of `.track(name, options?)` |
 
 The second argument (`userId`, `properties`) is **not** used as the event name.
 
-A literal name that is empty or has a control character (a tab, a line break) is not added to `events` and is not a dynamic occurrence. After the scan the CLI lists each one in a note, with its file, line and the reason, so a missing event is not a mystery. `--strict` fails on them (see [`eventra sync`](#eventra-sync)).
+A literal name that is empty or has any other character is not added to `events` and is not a dynamic occurrence. After the scan the CLI lists each one in a note, with its file, line and the reason, so a missing event is not a mystery. `--strict` fails on them (see [`eventra sync`](#eventra-sync)).
 
 ---
 
@@ -550,7 +552,7 @@ Two test layers, **1164 unit tests + 14 e2e fixtures + 3 `check` exit-code scena
 | `DocumentRegistry` | Path normalization, version bumping, no-op on identical content, `ensure()` from disk |
 | `CompilerContext` | Stage/update/remove files, `resolveModule` with `tsconfig.json` `paths`, source-file enumeration, nearest `tsconfig.json` per file, `references`, workspace packages without an install |
 | `wrapper chains` | A wrapper calling a wrapper (depth 2 and 3), either file order, generics, destructuring, cycles, watch updates |
-| `hook wrappers` | `return { capture }`, dynamic `import()` receivers, `.then` callbacks, promise-typed getters |
+| `hook wrappers` | `return { capture }`, a function returned through `useCallback`, dynamic `import()` receivers, `.then` callbacks, promise-typed getters |
 | `respawn` | Heap sizing (a container's lower memory limit counts), only scanning commands respawn, signals reach the child, no second respawn, explicit `--max-old-space-size` respected |
 | `EventraEngine` | Direct calls, SDK isolation, cross-file wrappers, file updates, file removal, wrapper filtering |
 | `PluginRegistry` | Built-in SDK sink, preprocessors, virtual-path mapping, include-pattern dedup |

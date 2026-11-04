@@ -55,9 +55,8 @@ const fixtures: Array<{
       "Wrapped: Via Helper",
       "Server Side: Envelope Sent",
       "$pageview",
-      "Launch! 🚀",
     ],
-    mustNotInclude: ["distinct-user-1", "Bad\tName", "Camera: Photo Taken"],
+    mustNotInclude: ["distinct-user-1", "Bad\tName", "Launch! 🚀", "Camera: Photo Taken"],
   },
   {
     name: "frontend/react",

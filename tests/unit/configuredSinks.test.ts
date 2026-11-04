@@ -462,7 +462,7 @@ describe("sinks: names with spaces and colons", () => {
     expect(events.sort()).toEqual(["JSX Event: Click Me", "SDK Direct: Sign Up"]);
   });
 
-  it("keeps `$` names and punctuation, and still drops names with control characters", async () => {
+  it("keeps `$` names and drops names with other characters outside the allowed set", async () => {
     const { events } = await scan(POSTHOG, {
       "a.ts": `
         import posthog from "posthog-js";
@@ -474,7 +474,7 @@ describe("sinks: names with spaces and colons", () => {
     });
     expect(events).toContain("Ok Name");
     expect(events).toContain("$pageview");
-    expect(events).toContain("Bang!");
+    expect(events).not.toContain("Bang!");
     expect(events.some((e) => e.includes("\t"))).toBe(false);
   });
 

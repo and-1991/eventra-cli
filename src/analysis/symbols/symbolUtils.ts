@@ -107,6 +107,19 @@ export function getFunctionSymbol(node: ts.FunctionLikeDeclaration, checker: ts.
   return undefined;
 }
 
+/** `useCallback(fn, deps)` / `React.useCallback(fn, deps)`: a hook that returns its first argument. */
+export function isHookCallback(call: ts.CallExpression): boolean {
+  const callee = unwrapExpression(call.expression);
+  const name = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : undefined;
+  return name === "useCallback";
+}
+
+/** The function `useCallback(fn, deps)` hands back, or the expression itself when it is anything else. */
+export function unwrapHookCallback(expression: ts.Expression): ts.Expression {
+  const current = unwrapExpression(expression);
+  return ts.isCallExpression(current) && isHookCallback(current) && current.arguments[0] ? unwrapExpression(current.arguments[0]) : current;
+}
+
 /** An arrow/function expression that is the value of a `return`, or the concise body of an arrow, possibly in parentheses, `as` or `!`. */
 export function isReturnedFunction(node: ts.FunctionLikeDeclaration): boolean {
   if (!ts.isArrowFunction(node) && !ts.isFunctionExpression(node)) {
@@ -115,9 +128,17 @@ export function isReturnedFunction(node: ts.FunctionLikeDeclaration): boolean {
   // `inner` is the outermost wrapper around the function, or the function itself
   let inner: ts.Node = node;
   let outer: ts.Node = node.parent;
-  while (isExpressionWrapper(outer)) {
-    inner = outer;
-    outer = outer.parent;
+  for (;;) {
+    if (isExpressionWrapper(outer)) {
+      inner = outer;
+      outer = outer.parent;
+    } else if (ts.isCallExpression(outer) && isHookCallback(outer) && outer.arguments[0] === inner) {
+      // `useCallback((n) => t.track(n), [])` hands back the function it was given
+      inner = outer;
+      outer = outer.parent;
+    } else {
+      break;
+    }
   }
   return ts.isReturnStatement(outer) || (ts.isArrowFunction(outer) && outer.body === inner);
 }

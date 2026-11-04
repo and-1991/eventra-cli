@@ -2,6 +2,7 @@ import chalk from "chalk";
 import path from "path";
 
 import type { DynamicOccurrence } from "../../analysis/shared/dynamicOccurrence";
+import { printable } from "../../core/skipped";
 import type { PluginRegistry } from "../registry";
 import type { DynamicEventReporter } from "../types";
 
@@ -23,11 +24,11 @@ const CAUSE_TEXT: Readonly<Record<string, string>> = {
 };
 
 function line(occ: DynamicOccurrence, withCause: boolean): string {
-  const values = occ.resolvedValues.length > 0 ? ` (resolved: ${occ.resolvedValues.join(", ")})` : "";
+  const values = occ.resolvedValues.length > 0 ? ` (resolved: ${occ.resolvedValues.map(printable).join(", ")})` : "";
   const cause = withCause && occ.cause && CAUSE_TEXT[occ.cause] ? ` [${occ.cause}: ${CAUSE_TEXT[occ.cause]}]` : "";
   const file = displayPath(occ.fileName);
   if (occ.inTemplate) {
-    return `~ template of ${file}: event="${occ.eventExpression ?? ""}"${values}${cause}`;
+    return `~ template of ${file}: event="${printable(occ.eventExpression ?? "")}"${values}${cause}`;
   }
   if (occ.inTemplateCode) {
     return `~ template of ${file}: ${occ.calleeText}(...)${values}${cause}`;

@@ -308,7 +308,7 @@ describe("extractPropagationEvents", () => {
       expect(rejected).toHaveLength(1);
       expect(rejected[0].name).toBe("invalid\tevent");
       expect(rejected[0].calleeText).toBe("wrapperIdentifierInvalid");
-      expect(rejected[0].reason).toMatch(/control characters/);
+      expect(rejected[0].reason).toMatch(/characters other than/);
     } finally {
       env.cleanup();
     }

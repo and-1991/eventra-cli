@@ -56,14 +56,25 @@ describe("normalizeEventName", () => {
     expect(normalizeEventName(exact)).toBe(exact);
   });
 
-  it("accepts punctuation and emoji, which the SDK sends as they are", () => {
-    expect(normalizeEventName("user signup!")).toBe("user signup!");
-    expect(normalizeEventName("emoji🎉event")).toBe("emoji🎉event");
+  it("accepts letters of any language and the punctuation real names use", () => {
+    expect(normalizeEventName("Заказ оформлен")).toBe("Заказ оформлен");
+    expect(normalizeEventName("购买完成")).toBe("购买完成");
+    expect(normalizeEventName("[Amplitude] Page Viewed")).toBe("[Amplitude] Page Viewed");
+    expect(normalizeEventName("Checkout (v2)")).toBe("Checkout (v2)");
+    expect(normalizeEventName("Save & Continue")).toBe("Save & Continue");
+    expect(normalizeEventName("User's Profile Viewed")).toBe("User's Profile Viewed");
+    expect(normalizeEventName("a@b#c+d,e")).toBe("a@b#c+d,e");
   });
 
-  it("rejects a value with control characters", () => {
+  it("rejects emoji, control characters and other junk instead of guessing", () => {
+    expect(normalizeEventName("user signup!")).toBeNull();
+    expect(normalizeEventName("is it ok?")).toBeNull();
+    expect(normalizeEventName("emoji🎉event")).toBeNull();
+    expect(normalizeEventName("a=b;c")).toBeNull();
+    expect(normalizeEventName("\ud83d")).toBeNull();
     expect(normalizeEventName("tab\tseparated")).toBeNull();
     expect(normalizeEventName("line\nbreak")).toBeNull();
+    expect(normalizeEventName("a\u0000b")).toBeNull();
   });
 
   it("accepts a leading $, as PostHog names its own events", () => {
@@ -86,6 +97,16 @@ describe("normalizeEventName", () => {
     expect(exact).toHaveLength(MAX_EVENT_NAME_LENGTH);
     expect(normalizeEventName(exact)).toBe(exact);
     expect(normalizeEventName(`${exact}x`)).toBe(exact);
+  });
+});
+
+describe("normalizeEventName: what the server would store", () => {
+  it("does not leave half of a character when the cut at 64 falls inside it", () => {
+    // 63 characters, then a letter outside the basic plane (2 units): the cut splits it, and the server drops the half
+    const name = `${"a".repeat(63)}\u{20000}`;
+    expect(name.length).toBe(65);
+    expect(normalizeEventName(name)).toBe("a".repeat(63));
+    expect(normalizeEventName(`${"a".repeat(62)}\u{20000}`)).toBe(`${"a".repeat(62)}\u{20000}`);
   });
 });
 

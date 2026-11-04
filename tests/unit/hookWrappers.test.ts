@@ -177,6 +177,56 @@ describe("posthog-js loaded with a dynamic import", () => {
   });
 });
 
+describe("a hook that returns what useCallback was given", () => {
+  const DECL = `declare function useCallback<T>(fn: T, deps: unknown[]): T;\n`;
+
+  it("follows a named function expression with a rest parameter, as a typed capture hook writes it", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": `import ph from "posthog-js";\n${DECL}
+          export const usePostHogClientCapture = () => {
+            return useCallback(function capture<E extends string>(eventName: E, ...[properties]: [Record<string, unknown>?]) {
+              return ph.capture(eventName, properties);
+            }, []);
+          };`,
+        "use.ts": `import { usePostHogClientCapture } from "./hook";
+          const capture = usePostHogClientCapture();
+          capture("trace:delete", {});
+          capture("dashboard:view");`,
+      }),
+    ).toEqual(["dashboard:view", "trace:delete"]);
+  });
+
+  it("follows an arrow in useCallback, a block body with a return and React.useCallback", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": `import ph from "posthog-js";\n${DECL}
+          declare const React: { useCallback: typeof useCallback };
+          export const useA = () => useCallback((n: string) => ph.capture(n), []);
+          export function useB() { const x = 1; return useCallback((n: string) => { ph.capture(n); }, [x]); }
+          export function useC() { return React.useCallback((n: string) => ph.capture(n), []); }`,
+        "use.ts": `import { useA, useB, useC } from "./hook";
+          useA()("from.a"); const b = useB(); b("from.b"); const c = useC(); c("from.c");`,
+      }),
+    ).toEqual(["from.a", "from.b", "from.c"]);
+  });
+
+  it("does not take a useCallback whose first argument is not a function, or a call of something else", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": `import ph from "posthog-js";\n${DECL}
+          declare function useThing<T>(fn: T): T;
+          declare const handler: (n: string) => void;
+          export const useA = () => useCallback(handler, []);
+          export const useB = () => useThing((n: string) => ph.capture(n));
+          export const useC = () => (useCallback as any)();`,
+        "use.ts": `import { useA, useB, useC } from "./hook";
+          useA()("not.a"); useB()("not.b"); useC();`,
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("a hook that returns a bare function", () => {
   const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });`;
 
