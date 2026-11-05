@@ -10,6 +10,34 @@ const CLI_VERSION = pkg.version;
 // Always trusted, no local approval needed — matches `eventra init`'s prompt default.
 const DEFAULT_SEND_ENDPOINT = "https://api.eventra.dev/api/v1/cli/events";
 
+// The API key travels with every request. Plain http is fine for a local
+// ingest server (loopback) and is allowed elsewhere with a warning, since
+// self-hosted setups in a container or a private network legitimately use it.
+// Anything that is not an http(s) URL is refused.
+const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+
+export type EndpointCheck = "secure" | "insecure" | "invalid";
+
+export function checkEndpoint(endpoint: string): EndpointCheck {
+  let url: URL;
+  try {
+    url = new URL(endpoint);
+  } catch {
+    return "invalid";
+  }
+  if (url.protocol === "https:") return "secure";
+  if (url.protocol !== "http:") return "invalid";
+  return LOOPBACK_HOSTS.has(url.hostname) ? "secure" : "insecure";
+}
+
+// fetch reports `redirect: "error"` as a TypeError "fetch failed" whose cause is
+// "unexpected redirect"
+export function isRedirectError(err: unknown): boolean {
+  const cause = (err as { cause?: { message?: unknown } } | null)?.cause;
+
+  return typeof cause?.message === "string" && /redirect/i.test(cause.message);
+}
+
 // retry/backoff tuning (mirrors SDK defaults)
 const MAX_ATTEMPTS = 4;
 const BASE_DELAY_MS = 500;
@@ -51,6 +79,9 @@ async function attemptDelivery(
       },
       body: payload,
       signal: controller.signal,
+      // never follow a redirect: x-api-key is a custom header, so fetch would
+      // forward it to wherever a compromised or misconfigured server points
+      redirect: "error",
     });
 
     if (res.ok) {
@@ -92,17 +123,22 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   }
   warnInlineApiKey(config);
 
-  const endpoint = config.endpoint || process.env.EVENTRA_ENDPOINT || undefined;
+  // EVENTRA_ENDPOINT wins over eventra.json. It is set in the local or CI
+  // environment, which a PR cannot change. The committed file is the one an
+  // attacker can edit, so it is only used when the variable is absent and then
+  // needs approval below. (It used to win, and the approval was skipped
+  // whenever the variable was set, so a PR could redirect a CI send.)
+  const envEndpoint = process.env.EVENTRA_ENDPOINT || undefined;
+  const endpoint = envEndpoint || config.endpoint || undefined;
 
-  // A non-default endpoint sourced from the committed eventra.json (not from
-  // EVENTRA_ENDPOINT, which already requires a local/CI env-var change) needs
+  // A non-default endpoint sourced from the committed eventra.json needs
   // one-time local approval — otherwise a PR silently editing `endpoint` could
   // redirect send (and the API key) to an attacker's server.
   if (
     endpoint &&
     endpoint !== DEFAULT_SEND_ENDPOINT &&
     endpoint === config.endpoint &&
-    !process.env.EVENTRA_ENDPOINT
+    !envEndpoint
   ) {
     const trusted = await getTrustedEndpoint();
     if (endpoint !== trusted) {
@@ -137,8 +173,9 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     const answers =
       await inquirer.prompt([
         {
-          type: "input",
+          type: "password",
           name: "apiKey",
+          mask: "*",
           message: "Enter your API key:"
         }
       ]);
@@ -165,6 +202,17 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     console.log(chalk.red("Endpoint not configured"));
     process.exitCode = 1;
     return;
+  }
+  const endpointCheck = checkEndpoint(endpoint);
+  if (endpointCheck === "invalid") {
+    console.log(chalk.red(`Endpoint "${endpoint}" is not a valid http(s) URL.`));
+    process.exitCode = 1;
+    return;
+  }
+  if (endpointCheck === "insecure") {
+    console.log(
+      chalk.yellow(`Warning: "${endpoint}" uses plain http, so the API key is sent unencrypted. Use https unless this is a trusted private network.`),
+    );
   }
   console.log("");
   console.log(chalk.blue(`Sending ${config.events.length} events...`));
@@ -225,6 +273,13 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
         // permanent failure — surface immediately
         console.log(chalk.red(`Request failed (${outcome.status})`));
         if (outcome.body) console.log(chalk.gray(outcome.body));
+        if (outcome.status === 403 && outcome.body?.includes("not valid for this endpoint")) {
+          console.log(
+            chalk.yellow(
+              "This API key was created for the SDK. Create a key with CLI access under the project's API keys in the dashboard and use it as EVENTRA_API_KEY.",
+            ),
+          );
+        }
         process.exitCode = 1;
         return;
       }
@@ -241,6 +296,15 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
         await sleep(delay);
       }
     } catch (err) {
+      // a redirect is an answer, not a glitch: it is never followed (the API key
+      // would go along), and retrying would only get the same answer
+      if (isRedirectError(err)) {
+        console.log(chalk.red(`The endpoint "${endpoint}" answered with a redirect. send does not follow redirects, because they could forward your API key.`));
+        console.log(chalk.gray("Use the final URL as the endpoint (for example the https address, or the one without or with the trailing slash)."));
+        process.exitCode = 1;
+        return;
+      }
+
       lastFailure = { error: err };
 
       if (attempt < MAX_ATTEMPTS - 1) {

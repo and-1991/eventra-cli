@@ -5,7 +5,7 @@ import inquirer from "inquirer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { CONFIG_NAME, LOCAL_CONFIG_NAME, normalizeConfig, saveConfig } from "../../src/config/config";
-import { send } from "../../src/cli/send";
+import { isRedirectError, send } from "../../src/cli/send";
 
 const CUSTOM_ENDPOINT = "https://ingest.self-hosted.example.com/api/v1/cli/events";
 const DEFAULT_ENDPOINT = "https://api.eventra.dev/api/v1/cli/events";
@@ -111,6 +111,101 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("not locally approved");
     expect(process.exitCode).toBe(1);
+  });
+
+  it("uses EVENTRA_ENDPOINT over eventra.json, so a committed endpoint cannot redirect a CI send", async () => {
+    // the attack: CI sets EVENTRA_ENDPOINT, a PR edits eventra.json to point elsewhere
+    process.env.EVENTRA_ENDPOINT = CUSTOM_ENDPOINT;
+    await setEndpoint("https://evil.example.com/api/v1/cli/events");
+
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(CUSTOM_ENDPOINT);
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("still requires approval for eventra.json's endpoint when EVENTRA_ENDPOINT is set to an empty string", async () => {
+    process.env.EVENTRA_ENDPOINT = "";
+    await setEndpoint("https://evil.example.com/api/v1/cli/events");
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("sends to a plain http endpoint on a remote host, but warns that the key is unencrypted", async () => {
+    process.env.EVENTRA_ENDPOINT = "http://host.docker.internal:4000/cli/events";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe("http://host.docker.internal:4000/cli/events");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("plain http");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("refuses an endpoint that is not a URL", async () => {
+    process.env.EVENTRA_ENDPOINT = "not a url";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it.each(["http://localhost:4000/cli/events", "http://127.0.0.1:4000/cli/events", "http://[::1]:4000/cli/events"])(
+    "sends to the local ingest server %s without any warning",
+    async (endpoint) => {
+      process.env.EVENTRA_ENDPOINT = endpoint;
+      const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+      await send();
+
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(logSpy.mock.calls.flat().join("\n")).not.toContain("plain http");
+      expect(process.exitCode).toBe(0);
+    },
+  );
+
+  it("refuses an endpoint that is not http or https", async () => {
+    process.env.EVENTRA_ENDPOINT = "file:///etc/passwd";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("does not follow redirects, so the API key cannot be forwarded to another host", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+
+    await send();
+
+    expect(fetchMock.mock.calls[0]?.[1]?.redirect).toBe("error");
+  });
+
+  it("asks for a typed API key as a password, not as visible text", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    delete process.env.EVENTRA_API_KEY;
+    const isTTYDescriptor = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    const promptSpy = vi.spyOn(inquirer, "prompt").mockResolvedValue({ apiKey: "k" });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    try {
+      await send();
+      const questions = promptSpy.mock.calls[0]?.[0] as unknown as Array<{ type: string }>;
+      expect(questions[0]?.type).toBe("password");
+    } finally {
+      if (isTTYDescriptor) Object.defineProperty(process.stdin, "isTTY", isTTYDescriptor);
+      else delete (process.stdin as { isTTY?: boolean }).isTTY;
+    }
   });
 
   it("does not require approval for an endpoint supplied via EVENTRA_ENDPOINT", async () => {
@@ -280,6 +375,61 @@ describe("send() — endpoint trust-on-first-use", () => {
     const output = logSpy.mock.calls.flat().join("\n");
     expect(output).toContain("Request failed (403)");
     expect(process.exitCode).toBe(1);
+  });
+
+  it("explains a redirect and stops at once instead of retrying it", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    const err = new TypeError("fetch failed");
+    (err as { cause?: unknown }).cause = new Error("unexpected redirect");
+    fetchMock.mockRejectedValue(err);
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("answered with a redirect");
+    expect(output).toContain("Use the final URL");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("tells a redirect apart from an ordinary network error", () => {
+    const withCause = (message: string) => Object.assign(new TypeError("fetch failed"), { cause: new Error(message) });
+
+    expect(isRedirectError(withCause("unexpected redirect"))).toBe(true);
+    expect(isRedirectError(withCause("getaddrinfo ENOTFOUND api.eventra.dev"))).toBe(false);
+    expect(isRedirectError(new Error("network down"))).toBe(false);
+    expect(isRedirectError(null)).toBe(false);
+    expect(isRedirectError("redirect")).toBe(false);
+  });
+
+  it("explains a refused SDK key and how to get a CLI key", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 403,
+      text: async () => '{"message":"API key is not valid for this endpoint"}',
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("Request failed (403)");
+    expect(output).toContain("created for the SDK");
+    expect(output).toContain("CLI access");
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("gives no key hint for a 403 that is about something else", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockResolvedValue({ ok: false, status: 403, text: async () => "Forbidden" });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("created for the SDK");
   });
 
   it("fails the process once retries are exhausted on a retryable failure with no response body", async () => {

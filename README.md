@@ -303,7 +303,9 @@ Incremental scan with the same rules as `sync`.
 
 ### `eventra send`
 
-Uploads `events` from config to the Eventra API. Requires an API key and an endpoint (`init` writes the default `https://api.eventra.dev/api/v1/cli/events`; `EVENTRA_ENDPOINT` is only used when `eventra.json` has none). Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
+Uploads `events` from config to the Eventra API. Requires an API key and an endpoint (`init` writes the default `https://api.eventra.dev/api/v1/cli/events`; `EVENTRA_ENDPOINT`, when set, takes priority over the `endpoint` in `eventra.json`). Use `https`: plain `http` works (and is silent for `localhost`, `127.0.0.1` and `[::1]`) but on any other host `send` warns that the API key travels unencrypted. `send` never follows a redirect, so the API key cannot be forwarded to another host. Events are POSTed to `POST /api/v1/cli/events` and marked as non-billable on the backend.
+
+**Key access.** `send` needs a key whose access is `CLI` or `Everything`. A key created for the SDK (`SDK: send events`) is refused with 403, so a key that sits in a public browser bundle cannot rewrite your code catalog. Create a separate CLI key under the project's API keys in the dashboard.
 
 **API key resolution** (checked in this order, never written to `eventra.json`):
 
@@ -311,9 +313,9 @@ Uploads `events` from config to the Eventra API. Requires an API key and an endp
 2. `eventra.local.json` (created by `eventra init`/`eventra send`, automatically gitignored)
 3. legacy inline `apiKey` in `eventra.json` (deprecated; `sync`, `check`, `watch` and `send` print a warning when it is set. If a real key was ever committed, create a new one in the dashboard and revoke the old one)
 
-`eventra.json` is meant to be committed so CI can diff it via `eventra check`; keeping the key out of it avoids leaking it into source control. In a non-interactive shell (no TTY), `send` fails fast with a message pointing at `EVENTRA_API_KEY` instead of hanging on a prompt.
+`eventra.json` is meant to be committed so CI can diff it via `eventra check`; keeping the key out of it avoids leaking it into source control. If it has to ask for the key, what you type is hidden. In a non-interactive shell (no TTY), `send` fails fast with a message pointing at `EVENTRA_API_KEY` instead of hanging on a prompt.
 
-**Endpoint trust.** The default production endpoint is always used with no extra step. A *custom* `endpoint` is only trusted without approval when it comes from the `EVENTRA_ENDPOINT` environment variable (setting an env var is already a local/CI action). A custom `endpoint` committed inline in `eventra.json` is trust-on-first-use: `send` refuses to run until it's approved once with:
+**Endpoint trust.** The default production endpoint is always used with no extra step. A *custom* `endpoint` is only trusted without approval when it comes from the `EVENTRA_ENDPOINT` environment variable (setting an env var is already a local/CI action, and a pull request cannot change it). A custom `endpoint` committed inline in `eventra.json` is trust-on-first-use: `send` refuses to run until it's approved once with:
 
 ```bash
 eventra send --trust-endpoint
@@ -321,7 +323,7 @@ eventra send --trust-endpoint
 
 This records the endpoint in `eventra.local.json` (gitignored). If `eventra.json`'s `endpoint` later changes to a different value — e.g. a PR silently pointing it at another host — `send` blocks again until re-approved, so a committed config change alone can't redirect where your API key and events get sent.
 
-Once `eventra.json` already commits an `endpoint`, that committed value is what events actually get sent to - `EVENTRA_ENDPOINT` only controls whether the approval prompt is skipped; its own value is not read or compared against anything in that case. `EVENTRA_ENDPOINT` becomes the real destination only when `eventra.json` has no `endpoint` set at all. In other words, setting the variable to point somewhere else does not redirect traffic away from an already-committed endpoint - it only means you won't be asked to approve it.
+`EVENTRA_ENDPOINT` always wins over `eventra.json`: when it is set (and not empty), that is where events and the API key go, whatever the committed file says. The committed `endpoint` is only used when the variable is unset or empty, and then it needs the approval described above. (Before 2.6.3 the committed value won and the variable only skipped the approval prompt; a pull request could use that to redirect a CI run.)
 
 **Catalog snapshot.** Besides the event list, `send` scans the project once more and tells the server how trustworthy that list is, so the dashboard can compare what is in your code with what actually arrived. It adds four optional fields to the request: `complete`, `dynamicCount`, `branch` and `cliVersion`.
 
@@ -500,7 +502,7 @@ This is the full shape. A file written by `eventra init` only contains `plugins`
 | Field | Description |
 |-------|-------------|
 | `apiKey` | Legacy inline API key — leave empty. Use `EVENTRA_API_KEY` or `eventra.local.json` instead (see [`eventra send`](#eventra-send)) so a real key never ends up in this committed file |
-| `endpoint` | Custom `eventra send` target (e.g. self-hosted). Non-default values from this file need one-time local approval — see [`eventra send`](#eventra-send) |
+| `endpoint` | Custom `eventra send` target (e.g. self-hosted). `EVENTRA_ENDPOINT` overrides it. Non-default values from this file need one-time local approval, and a non-local `http` endpoint produces a warning - see [`eventra send`](#eventra-send) |
 | `plugins` | `@eventra_dev/cli-plugin-*` specifiers to `import()` at startup. Anything outside that scope is skipped (see [Plugin contract](#plugin-contract-for-authors)) |
 | `sinks` | Third-party analytics calls to treat as event sources, e.g. `[{ "preset": "posthog" }]` (see [Third-party analytics](#third-party-analytics-sinks)) |
 | `dynamicEvents` | Names that a computed `track(...)` call can produce, declared by hand (see [Dynamic names](#dynamic-names)) |
