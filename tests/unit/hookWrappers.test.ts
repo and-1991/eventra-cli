@@ -107,6 +107,120 @@ describe("a hook that hands back a member holding what useCallback returned", ()
   });
 });
 
+describe("a hook whose react types are not installed", () => {
+  // `react` does not resolve, so `useCallback` and `useMemo` give back `any` and the type of the result says nothing
+  const HEAD = `import { useCallback, useMemo } from "react";
+    import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });\n`;
+  const FORMS: Record<string, string> = {
+    "a variable returned in an object": `export function useTrack() { const track = useCallback((n: string) => { t.track(n); }, []); return { track }; }`,
+    "a member holding useCallback": `export function useTrack() { return { track: useCallback((n: string) => { t.track(n); }, []) }; }`,
+    "an object from useMemo": `export function useTrack() { return useMemo(() => ({ track: (n: string) => { t.track(n); } }), []); }`,
+    "an object from a block useMemo": `export function useTrack() { const track = useCallback((n: string) => { t.track(n); }, []); return useMemo(() => { return { track }; }, [track]); }`,
+    "an object kept in a variable": `export function useTrack() { const api = { track: useCallback((n: string) => { t.track(n); }, []) }; return api; }`,
+  };
+  const USES = [
+    "const { track } = useTrack(); track('x.destructured');",
+    "const { track: send } = useTrack(); send('x.renamed');",
+    "const api = useTrack(); api.track('x.member');",
+    "useTrack().track('x.inline');",
+  ];
+
+  for (const [form, hook] of Object.entries(FORMS)) {
+    it(`follows ${form}, in another file and in the same one`, async () => {
+      const expected = ["x.destructured", "x.inline", "x.member", "x.renamed"];
+      const use = `export function C() { ${USES.join("\n")} }`;
+      expect(await eventsOf({ "hook.ts": HEAD + hook, "use.tsx": `import { useTrack } from "./hook";\n${use}` })).toEqual(expected);
+      expect(await eventsOf({ "a.tsx": `${HEAD}${hook}\n${use}` })).toEqual(expected);
+    });
+  }
+
+  it("does not take a member that is not a function it can see", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          export function useA(track: (n: string) => void) { return { track }; }
+          export function useB() { return useMemo(() => ({ track: 5 }), []); }
+          export function useC() { return useMemo(() => { if (t) return { track: (n: string) => { t.track(n); } }; return {}; }, []); }
+          const { track } = useA(() => {}); track("x.param");
+          const { track: b } = useB(); b("x.number");
+          const { missing } = useB(); missing("x.missing");
+          const { ...rest } = useB(); rest.track("x.rest");
+          const { c } = (useC as any)(); c("x.two_returns");`,
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("a member read from the code that cannot be followed", () => {
+  const HEAD = `import { useCallback, useMemo } from "react";
+    import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });
+    declare const handler: (n: string) => void;\n`;
+
+  it("reads a member next to a spread and other members", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          const base = {};
+          export function useTrack() { return { ...base, other: 1, track: useCallback((n: string) => { t.track(n); }, []) }; }
+          const { track } = useTrack(); track("x.spread");`,
+      }),
+    ).toEqual(["x.spread"]);
+  });
+
+  it("resolves nothing for a binding that does not take a named member of a call", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          export function useTrack() { return { track: useCallback((n: string) => { t.track(n); }, []) }; }
+          declare const list: Array<{ track: (n: string) => void }>;
+          const [first] = useTrack() as any; first("x.array");
+          for (const { track } of list) track("x.loop");
+          const { "track": quoted } = useTrack() as any; quoted("x.quoted");
+          const plain = {}; const { track: fromPlain } = plain as any; fromPlain("x.not_a_call");
+          const { track: fromParam } = ((p: any) => p)(1) as any; fromParam("x.param");
+          nothing("x.undeclared"); (useTrack as any)["track"]("x.element");`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("reads a useMemo factory only when it has one return with a value", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          export function useE() { return useMemo(() => { if (t) { return { track: (n: string) => { t.track(n); } }; } return {}; }, []); }
+          export function useF() { return useMemo(() => { return; }, []); }
+          export function useG() { return missing; }
+          export function useH() { return useMemo(() => { console.log("side effect only"); }, []); }
+          export function useI() { return useMemo(() => { return { track: (n: string) => { t.track(n); } }; return {}; }, []); }
+          const { track: e } = useE(); e("x.two_returns");
+          const { track: f } = useF(); f("x.empty_return");
+          useG().track("x.undeclared_name");
+          const { track: h } = useH(); h("x.no_return");
+          const { track: i } = useI(); i("x.two_top_level_returns");
+          const m1 = useMemo(() => 5, []); m1("x.number");
+          const m2 = useMemo(() => { return; }, []); m2("x.void");
+          const m3 = useMemo(() => { return 1; }, []); m3("x.one");
+          const m4 = useMemo(() => { if (t) return 1; return 2; }, []); m4("x.two");`,
+      }),
+    ).toEqual([]);
+  });
+
+  it("stops on a name that is bound to itself, and on a returned name that is not an object", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${HEAD}
+          // @ts-expect-error a variable used before its declaration, only here to see that the walk ends
+          const x: any = x.y(); x.y.z("x.cycle_call");
+          export function useA() { let a: any = b; let b: any = a; return a; }
+          export function useB(p: any) { return p; }
+          export function useC() { let o: any; return o; }
+          export function useD() { return useMemo(handler as any, []); }
+          useA().track("x.cycle_name"); useB(1).track("x.param"); useC().track("x.no_init"); useD().track("x.memo_not_fn");`,
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("a returned member that is not a function it defined", () => {
   it("resolves nothing for `return { track }` when `track` is only a parameter", async () => {
     expect(

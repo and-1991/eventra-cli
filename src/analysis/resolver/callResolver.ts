@@ -5,7 +5,7 @@ import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
 import {renderMethodOf} from "../symbols/classComponent";
-import {hookProvidedFunction, unwrapComponentWrapper, unwrapHookCallback} from "../symbols/symbolUtils";
+import {hookMemoValue, hookProvidedFunction, unwrapComponentWrapper, unwrapHookCallback} from "../symbols/symbolUtils";
 
 function isFunctionLike(node: ts.Node): node is ts.FunctionLikeDeclaration {
   return (ts.isFunctionDeclaration(node) || ts.isMethodDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node));
@@ -62,6 +62,82 @@ function resolveReturnedFunction(call: ts.CallExpression, checker: ts.TypeChecke
     }
   }
   return null;
+}
+
+/**
+ * The object literal an expression stands for: itself, the value a `useMemo` factory returns, or a name bound to one.
+ * Read from the code, so it works when the types behind a hook (`react` not installed) are lost.
+ */
+function objectLiteralOf(expression: ts.Expression, checker: ts.TypeChecker, hops = 0): ts.ObjectLiteralExpression | null {
+  if (hops > MAX_RETURN_HOPS) {
+    return null;
+  }
+  const value = unwrapExpression(expression);
+  if (ts.isObjectLiteralExpression(value)) {
+    return value;
+  }
+  const memoValue = hookMemoValue(value);
+  if (memoValue) {
+    return objectLiteralOf(memoValue, checker, hops + 1);
+  }
+  if (ts.isIdentifier(value)) {
+    for (const declaration of checker.getSymbolAtLocation(value)?.getDeclarations() ?? []) {
+      const literal = ts.isVariableDeclaration(declaration) && declaration.initializer ? objectLiteralOf(declaration.initializer, checker, hops + 1) : null;
+      if (literal) {
+        return literal;
+      }
+    }
+  }
+  return null;
+}
+
+/** The call an expression is the result of: the call itself, or a name set from one (`const api = useApi()`). */
+function callBehind(expression: ts.Expression, checker: ts.TypeChecker): ts.CallExpression | null {
+  const value = unwrapExpression(expression);
+  if (ts.isCallExpression(value)) {
+    return value;
+  }
+  if (ts.isIdentifier(value)) {
+    for (const declaration of checker.getSymbolAtLocation(value)?.getDeclarations() ?? []) {
+      const init = ts.isVariableDeclaration(declaration) && declaration.initializer ? unwrapExpression(declaration.initializer) : undefined;
+      if (init && ts.isCallExpression(init)) {
+        return init;
+      }
+    }
+  }
+  return null;
+}
+
+/**
+ * `useTrack().track`, `const api = useTrack(); api.track` and `const { track } = useTrack()`: the member `name` of the
+ * object a hook or factory returns, read from the returned object literal.
+ */
+function resolveMemberOfResult(receiver: ts.Expression, name: string, checker: ts.TypeChecker, callCache: ResolvedCallCache, exportCache: ResolvedExportCache, hops: number): ts.FunctionLikeDeclaration | null {
+  const call = callBehind(receiver, checker);
+  const factory = call && hops <= MAX_RETURN_HOPS ? resolveFunctionFromCall(call.expression, checker, callCache, exportCache, hops + 1) : null;
+  for (const returned of factory ? returnedExpressions(factory) : []) {
+    for (const property of objectLiteralOf(returned, checker)?.properties ?? []) {
+      const isMember = ts.isPropertyAssignment(property) || ts.isShorthandPropertyAssignment(property) || ts.isMethodDeclaration(property);
+      if (isMember && ts.isIdentifier(property.name) && property.name.text === name) {
+        const resolved = resolveDeclaration(property, checker);
+        if (resolved) {
+          return resolved;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+/** `const { track } = useTrack()` / `const { track: send } = useTrack()`: the member the binding takes from a call result. */
+function resolveBinding(declaration: ts.BindingElement, checker: ts.TypeChecker, callCache: ResolvedCallCache, exportCache: ResolvedExportCache, hops: number): ts.FunctionLikeDeclaration | null {
+  const pattern = declaration.parent;
+  const holder = pattern.parent;
+  const member = declaration.propertyName ?? declaration.name;
+  if (!ts.isObjectBindingPattern(pattern) || !ts.isVariableDeclaration(holder) || !holder.initializer || !ts.isIdentifier(member)) {
+    return null;
+  }
+  return resolveMemberOfResult(holder.initializer, member.text, checker, callCache, exportCache, hops);
 }
 
 function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker): ts.FunctionLikeDeclaration | null {
@@ -153,7 +229,9 @@ export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.T
   }
   let symbol = getExpressionSymbol(expression, checker);
   if (!symbol) {
-    return null;
+    // `useTrack().track(...)` when the type of the result is lost: read the member from the code
+    const access = ts.isPropertyAccessExpression(expression) ? expression : null;
+    return access ? resolveMemberOfResult(access.expression, access.name.text, checker, callCache, exportCache, hops) : null;
   }
   // export unwrap
   symbol = resolveExportedSymbol(symbol, checker, exportCache) ?? symbol;
@@ -173,7 +251,9 @@ export function resolveFunctionFromCall(expression: ts.Expression, checker: ts.T
     const resolved = resolveDeclaration(declaration, checker) ?? (
       ts.isVariableDeclaration(declaration) && declaration.initializer && ts.isCallExpression(declaration.initializer)
         ? resolveReturnedFunction(declaration.initializer, checker, callCache, exportCache, hops)
-        : null
+        : ts.isBindingElement(declaration)
+          ? resolveBinding(declaration, checker, callCache, exportCache, hops)
+          : null
     );
     if (!resolved) {
       continue;

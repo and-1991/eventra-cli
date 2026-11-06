@@ -110,7 +110,7 @@ export function trackEvent<E extends string>(event: E) { capture(event); }
 trackEvent("checkout_started");
 ```
 
-Functions handed back by a hook count too (`const analytics = useAnalytics(); analytics.capture("x")`, where the hook ends with `return { capture }`, or hands back a function through `useCallback` or `useMemo`, returned directly or kept in a variable first, as a typed capture hook does), and so does a library loaded on demand (`import("posthog-js").then(({ default: ph }) => ph.capture(name))`, `await import(...)`).
+Functions handed back by a hook count too (`const analytics = useAnalytics(); analytics.capture("x")`, where the hook ends with `return { capture }`, or hands back a function through `useCallback` or `useMemo`, returned directly or kept in a variable first, as a typed capture hook does; also as a member of the returned object, `return { track: useCallback(...) }` or `useMemo(() => ({ track }), [])`, and taken out with `const { track } = useTrack()`, even when the `react` types are not installed), and so does a library loaded on demand (`import("posthog-js").then(({ default: ph }) => ph.capture(name))`, `await import(...)`).
 
 ### Props and inputs of any name
 

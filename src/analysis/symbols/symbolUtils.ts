@@ -155,6 +155,27 @@ export function hookProvidedFunction(expression: ts.Expression): ts.ArrowFunctio
   return value && isFunctionExpression(value) ? value : null;
 }
 
+/**
+ * `useMemo(() => value, deps)`: the value the factory returns (a concise body, or the one `return` of a block).
+ * Null for any other call, so a call of another hook is never taken for it.
+ */
+export function hookMemoValue(expression: ts.Expression): ts.Expression | null {
+  const call = unwrapExpression(expression);
+  const first = ts.isCallExpression(call) ? call.arguments[0] : undefined;
+  if (!first || !ts.isCallExpression(call) || !isHookMemo(call)) {
+    return null;
+  }
+  const factory = unwrapExpression(first);
+  if (!isFunctionExpression(factory)) {
+    return null;
+  }
+  if (!ts.isBlock(factory.body)) {
+    return factory.body;
+  }
+  const returns = factory.body.statements.filter(ts.isReturnStatement);
+  return returns.length === 1 ? (returns[0].expression ?? null) : null;
+}
+
 /** The function a hook hands back (see `hookProvidedFunction`), or the expression itself when it is anything else. */
 export function unwrapHookCallback(expression: ts.Expression): ts.Expression {
   return hookProvidedFunction(expression) ?? unwrapExpression(expression);
