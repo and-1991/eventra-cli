@@ -86,7 +86,7 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
   if (notes.length > 0) {
     // the events match, but a scan with problems proves less than a clean one: do not call it good
     console.log(chalk.yellow(`${hasDiff ? "Drift found, and the" : "No drift, but the"} scan was not clean: ${notes.join(", ")}.`));
-    if (!strict) console.error(chalk.gray("Use --strict to fail on skipped files, syntax errors, rejected names and dynamic names."));
+    if (!strict) console.error(chalk.gray("Use --strict to fail on skipped files, syntax errors, rejected names, dynamic names and files over the size limit."));
   }
 
   if (hasDiff || strictFailure) {

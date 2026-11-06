@@ -273,7 +273,7 @@ Full project scan → updates `eventra.json`:
 - `events` — discovered event names
 - `functionWrappers` — detected wrapper functions
 
-A file that cannot be analysed (a broken `.vue`, `.svelte`, `.astro` or `.html`, an unreadable file, or one over 2 MB) is skipped, and `sync` prints one summary at the end listing each skipped file and why. While anything is skipped, events already in `eventra.json` are kept, because a missing event may simply live in a skipped file. The exit code stays `0`; `eventra sync --strict` exits `1` if any file was skipped, a file has a syntax error, an event name was rejected, or a dynamic name could not be resolved at all (see [Dynamic names](#dynamic-names)).
+A file that cannot be analysed (a broken `.vue`, `.svelte`, `.astro` or `.html`, or an unreadable file) is skipped, and `sync` prints one summary at the end listing each skipped file and why. While anything is skipped, events already in `eventra.json` are kept, because a missing event may simply live in a skipped file. The exit code stays `0`; `eventra sync --strict` exits `1` if any file was skipped, a file has a syntax error, an event name was rejected, a file is over the size limit (it is not analysed, and its events leave the catalog), or a dynamic name could not be resolved at all (see [Dynamic names](#dynamic-names)).
 
 A `.ts`/`.tsx`/`.js`/`.jsx` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`.
 
@@ -281,7 +281,7 @@ A `.ts`/`.tsx`/`.js`/`.jsx` file the TypeScript parser reports syntax errors for
 
 Compares config with the current scan (events + wrappers). Exit code `1` on drift. Files with syntax errors and rejected event names are listed in notes, as for `sync`. When files were skipped, known events that were not found are not reported as removed (they cannot be verified) and the skipped files are listed.
 
-`check` prints `All good` only when the events match **and** the scan was clean. If the events match but something was skipped, has a syntax error, was rejected or is a dynamic name it could not resolve, it prints `No drift, but the scan was not clean: ...` instead. The exit code is still `0` for that, so an existing pipeline does not start failing; `eventra check --strict` exits `1` on any of them (files over the size limit are listed but do not fail it). Use `--strict` in CI.
+`check` prints `All good` only when the events match **and** the scan was clean. If the events match but something was skipped, has a syntax error, was rejected or is a dynamic name it could not resolve, it prints `No drift, but the scan was not clean: ...` instead. The exit code is still `0` for that, so an existing pipeline does not start failing; `eventra check --strict` exits `1` on any of them, and on a file over the size limit. Use `--strict` in CI.
 
 #### Dynamic names
 
@@ -528,7 +528,7 @@ This is the full shape. A file written by `eventra init` only contains `plugins`
 
 No runtime execution. No monkey-patching.
 
-Scan time and memory grow with the project: a repository of several thousand files takes tens of seconds and a few GB of memory (the CLI raises its own memory limit, see [Monorepos](#monorepos)). A file over 2 MB (or over `sync.maxFileSize`) is ignored with a warning, listed in the closing summary, and does not fail `--strict`; raise `sync.maxFileSize` if it is your own source.
+Scan time and memory grow with the project: a repository of several thousand files takes tens of seconds and a few GB of memory (the CLI raises its own memory limit, see [Monorepos](#monorepos)). A file over 2 MB (or over `sync.maxFileSize`) is not analysed, is listed in the closing summary, and fails `--strict`, because the events in it are missing from the scan; put a generated bundle in `sync.exclude`, or raise `sync.maxFileSize` if it is your own source.
 
 ---
 

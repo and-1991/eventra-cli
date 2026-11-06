@@ -227,12 +227,12 @@ describe("describeProblems and hasStrictProblems", () => {
     expect(hasStrictProblems(problems)).toBe(false);
   });
 
-  it("fails --strict on each of skipped, syntax errors, rejected names and unresolved dynamic names, but not on ignored files", () => {
+  it("fails --strict on each of skipped, syntax errors, rejected names, unresolved dynamic names and ignored files", () => {
     expect(hasStrictProblems({ ...clean, skipped: [file] })).toBe(true);
     expect(hasStrictProblems({ ...clean, syntaxErrors: [file] })).toBe(true);
     expect(hasStrictProblems({ ...clean, rejected: [rejectedName()] })).toBe(true);
     expect(hasStrictProblems({ ...clean, dynamic: [occurrence([])] })).toBe(true);
-    expect(hasStrictProblems({ ...clean, ignored: [file] })).toBe(false);
+    expect(hasStrictProblems({ ...clean, ignored: [file] })).toBe(true);
   });
 
   it("declared dynamic events acknowledge the dynamic names, and only those", () => {

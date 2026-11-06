@@ -117,16 +117,16 @@ describe("sync", () => {
     expect(printed(log)).toContain("Found 3 events, 1 function wrapper");
   });
 
-  it("lists ignored (oversized) files without keeping known events and without failing --strict", async () => {
+  it("lists ignored (oversized) files without keeping known events, and fails --strict on them", async () => {
     state.scan!.ignored = [{ file: "/p/vendor.min.js", reason: "file is larger than 2 MB" }];
     await sync({ strict: true });
 
-    // not a skip: the stale event is pruned and strict mode stays green
+    // not a skip: the stale event is pruned, but a strict run does not call the scan complete
     expect(state.saved[0].events).toEqual(["kept.event", "new.event"]);
     expect(printed(err)).toContain("Ignored 1 file (not analysed):");
     expect(printed(err)).toContain("vendor.min.js: file is larger than 2 MB");
     expect(printed(err)).not.toContain("Skipped");
-    expect(process.exitCode).toBeUndefined();
+    expect(process.exitCode).toBe(1);
   });
 
   it("--strict exits non-zero only when something was skipped", async () => {
@@ -258,7 +258,7 @@ describe("check: honest result", () => {
     expect(printed(log)).toContain("All good");
   });
 
-  it("--strict fails on syntax errors and rejected names, and lists oversized files without failing", async () => {
+  it("--strict fails on syntax errors and rejected names, and on oversized files", async () => {
     state.scan!.syntaxErrors = [{ file: "/p/src/broken.ts", reason: "line 3: ';' expected." }];
     await check({ strict: true });
     expect(exit).toHaveBeenCalledWith(1);
@@ -268,7 +268,7 @@ describe("check: honest result", () => {
     state.scan!.ignored = [{ file: "/p/vendor.min.js", reason: "file is larger than 2 MB" }];
     await check({ strict: true });
     expect(printed(log)).toContain("1 file over the size limit");
-    expect(exit).not.toHaveBeenCalled();
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("--fix with --strict fails on dynamic names and says the scan was not clean", async () => {
@@ -345,13 +345,21 @@ describe("check", () => {
     expect(process.exitCode).toBe(1);
   });
 
-  it("an ignored (oversized) file neither hides removed events nor trips --strict", async () => {
+  it("an ignored (oversized) file does not hide removed events, and trips --strict", async () => {
     state.scan!.ignored = [{ file: "/p/vendor.min.js", reason: "file is larger than 2 MB" }];
     await check({ strict: true });
 
     expect(printed(log)).toContain("- old.event");
     expect(printed(err)).toContain("Ignored 1 file (not analysed):");
-    expect(exit).toHaveBeenCalledWith(1); // because of the drift, not because of the ignored file
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("an ignored (oversized) file fails --strict even when the events match", async () => {
+    state.scan!.ignored = [{ file: "/p/vendor.min.js", reason: "file is larger than 2 MB" }];
+    state.config!.events = ["kept.event", "new.event"];
+    await check({ strict: true });
+
+    expect(exit).toHaveBeenCalledWith(1);
   });
 
   it("--fix reports ignored files and replaces events", async () => {
@@ -360,7 +368,7 @@ describe("check", () => {
 
     expect(state.saved[0].events).toEqual(["kept.event", "new.event"]);
     expect(printed(err)).toContain("vendor.min.js");
-    expect(process.exitCode).toBeUndefined();
+    expect(process.exitCode).toBe(1);
   });
 
   it("--fix replaces events when the scan is complete", async () => {

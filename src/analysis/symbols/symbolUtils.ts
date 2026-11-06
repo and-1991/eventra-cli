@@ -162,9 +162,10 @@ export function unwrapHookCallback(expression: ts.Expression): ts.Expression {
 
 /**
  * `const capture = useCallback((n) => ..., [])` / `const capture = useMemo(() => (n) => ..., [])`: the variable a hook
- * result is kept in, when `node` is the function that hook hands back. The variable is what the function is called by.
+ * result is kept in (or the object member, `{ track: useCallback(...) }`), when `node` is the function that hook hands
+ * back. The variable or member is what the function is called by.
  */
-function hookHolder(node: ts.FunctionLikeDeclaration): ts.VariableDeclaration | undefined {
+function hookHolder(node: ts.FunctionLikeDeclaration): ts.VariableDeclaration | ts.PropertyAssignment | undefined {
   if (!isFunctionExpression(node)) {
     return undefined;
   }
@@ -187,7 +188,9 @@ function hookHolder(node: ts.FunctionLikeDeclaration): ts.VariableDeclaration | 
     }
   }
   const holder = current.parent;
-  return holder && ts.isVariableDeclaration(holder) && holder.initializer === current && ts.isIdentifier(holder.name) ? holder : undefined;
+  // `{ track: useCallback((n) => ..., []) }`: the member is what the function is called by
+  const isHolder = holder && (ts.isVariableDeclaration(holder) || ts.isPropertyAssignment(holder)) && holder.initializer === current && ts.isIdentifier(holder.name);
+  return isHolder ? holder : undefined;
 }
 
 /** An arrow/function expression that is the value of a `return`, or the concise body of an arrow, possibly in parentheses, `as` or `!`. */

@@ -97,6 +97,11 @@ function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker
   if (ts.isPropertyAssignment(declaration) && declaration.initializer && isFunctionLike(declaration.initializer)) {
     return declaration.initializer;
   }
+  // { track: useCallback((n) => ..., []) }: a member that holds the function a hook hands back
+  const providedMember = ts.isPropertyAssignment(declaration) ? hookProvidedFunction(declaration.initializer) : null;
+  if (providedMember) {
+    return providedMember;
+  }
   // `return { capture }` / `return { capture: capture }`: a hook or factory that hands back functions
   // it defined, so `analytics.capture(...)` is a call of the `capture` declared next to the return
   const target = ts.isShorthandPropertyAssignment(declaration)

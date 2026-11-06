@@ -67,6 +67,46 @@ describe("a hook that hands back the functions it defined", () => {
   });
 });
 
+describe("a hook that hands back a member holding what useCallback returned", () => {
+  const DECL = `declare function useCallback<T>(fn: T, deps: unknown[]): T;\ndeclare function useMemo<T>(fn: () => T, deps: unknown[]): T;\n`;
+  const SDK = `import { Eventra } from "@eventra_dev/eventra-sdk"; const t = new Eventra({ apiKey: "x" });\n${DECL}`;
+  const hook = `export function useTrack() { return { track: useCallback((n: string) => { t.track(n); }, []) }; }`;
+
+  it("follows `return { track: useCallback(...) }` however the result is used", async () => {
+    expect(
+      await eventsOf({
+        "hook.ts": SDK + hook,
+        "use.ts": `import { useTrack } from "./hook";
+          export function A() { const h = useTrack(); h.track("m.object"); }
+          export function B() { const { track } = useTrack(); track("m.destructured"); }
+          export function C() { useTrack().track("m.inline"); }`,
+      }),
+    ).toEqual(["m.destructured", "m.inline", "m.object"]);
+  });
+
+  it("follows it when the hook and its use are in one file, and for a member kept in a variable", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}${hook}
+          export function useOther() { const api = { track: useCallback((n: string) => { t.track(n); }, []) }; return api; }
+          export function A() { const { track } = useTrack(); track("same.file"); }
+          export function B() { const { track } = useOther(); track("same.variable"); }`,
+      }),
+    ).toEqual(["same.file", "same.variable"]);
+  });
+
+  it("does not take a member whose useCallback is given something that is not a function", async () => {
+    expect(
+      await eventsOf({
+        "a.ts": `${SDK}
+          declare const handler: (n: string) => void;
+          export function useTrack() { return { track: useCallback(handler, []) }; }
+          useTrack().track("m.not_fn");`,
+      }),
+    ).toEqual([]);
+  });
+});
+
 describe("a returned member that is not a function it defined", () => {
   it("resolves nothing for `return { track }` when `track` is only a parameter", async () => {
     expect(

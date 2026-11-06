@@ -199,14 +199,15 @@ export function describeProblems(problems: ScanProblems): string[] {
 
 /**
  * What `--strict` fails on. Dynamic names count only when nothing could be resolved for them and the config
- * has not declared `dynamicEvents`, and files
- * over the size limit are a deliberate choice, not a failure: see formatIgnored.
+ * has not declared `dynamicEvents`. Files over the size limit count too: their events are not in the scan, so a
+ * strict run must not call it complete. Exclude a generated file with `sync.exclude`, or raise `sync.maxFileSize`.
  */
 export function hasStrictProblems(problems: ScanProblems): boolean {
   return (
     problems.skipped.length > 0 ||
     problems.syntaxErrors.length > 0 ||
     written(problems.rejected).length > 0 ||
+    problems.ignored.length > 0 ||
     (!problems.dynamicDeclared && unresolvedDynamic(problems).length > 0)
   );
 }
