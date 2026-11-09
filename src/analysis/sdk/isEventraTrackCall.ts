@@ -91,13 +91,66 @@ function isEventraSymbol(symbol: ts.Symbol, checker: ts.TypeChecker, depth = 0):
   return false;
 }
 
+/** `require("@eventra_dev/eventra-sdk")`, also awaited or in parentheses: the CommonJS way to load the SDK. */
+function isRequireOfSdk(expression: ts.Expression | undefined): boolean {
+  let expr = expression;
+  while (expr && (ts.isParenthesizedExpression(expr) || ts.isAwaitExpression(expr) || ts.isNonNullExpression(expr) || ts.isAsExpression(expr))) {
+    expr = expr.expression;
+  }
+  return (
+    expr !== undefined &&
+    ts.isCallExpression(expr) &&
+    ts.isIdentifier(expr.expression) &&
+    expr.expression.text === "require" &&
+    expr.arguments.length === 1 &&
+    ts.isStringLiteralLike(expr.arguments[0]) &&
+    isEventraSdkModuleSpecifier(expr.arguments[0].text)
+  );
+}
+
+/**
+ * The binding holds the SDK's class, or the whole module, because it was taken from a `require` of the
+ * SDK: `const { Eventra } = require(sdk)`, `const Eventra = require(sdk).Eventra`, `const sdk = require(sdk)`.
+ * `wholeModule` is the last form: the binding is the module, and the class is a property of it.
+ */
+function isRequiredFromSdk(symbol: ts.Symbol, wholeModule: boolean): boolean {
+  // a symbol that came from a binding always has declarations
+  return symbol.getDeclarations()!.some((decl) => {
+    if (ts.isBindingElement(decl)) {
+      const owner = ts.findAncestor(decl, ts.isVariableDeclaration);
+      return !wholeModule && decl.name !== undefined && (decl.propertyName ?? decl.name).getText() === "Eventra" && isRequireOfSdk(owner?.initializer);
+    }
+    // `import sdk = require("@eventra_dev/eventra-sdk")`
+    if (ts.isImportEqualsDeclaration(decl)) {
+      const reference = decl.moduleReference;
+      return (
+        wholeModule &&
+        ts.isExternalModuleReference(reference) &&
+        ts.isStringLiteralLike(reference.expression) &&
+        isEventraSdkModuleSpecifier(reference.expression.text)
+      );
+    }
+    if (!ts.isVariableDeclaration(decl) || !decl.initializer) return false;
+    if (wholeModule) return isRequireOfSdk(decl.initializer);
+    const init = decl.initializer;
+    return ts.isPropertyAccessExpression(init) && init.name.text === "Eventra" && isRequireOfSdk(init.expression);
+  });
+}
+
 function isEventraNewExpression(node: ts.NewExpression, checker: ts.TypeChecker): boolean {
   const expr = node.expression;
+  // `new sdk.Eventra(...)` / `new (require("...")).Eventra(...)`
+  if (ts.isPropertyAccessExpression(expr) && expr.name.text === "Eventra") {
+    const target = ts.isParenthesizedExpression(expr.expression) ? expr.expression.expression : expr.expression;
+    if (isRequireOfSdk(target)) return true;
+    const owner = ts.isIdentifier(target) ? checker.getSymbolAtLocation(target) : undefined;
+    if (owner && isRequiredFromSdk(owner, true)) return true;
+  }
   if (!ts.isIdentifier(expr)) {
     return false;
   }
   const symbol = checker.getSymbolAtLocation(expr);
-  if (symbol && isEventraSymbol(symbol, checker)) {
+  if (symbol && (isEventraSymbol(symbol, checker) || isRequiredFromSdk(symbol, false))) {
     return true;
   }
   // `const { Eventra } = await import("@eventra_dev/eventra-sdk")`: the binding is not an import, but
@@ -279,12 +332,23 @@ function isEventraReceiverExpression(
   return false;
 }
 
-/** Only `instance.track(...)` where instance is Eventra from @eventra_dev/eventra-sdk. */
+/** `instance.track.call(thisArg, "x")`: the name is the second argument, after the `this` the call passes on. */
+function isTrackDotCall(expr: ts.Expression): expr is ts.PropertyAccessExpression {
+  return ts.isPropertyAccessExpression(expr) && expr.name.text === "call" && isTrackCallee(expr.expression);
+}
+
+/** Which argument of an SDK `track` call holds the event name: 1 for `track.call(this, name)`, else 0. */
+export function trackNameArgument(call: ts.CallExpression): number {
+  return isTrackDotCall(call.expression) ? 1 : 0;
+}
+
+/** Only `instance.track(...)` (or `instance.track.call(...)`) where instance is Eventra from @eventra_dev/eventra-sdk. */
 export function isEventraSdkTrackCall(
   call: ts.CallExpression,
   checker: ts.TypeChecker,
 ): boolean {
-  const expr = call.expression;
+  // `tracker.track.call(tracker, "x")` is a call of `track` through `.call`
+  const expr = isTrackDotCall(call.expression) ? call.expression.expression : call.expression;
   if (!isTrackCallee(expr)) {
     return false;
   }

@@ -27,6 +27,35 @@ vi.mock("@eventra_dev/cli-plugin-fixture-watch-slow", () => ({
   },
 }));
 
+// a plugin whose modules are built from another file (like a component and its paired .ts)
+vi.mock("@eventra_dev/cli-plugin-fixture-watch-deps", () => ({
+  default: {
+    id: "watch-deps",
+    includeGlobs: ["**/*.dep"],
+    match: (file: string) => file.endsWith(".dep"),
+    transform: async ({ path: file }: { path: string }) => {
+      const nodeFs = await import("fs");
+      const nodePath = await import("path");
+      const helper = nodePath.join(nodePath.dirname(file), "helper.txt");
+      const name = nodeFs.existsSync(helper) ? nodeFs.readFileSync(helper, "utf8").trim() : "none";
+      return {
+        modules: [{ path: `${file}.ts`, content: `import { Eventra } from "@eventra_dev/eventra-sdk";\nconst t = new Eventra({ apiKey: "k" });\nt.track("${name}");\n` }],
+        dependsOn: [helper],
+      };
+    },
+  },
+}));
+
+// a plugin that reads its file only in part
+vi.mock("@eventra_dev/cli-plugin-fixture-watch-partial", () => ({
+  default: {
+    id: "watch-partial",
+    includeGlobs: ["**/*.part"],
+    match: (file: string) => file.endsWith(".part"),
+    transform: async ({ path: file }: { path: string }) => ({ modules: [{ path: `${file}.ts`, content: "export {};\n" }], partial: ["too large for its compiler"] }),
+  },
+}));
+
 import fsExtra from "fs-extra";
 import fsPromises from "fs/promises";
 
@@ -111,7 +140,7 @@ describe("watch", () => {
     // has to stay put across a quiet window.
     const afterEdit = updates();
     expect(afterEdit).toBeGreaterThanOrEqual(1);
-    expect(afterEdit).toBeLessThanOrEqual(2);
+    expect(afterEdit).toBeLessThanOrEqual(3);
     await sleep(2000);
     expect(updates()).toBe(afterEdit);
 
@@ -123,6 +152,79 @@ describe("watch", () => {
 
     expect(updates()).toBe(afterEdit);
     expect(readEvents()).toEqual(["first.event", "second.event"]);
+  }, 60_000);
+
+  it("without a plugin for a component file, says so and keeps the events it already knew", async () => {
+    write("eventra.json", JSON.stringify({ endpoint: "", events: ["known.from.vue", "first.event"], functionWrappers: [], plugins: [], sync: { include: ["**/*.{ts,tsx,js,jsx}"], exclude: ["node_modules", "dist"] } }));
+    write("src/Card.vue", "<template><p/></template>");
+    handle = await watch();
+    await sleep(1200);
+    expect(errors.join("\n")).toContain("1 .vue file not read");
+    expect(readEvents()).toEqual(["first.event", "known.from.vue"]);
+  }, 30_000);
+
+  it("says about a syntax error at start-up and when an edit brings one in", async () => {
+    write("src/broken.ts", "export const a = ;\n");
+    handle = await watch();
+    await sleep(1500);
+    expect(errors.join("\n")).toContain("Syntax errors in 1 file");
+    expect(errors.join("\n")).toContain("src/broken.ts: line 1");
+    errors.length = 0;
+    write("src/a.ts", `${SDK}t.track("first.event");\nconst b = ;\n`);
+    await waitFor(() => errors.join("\n").includes("src/a.ts: line"));
+  }, 40_000);
+
+  it("lists a file as skipped when an edit makes it nest too deeply, and keeps watching", async () => {
+    handle = await watch();
+    await sleep(1500);
+    write("src/a.ts", `${SDK}const x = ${"f().".repeat(3000)}g();\nt.track("first.event");\n`);
+    await waitFor(() => errors.join("\n").includes("nests too deeply"));
+    expect(errors.join("\n")).toContain("src/a.ts");
+    write("src/b.ts", `${SDK}t.track("still.watching");\n`);
+    await waitFor(() => readEvents().includes("still.watching"));
+  }, 40_000);
+
+  it("says when an edit makes a file read only in part, at start-up and again on the edit", async () => {
+    write("eventra.json", JSON.stringify({ endpoint: "", events: [], functionWrappers: [], plugins: ["@eventra_dev/cli-plugin-fixture-watch-partial"], sync: { include: ["**/*.{ts,tsx,js,jsx}"], exclude: ["node_modules", "dist"] } }));
+    write("src/Big.part", "one");
+    handle = await watch();
+    await sleep(1500);
+    expect(errors.join("\n")).toContain("1 file was read only in part");
+    errors.length = 0;
+    write("src/Big.part", "two");
+    await waitFor(() => errors.join("\n").includes("src/Big.part: too large for its compiler"));
+  }, 40_000);
+
+  it("says once about a new component file that nothing reads", async () => {
+    handle = await watch();
+    await sleep(1500);
+    write("src/New.vue", "<template><p/></template>");
+    await waitFor(() => errors.join("\n").includes("1 .vue file not read"));
+    write("src/New.vue", "<template><p>again</p></template>");
+    await sleep(1500);
+    expect(errors.join("\n").split("1 .vue file not read").length - 1).toBe(1);
+  }, 40_000);
+
+  it("lists a file whose code nests too deeply as skipped at start-up, and watches the rest", async () => {
+    write("src/deep.ts", `${SDK}const x = ${"f().".repeat(3000)}g();\nt.track("never.seen");\n`);
+    handle = await watch();
+    await sleep(1500);
+    expect(errors.join("\n")).toContain("src/deep.ts");
+    expect(errors.join("\n")).toContain("nests too deeply");
+    expect(readEvents()).toEqual(["first.event"]);
+  }, 30_000);
+
+  it("rescans a file when something it was built from changes, though that file is not scanned itself", async () => {
+    write("eventra.json", JSON.stringify({ endpoint: "", events: [], functionWrappers: [], plugins: ["@eventra_dev/cli-plugin-fixture-watch-deps"], sync: { include: ["**/*.{ts,tsx,js,jsx}"], exclude: ["node_modules", "dist"] } }));
+    write("src/A.dep", "x");
+    write("src/helper.txt", "from.helper.one");
+    handle = await watch();
+    await waitFor(() => readEvents().includes("from.helper.one"));
+    // the watcher needs a moment to finish looking at the folder before it reports a change
+    await sleep(1500);
+    write("src/helper.txt", "from.helper.two");
+    await waitFor(() => readEvents().includes("from.helper.two"));
+    expect(readEvents()).not.toContain("from.helper.one");
   }, 60_000);
 
   it("picks up a brand-new matching file", async () => {

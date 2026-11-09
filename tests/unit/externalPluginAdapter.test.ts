@@ -66,7 +66,10 @@ describe("registerExternalCliPlugin", () => {
     await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
     expect(registry.getPluginNotes()).toEqual([]);
 
-    notes = "not a list";
+    notes = "one note on its own";
+    await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
+    expect(registry.getPluginNotes().map((note) => note.reason)).toEqual(["one note on its own"]);
+    notes = { not: "text" };
     await registry.preprocessFile({ fileName: "/app/a.html", content: "" });
     expect(registry.getPluginNotes()).toEqual([]);
   });

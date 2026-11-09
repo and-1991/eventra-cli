@@ -127,7 +127,7 @@ describe("preset tables", () => {
     expect(plain).toEqual({
       posthog: ["posthog.capture"],
       segment: ["analytics.track"],
-      amplitude: ["amplitude.track", "amplitude.logEvent"],
+      amplitude: ["amplitude.track", "amplitude.logEvent", "amplitude.getInstance().logEvent"],
       ga4: ["gtag", "sendGAEvent", "useTrackEvent", "$gtag.event"],
     });
   });

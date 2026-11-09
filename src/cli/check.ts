@@ -4,7 +4,7 @@ import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { requireConfig, saveConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
 import { buildConfigFromScan } from "../core/scanResults";
-import { describeProblems, hasStrictProblems, plural, reportIgnored, reportPluginNotes, reportRejectedNames, reportSkipped, reportSyntaxErrors } from "../core/skipped";
+import { describeProblems, hasStrictProblems, plural, reportIgnored, reportPluginNotes, reportRejectedNames, reportNothingScanned, reportPartial, reportSkipped, reportSyntaxErrors, reportUnreadComponents } from "../core/skipped";
 
 function diffSets(found: Set<string>, known: Set<string>): { added: string[]; removed: string[] } {
   return {
@@ -17,19 +17,23 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
   const config = await requireConfig();
   if (!config) return;
   console.log(chalk.blue("Checking events and function wrappers..."));
-  const { engine, plugins, skipped, ignored, syntaxErrors, notes: pluginNotes } = await scanProject(config);
+  const { engine, plugins, skipped, ignored, syntaxErrors, unread, partial, files, notes: pluginNotes } = await scanProject(config);
+  const nothingScanned = files.length === 0;
   const rejected = plugins.attributeToSources(engine.getAllRejectedNames());
   const dynamic = engine.getAllDynamicOccurrences();
   const reportNotes = (): void => {
+    if (nothingScanned) reportNothingScanned(config.sync.include);
+    reportUnreadComponents(unread);
+    reportPartial(partial);
     reportSyntaxErrors(syntaxErrors);
     reportRejectedNames(rejected);
     reportPluginNotes(pluginNotes);
   };
   await plugins.runDynamicEventReporters(dynamic);
-  const problems = { skipped, ignored, syntaxErrors, rejected, dynamic, dynamicDeclared: normalizeDynamicEvents(config.dynamicEvents).length > 0 };
+  const problems = { skipped, ignored, syntaxErrors, rejected, dynamic, unread, partial, nothingScanned, dynamicDeclared: normalizeDynamicEvents(config.dynamicEvents).length > 0 };
   const notes = describeProblems(problems);
   const strictFailure = strict && hasStrictProblems(problems);
-  const partial = skipped.length > 0;
+  const incomplete = skipped.length > 0 || unread.length > 0 || partial.length > 0 || nothingScanned;
 
   const foundEvents = new Set(engine.getAllEvents());
   const knownEvents = new Set(config.events ?? []);
@@ -41,14 +45,14 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
 
   // With skipped files the scan is incomplete: a known event that was not found
   // may simply live in a skipped file, so it is not reported as removed.
-  const unverified = partial ? eventDiff.removed.length + wrapperDiff.removed.length : 0;
-  if (partial) {
+  const unverified = incomplete ? eventDiff.removed.length + wrapperDiff.removed.length : 0;
+  if (incomplete) {
     eventDiff.removed = [];
     wrapperDiff.removed = [];
   }
 
   if (fix) {
-    await saveConfig(buildConfigFromScan(config, engine, { preserveKnown: partial }));
+    await saveConfig(buildConfigFromScan(config, engine, { preserveKnown: incomplete }));
     console.log(chalk.green("Synced"));
     reportSkipped(skipped);
     reportIgnored(ignored);
@@ -79,7 +83,7 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
   reportNotes();
   if (unverified > 0) {
     console.error(
-      chalk.gray(`${plural(unverified, "known entry", "known entries")} could not be verified because files were skipped.`),
+      chalk.gray(`${plural(unverified, "known entry", "known entries")} could not be verified because files were skipped or not read.`),
     );
   }
 

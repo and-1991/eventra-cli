@@ -24,6 +24,10 @@ export interface ExternalCliPlugin {
     readonly modules: readonly { readonly path: string; readonly content: string }[];
     /** Things to tell the user about the file that are not errors. Optional: a plugin without any need not return it. */
     readonly notes?: readonly string[];
+    /** Why the file was read only in part (its template was too large, say). Unlike a note this makes the scan not clean. */
+    readonly partial?: readonly string[];
+    /** Other files this one's modules were built from (a component's paired `.ts`): `watch` rescans it when one changes. */
+    readonly dependsOn?: readonly string[];
   }>;
 }
 
@@ -89,7 +93,8 @@ function mapTransformModules(
   modules: unknown,
 ): VirtualFile[] {
   if (!Array.isArray(modules)) {
-    throw new Error(`Plugin "${plugin.id}" returned invalid transform result for ${fileName}`);
+    // no file name here: the skipped-file list names it, and repeating it only gets cut out of the message
+    throw new Error(`Plugin "${plugin.id}" returned an invalid transform result (a list of modules was expected)`);
   }
   return modules.map((module, index) => {
     if (!module || typeof module !== "object") {
@@ -118,7 +123,7 @@ export function registerExternalCliPlugin(
     name: plugin.id,
     test: (fileName) => plugin.match(fileName),
     process: async ({ fileName, content }) => {
-      let result: { modules: unknown; notes?: unknown };
+      let result: { modules: unknown; notes?: unknown; partial?: unknown; dependsOn?: unknown };
       try {
         result = await plugin.transform({ path: fileName, source: content });
       } catch (err) {
@@ -126,7 +131,12 @@ export function registerExternalCliPlugin(
         throw new Error(`Plugin "${plugin.id}" failed to transform ${fileName}: ${message}`);
       }
       // what the plugin has to say about the file, kept for the report after the scan; anything but text is ignored
-      registry.setPluginNotes(fileName, Array.isArray(result?.notes) ? result.notes.filter((note): note is string => typeof note === "string" && note.trim() !== "") : []);
+      // `notes`, `partial` and `dependsOn` are lists; one text on its own counts as a list of one
+      const texts = (value: unknown): string[] =>
+        (Array.isArray(value) ? value : typeof value === "string" ? [value] : []).filter((item): item is string => typeof item === "string" && item.trim() !== "");
+      registry.setPluginNotes(fileName, texts(result?.notes));
+      registry.setPartial(fileName, texts(result?.partial));
+      registry.setDependencies(fileName, texts(result?.dependsOn));
       return mapTransformModules(plugin, fileName, result?.modules);
     },
   });

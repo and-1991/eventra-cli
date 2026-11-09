@@ -402,3 +402,46 @@ describe("code a plugin generated from a template", () => {
     }
   });
 });
+
+// an Angular component with an inline template: the module is the component file itself (same path), with the
+// template's calls spliced in after the class code, at lines that are not in the file
+const inlineShaped: ExternalCliPlugin = {
+  id: "angular-inline",
+  includeGlobs: ["**/*.cmp.ts"],
+  staticSinks: [{ id: "angular-template-event", callee: NG_CALLEE, eventNameArgumentIndex: 0 }],
+  match: (p) => p.endsWith(".cmp.ts"),
+  transform: async ({ path: p, source }) => ({
+    modules: [
+      {
+        path: p,
+        content: [source.trimEnd(), "", `declare function ${NG_CALLEE}(name: string): void;`, "function __t() {", `  ${NG_CALLEE}(Math.random());`, "}", ""].join("\n"),
+      },
+    ],
+  }),
+};
+
+describe("dynamic names of an inline template", () => {
+  it("are shown as 'template of <file>', not at a line the file does not have, under the real name of the callee", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dyn-inline-"));
+    try {
+      const { printed, seen } = await report(root, { "src/A.cmp.ts": "export const a = 1;\n" }, [inlineShaped]);
+      expect(printed.some((line: string) => line.startsWith("~ template of src/A.cmp.ts: event="))).toBe(true);
+      expect(printed.join("\n")).not.toContain("__eventra_");
+      expect(seen[0].inTemplate).toBe(true);
+      expect(seen[0].fileName.endsWith("A.cmp.ts")).toBe(true);
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("the code of the component itself keeps its own line", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "dyn-inline-"));
+    try {
+      const source = `import { Eventra } from "@eventra_dev/eventra-sdk";\nconst s = new Eventra({ apiKey: "k" });\nexport const f = (n: string) => s.track(n);\n`;
+      const { printed } = await report(root, { "src/B.cmp.ts": source }, [inlineShaped]);
+      expect(printed).toContain("~ src/B.cmp.ts:3 s.track(...)");
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  });
+});

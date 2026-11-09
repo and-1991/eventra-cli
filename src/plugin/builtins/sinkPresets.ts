@@ -99,6 +99,8 @@ export const SINK_PRESETS: Readonly<Record<string, readonly ResolvedSinkRule[]>>
     // amplitude.track("x") / amplitude.track({ event_type: "x" }) / the legacy amplitude.logEvent("x").
     { callee: "amplitude.track", nameArg: 0, nameProperty: "event_type" },
     { callee: "amplitude.logEvent", nameArg: 0, nameProperty: "event_type" },
+    // the legacy global `amplitude.getInstance().logEvent("x")`, with no import to vet
+    { callee: "amplitude.getInstance().logEvent", nameArg: 0, nameProperty: "event_type" },
     // `amplitude.getInstance().logEvent("x")`, `const client = Amplitude.createInstance()`, any variable name.
     { callee: "track", nameArg: 0, nameProperty: "event_type", modules: modulesOf("amplitude") },
     { callee: "logEvent", nameArg: 0, nameProperty: "event_type", modules: modulesOf("amplitude") },

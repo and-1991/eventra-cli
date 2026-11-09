@@ -139,7 +139,7 @@ describe("init: prompts, defaults and output", () => {
       functionWrappers: [],
       plugins: [],
       sync: {
-        include: ["**/*.{ts,tsx,js,jsx}"],
+        include: ["**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"],
         exclude: [...INIT_EXCLUDE],
       },
     });
@@ -214,7 +214,7 @@ describe("init: prompts, defaults and output", () => {
         events: [],
         functionWrappers: [],
         sync: {
-          include: ["**/*.{ts,tsx,js,jsx}"],
+          include: ["**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"],
           exclude: [...INIT_EXCLUDE],
         },
       },
@@ -270,6 +270,39 @@ describe("init: framework plugins", () => {
     expect(out).toContain(`npm install -D ${plugin}`);
     expect(out).toContain(`add "${plugin}" to "plugins" in eventra.json`);
     expect(out).not.toContain("plugins: @eventra_dev");
+  });
+
+  it.each([
+    ["nuxt", "@eventra_dev/cli-plugin-vue"],
+    ["@sveltejs/kit", "@eventra_dev/cli-plugin-svelte"],
+    ["@angular/cli", "@eventra_dev/cli-plugin-angular"],
+  ])("finds the plugin for a project that lists only %s", async (dependency, plugin) => {
+    writePackage({ devDependencies: { [dependency]: "1" } });
+    await init({ yes: true, isPluginInstalled: () => true });
+    expect(readConfig().plugins).toEqual([plugin]);
+  });
+
+  it("lists a plugin once when two dependencies ask for it (vue and nuxt)", async () => {
+    writePackage({ dependencies: { vue: "3", nuxt: "3" } });
+    await init({ yes: true, isPluginInstalled: () => true });
+    expect(readConfig().plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+  });
+
+  it("does not write the Angular plugin on a Node that cannot load it, and says why", async () => {
+    writePackage({ dependencies: { "@angular/core": "1", vue: "1" } });
+    await init({ yes: true, isPluginInstalled: () => true, nodeVersion: "18.18.0" });
+
+    expect(readConfig().plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+    const out = log.mock.calls.flat().join("\n");
+    expect(out).toContain("@eventra_dev/cli-plugin-angular was not added");
+    expect(out).toContain("18.18.0");
+  });
+
+  it("writes the Angular plugin on a Node that can load it", async () => {
+    writePackage({ dependencies: { "@angular/core": "1" } });
+    await init({ yes: true, isPluginInstalled: () => true, nodeVersion: "22.12.0" });
+    expect(readConfig().plugins).toEqual(["@eventra_dev/cli-plugin-angular"]);
+    expect(log.mock.calls.flat().join("\n")).not.toContain("was not added");
   });
 
   it("splits several frameworks into installed and missing", async () => {
@@ -350,3 +383,14 @@ describe("init: existing eventra.json and --yes", () => {
   });
 });
 
+
+
+import { nodeCanLoadAngularPlugin } from "../../src/cli/init";
+
+describe("nodeCanLoadAngularPlugin", () => {
+  it("follows the Node versions that can require() an ES module", () => {
+    expect(["18.18.0", "20.11.0", "20.19.0", "21.7.3", "22.11.0", "22.12.0", "23.0.0", "24.11.1"].map(nodeCanLoadAngularPlugin)).toEqual([
+      false, false, true, false, false, true, true, true,
+    ]);
+  });
+});

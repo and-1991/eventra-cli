@@ -21,10 +21,12 @@ export function scanSource(
   const trackCalls: TrackCall[] = [];
   const functions: ts.FunctionLikeDeclaration[] = [];
 
-  function visit(node: ts.Node): void {
+  // Walked with an explicit stack: a long `"a" + "a" + ...` chain nests thousands of levels deep, and a
+  // recursive walk overflowed the call stack and aborted the whole scan.
+  function inspect(node: ts.Node): boolean {
     // imports/exports are irrelevant
     if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
-      return;
+      return false;
     }
     // function collection
     if (ts.isFunctionDeclaration(node) || ts.isArrowFunction(node) || ts.isFunctionExpression(node) || ts.isMethodDeclaration(node)) {
@@ -81,10 +83,20 @@ export function scanSource(
     if (jsxEventAttribute) {
       trackCalls.push(jsxEventAttribute);
     }
-    ts.forEachChild(node, visit);
+    return true;
   }
 
-  visit(source);
+  const stack: ts.Node[] = [source];
+  while (stack.length > 0) {
+    const node = stack.pop()!;
+    if (!inspect(node)) continue;
+    const children: ts.Node[] = [];
+    ts.forEachChild(node, (child) => {
+      children.push(child);
+    });
+    // children are visited in source order, as the recursive walk did
+    for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
+  }
 
   // semantic wrapper analysis
   for (const fn of functions) {

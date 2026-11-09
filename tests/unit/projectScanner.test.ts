@@ -17,6 +17,18 @@ vi.mock("@eventra_dev/cli-plugin-fixture-broken", () => ({
   },
 }));
 
+// a plugin that writes the user's script and a generated template region into one virtual module
+vi.mock("@eventra_dev/cli-plugin-fixture-syntax", () => ({
+  default: {
+    id: "syntax",
+    includeGlobs: ["**/*.syn"],
+    match: (file: string) => file.endsWith(".syn"),
+    transform: async ({ path: file, source }: { path: string; source: string }) => ({
+      modules: [{ path: `${file}.ts`, content: source }],
+    }),
+  },
+}));
+
 import { scanProject } from "../../src/core/projectScanner";
 import { normalizeConfig } from "../../src/config/config";
 import type { EventraConfig } from "../../src/types";
@@ -146,5 +158,107 @@ describe("scanProject: syntax errors and rejected names", () => {
     expect(syntaxErrors).toEqual([]);
     expect(engine.getAllEvents()).toEqual(["fine.one"]);
     expect(engine.getAllRejectedNames().map((r) => r.name)).toEqual(["not\tfine"]);
+  });
+});
+
+describe("scanProject: component files no plugin reads", () => {
+  it("reports .vue, .svelte and .astro files that nothing handles, grouped per extension with the plugin to install", async () => {
+    write("src/a.ts", SDK_IMPORT + `t.track("a.event");\n`);
+    write("src/One.vue", "<template><p/></template>");
+    write("src/deep/Two.vue", "<template><p/></template>");
+    write("src/Card.svelte", "<p/>");
+    write("src/Page.astro", "---\n---\n<p/>");
+    write("node_modules/dep/X.vue", "<template/>");
+    const { unread } = await scanProject(config());
+    expect(unread.map((group) => [group.extension, group.plugin, group.files.map((file) => path.relative(cwd, file))])).toEqual([
+      ["vue", "@eventra_dev/cli-plugin-vue", ["src/One.vue", "src/deep/Two.vue"]],
+      ["svelte", "@eventra_dev/cli-plugin-svelte", ["src/Card.svelte"]],
+      ["astro", "@eventra_dev/cli-plugin-astro", ["src/Page.astro"]],
+    ]);
+  });
+
+  it("reports nothing for a project with no component files", async () => {
+    write("src/a.ts", SDK_IMPORT + `t.track("a.event");\n`);
+    expect((await scanProject(config())).unread).toEqual([]);
+  });
+
+  it("looks wherever a plugin would have looked: sync.include does not narrow it, sync.exclude does", async () => {
+    write("src/One.vue", "<template/>");
+    write("other/Two.vue", "<template/>");
+    write("node_modules/dep/Three.vue", "<template/>");
+    const { unread } = await scanProject(config({ sync: { include: ["src/**/*.ts"], exclude: ["node_modules"] } }));
+    expect(unread[0].files.map((file) => path.relative(cwd, file))).toEqual(["other/Two.vue", "src/One.vue"]);
+  });
+
+  it("a component file named in sync.include with no plugin is not parsed as TypeScript", async () => {
+    write("src/One.vue", "<template><p @click=\"go()\">hi</p></template>\n<script>export default { }</script>");
+    const { syntaxErrors, skipped, unread } = await scanProject(config({ sync: { include: ["src/**/*.{ts,vue}"], exclude: ["node_modules"] } }));
+    expect(syntaxErrors).toEqual([]);
+    expect(skipped).toEqual([]);
+    expect(unread).toHaveLength(1);
+  });
+
+  it("does not report a file a loaded plugin handles", async () => {
+    write("src/Ok.broken", "x");
+    write("src/One.vue", "<template/>");
+    const { unread, skipped } = await scanProject(config({ plugins: ["@eventra_dev/cli-plugin-fixture-broken"] }));
+    expect(skipped).toHaveLength(1);
+    expect(unread[0].extension).toBe("vue");
+    expect(unread).toHaveLength(1);
+  });
+});
+
+vi.mock("@eventra_dev/cli-plugin-fixture-partial", () => ({
+  default: {
+    id: "partial",
+    includeGlobs: ["**/*.part"],
+    match: (file: string) => file.endsWith(".part"),
+    transform: async ({ path: file }: { path: string }) => ({ modules: [{ path: `${file}.ts`, content: "export {};\n" }], partial: ["the template was too large"] }),
+  },
+}));
+
+describe("scanProject: a file a plugin read only in part", () => {
+  it("is listed with the plugin's reason", async () => {
+    write("src/Big.part", "x");
+    const { partial } = await scanProject(config({ plugins: ["@eventra_dev/cli-plugin-fixture-partial"] }));
+    expect(partial.map((p) => [path.relative(cwd, p.file), p.reason])).toEqual([["src/Big.part", "the template was too large"]]);
+  });
+
+  it("is not listed when there is none", async () => {
+    write("src/a.ts", SDK_IMPORT + `t.track("a.event");\n`);
+    expect((await scanProject(config())).partial).toEqual([]);
+  });
+});
+
+describe("scanProject: syntax errors in a plugin's component files", () => {
+  const withPlugin = () => config({ plugins: ["@eventra_dev/cli-plugin-fixture-syntax"] });
+
+  it("reports a syntax error in the code the user wrote, as for a plain file", async () => {
+    write("src/A.syn", `const a = ;\nexport {};\n`);
+    const { syntaxErrors } = await scanProject(withPlugin());
+    expect(syntaxErrors).toHaveLength(1);
+    expect(path.relative(cwd, syntaxErrors[0].file)).toBe("src/A.syn");
+    expect(syntaxErrors[0].reason).toMatch(/^line 1:/);
+  });
+
+  it("says nothing about a broken line inside the generated template region", async () => {
+    write("src/B.syn", `export {};\n// --- vue template (auto-generated) ---\nconst a = ;\n// --- end template ---\n`);
+    expect((await scanProject(withPlugin())).syntaxErrors).toEqual([]);
+  });
+
+  it("a component file in include is left to the unread list also when some other plugin is loaded", async () => {
+    write("src/A.vue", "<template><p/></template>");
+    write("src/A.syn", "export const a = 1;\n");
+    const { skipped, syntaxErrors, unread } = await scanProject(
+      config({ plugins: ["@eventra_dev/cli-plugin-fixture-syntax"], sync: { include: ["src/**/*.{ts,vue}"], exclude: ["node_modules"] } }),
+    );
+    expect(skipped).toEqual([]);
+    expect(syntaxErrors).toEqual([]);
+    expect(unread.map((group) => group.extension)).toEqual(["vue"]);
+  });
+
+  it("reports nothing for a file that is fine", async () => {
+    write("src/C.syn", `export const a = 1;\n`);
+    expect((await scanProject(withPlugin())).syntaxErrors).toEqual([]);
   });
 });

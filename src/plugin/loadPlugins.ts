@@ -71,8 +71,9 @@ async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promi
     // the String(err) fallback can't be reached without a plugin module
     // whose top-level code does a bare `throw "non-error value"`, which
     // we won't fabricate as a persistent test fixture. Defensive-only.
+    // Node appends a "Require stack" of its own paths to a missing module: the first line says it all
     /* v8 ignore next */
-    const message = err instanceof Error ? err.message : String(err);
+    const message = (err instanceof Error ? err.message : String(err)).split("\n")[0].replace(/\.$/, "");
     throw new Error(`Failed to load plugin "${trimmed}": ${message}.${pluginLoadHint(trimmed)}`);
   }
 
@@ -97,9 +98,22 @@ export function createBuiltinPluginRegistry(): PluginRegistry {
 export async function createPluginRegistry(config: EventraConfig): Promise<PluginRegistry> {
   const registry = createBuiltinPluginRegistry();
   registerConfiguredSinks(registry, config.sinks);
-  for (const spec of config.plugins ?? []) {
+  const raw: unknown = config.plugins;
+  const entries: unknown[] = Array.isArray(raw) ? raw : typeof raw === "string" ? [raw] : [];
+  if (raw !== undefined && raw !== null && !Array.isArray(raw) && typeof raw !== "string") {
+    console.warn(`Eventra: ignoring "plugins": it must be a list of package names, for example ["@eventra_dev/cli-plugin-vue"].`);
+  }
+  const listed = new Set<string>();
+  for (const spec of entries) {
+    if (typeof spec !== "string") {
+      console.warn(`Eventra: skipping plugin entry ${JSON.stringify(spec)}: a plugin is a package name (a string).`);
+      continue;
+    }
     const trimmed = spec.trim();
     if (!trimmed) continue;
+    // the same plugin listed twice is loaded once
+    if (listed.has(trimmed)) continue;
+    listed.add(trimmed);
 
     if (!isTrustedPluginSpecifier(trimmed)) {
       console.warn(

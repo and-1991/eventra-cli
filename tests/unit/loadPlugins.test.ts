@@ -291,3 +291,41 @@ describe("createPluginRegistry: resolves plugins from the user's project", () =>
   });
 });
 
+
+describe("createPluginRegistry: entries that are not usable", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  const cfg = (plugins: unknown): EventraConfig => ({ ...normalizeConfig({}), plugins: plugins as string[] });
+
+  it("loads a plugin listed twice once, instead of failing with 'already registered'", async () => {
+    const registry = await createPluginRegistry(cfg(["@eventra_dev/cli-plugin-fixture-valid", "@eventra_dev/cli-plugin-fixture-valid"]));
+    expect(registry.getIncludePatterns()).toContain("**/*.fixture");
+  });
+
+  it("ignores blank entries without a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await createPluginRegistry(cfg(["", "   "]));
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("skips an entry that is not a string with a warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await createPluginRegistry(cfg([null, 42, { a: 1 }]));
+    expect(warn).toHaveBeenCalledTimes(3);
+    expect(String(warn.mock.calls[0][0])).toContain("a package name");
+  });
+
+  it("reads a lone string as one plugin, not one per character", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const registry = await createPluginRegistry(cfg("@eventra_dev/cli-plugin-fixture-valid"));
+    expect(registry.getIncludePatterns()).toContain("**/*.fixture");
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("ignores a plugins value of another type with one warning", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    await createPluginRegistry(cfg({ a: 1 }));
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(String(warn.mock.calls[0][0])).toContain("must be a list");
+  });
+});

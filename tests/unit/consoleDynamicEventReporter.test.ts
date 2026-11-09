@@ -249,3 +249,20 @@ describe("values taken from the scanned code", () => {
     expect(text).toContain('event="a\\u202eb"');
   });
 });
+
+describe("the name of what is called", () => {
+  const printed = () => log.mock.calls.flat().join("\n").replace(/\u001b\[[0-9;]*m/g, "");
+
+  it("a component used in an Angular template is shown as <Component>, not as the plugin's wiring", async () => {
+    await report(occurrence({ calleeText: "__eventraChild0.prototype.ButtonComponent", inTemplateCode: true }));
+    await report(occurrence({ calleeText: "__eventraChild5_0.prototype.KAlias" }));
+    expect(printed()).toContain("template of src/a.ts: <ButtonComponent>(...)");
+    expect(printed()).toContain("src/a.ts:10 <KAlias>(...)");
+    expect(printed()).not.toContain("__eventraChild");
+  });
+
+  it("an ordinary callee is shown as it is written", async () => {
+    await report(occurrence({ calleeText: "sdk.track" }));
+    expect(printed()).toContain("src/a.ts:10 sdk.track(...)");
+  });
+});

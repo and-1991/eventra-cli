@@ -1,3 +1,4 @@
+import { isAngularInput } from "../symbols/angularInput";
 import {objectPropertyValue} from "../shared/objectLiteral";
 import ts from "typescript";
 
@@ -152,6 +153,11 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
   if (targetExpression.kind === ts.SyntaxKind.ThisKeyword) {
     const enclosingClass = findEnclosingClass(node);
     if (enclosingClass) {
+      // an Angular input (a field, a setter, a signal): what it is set to in the class is a default, and the parent's
+      // template sets the real value, so there is nothing to read here
+      if (enclosingClass.members.some((member) => member.name !== undefined && ts.isIdentifier(member.name) && member.name.text === propertyName && isAngularInput(member))) {
+        return empty();
+      }
       for (const member of enclosingClass.members) {
         if (ts.isPropertyDeclaration(member) && member.initializer && getMemberName(member) === propertyName) {
           return resolveNodeValue(member.initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);

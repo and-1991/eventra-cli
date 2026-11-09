@@ -85,7 +85,15 @@ async function attemptDelivery(
     });
 
     if (res.ok) {
-      const data = (await res.json()) as SendResponse;
+      // a 2xx is delivered whatever the body is: a 204, an empty body or a proxy's text must not turn into a
+      // "failure" that retries and posts the same payload again
+      let data: SendResponse = {};
+      try {
+        const parsed: unknown = await res.json();
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) data = parsed as SendResponse;
+      } catch {
+        /* not JSON: still delivered */
+      }
       return { ok: true, data };
     }
 
@@ -105,8 +113,16 @@ async function attemptDelivery(
 }
 
 // the API answers a rejected unknown property with {"error":{"code":"VALIDATION_ERROR",...}}
+/** `fetch failed` says nothing; the reason (ECONNREFUSED, ENOTFOUND, a certificate) is on its `cause`. */
+export function describeFetchError(err: Error): string {
+  const cause = (err as Error & { cause?: { code?: unknown; message?: unknown } }).cause;
+  const reason = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : undefined;
+  return reason && !err.message.includes(reason) ? `${err.message} (${reason})` : err.message;
+}
+
 function isValidationError(body: string | undefined): boolean {
-  return typeof body === "string" && body.includes("VALIDATION_ERROR");
+  // either the API's own code, or the wording of a validator that refuses a property it does not know
+  return typeof body === "string" && (body.includes("VALIDATION_ERROR") || /should not exist|unknown property|additional propert/i.test(body));
 }
 
 type SendResponse = {
@@ -117,7 +133,7 @@ type SendResponse = {
 export async function send(opts: { trustEndpoint?: boolean } = {}) {
   const config = await loadConfig();
   if (!config) {
-    console.log(chalk.red("eventra.json not found. Run 'eventra init'"));
+    console.error(chalk.red("eventra.json not found. Run 'eventra init'"));
     process.exitCode = 1;
     return;
   }
@@ -143,13 +159,13 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     const trusted = await getTrustedEndpoint();
     if (endpoint !== trusted) {
       if (!opts.trustEndpoint) {
-        console.log(chalk.red(`Endpoint "${endpoint}" from eventra.json is not locally approved.`));
-        console.log(
+        console.error(chalk.red(`Endpoint "${endpoint}" from eventra.json is not locally approved.`));
+        console.error(
           chalk.gray(
             "If this is expected (e.g. a self-hosted ingest URL), approve it once with:",
           ),
         );
-        console.log(chalk.gray("  eventra send --trust-endpoint"));
+        console.error(chalk.gray("  eventra send --trust-endpoint"));
         process.exitCode = 1;
         return;
       }
@@ -162,7 +178,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   // ask for the key only when interactive — never hang a CI/non-TTY run on a prompt
   if (!apiKey) {
     if (!process.stdin.isTTY) {
-      console.log(
+      console.error(
         chalk.red(
           "API key required. Set the EVENTRA_API_KEY environment variable (recommended for CI) or run 'eventra init'.",
         ),
@@ -189,23 +205,32 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   }
   // no events
   if (!config.events?.length) {
-    console.log(chalk.yellow("No events found. Run 'eventra sync'"));
+    console.error(chalk.yellow("No events found. Run 'eventra sync'"));
     process.exitCode = 1;
     return;
   }
   if (!apiKey) {
-    console.log(chalk.red("API key required"));
+    console.error(chalk.red("API key required"));
+    process.exitCode = 1;
+    return;
+  }
+  // a key pasted with a space or a line break around it is the key: trimmed, not refused
+  apiKey = apiKey.trim();
+  // a key goes into an HTTP header: anything but printable ASCII makes fetch refuse it, which used to be retried
+  // four times as a "network error"
+  if (/[^\x21-\x7e]/.test(apiKey)) {
+    console.error(chalk.red("The API key has characters that cannot be sent (spaces, accents, other alphabets). Copy it again from the dashboard."));
     process.exitCode = 1;
     return;
   }
   if (!endpoint) {
-    console.log(chalk.red("Endpoint not configured"));
+    console.error(chalk.red("Endpoint not configured"));
     process.exitCode = 1;
     return;
   }
   const endpointCheck = checkEndpoint(endpoint);
   if (endpointCheck === "invalid") {
-    console.log(chalk.red(`Endpoint "${endpoint}" is not a valid http(s) URL.`));
+    console.error(chalk.red(`Endpoint "${endpoint}" is not a valid http(s) URL.`));
     process.exitCode = 1;
     return;
   }
@@ -271,8 +296,8 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
 
       if (!outcome.retryable) {
         // permanent failure — surface immediately
-        console.log(chalk.red(`Request failed (${outcome.status})`));
-        if (outcome.body) console.log(chalk.gray(outcome.body));
+        console.error(chalk.red(`Request failed (${outcome.status})`));
+        if (outcome.body) console.error(chalk.gray(outcome.body));
         if (outcome.status === 403 && outcome.body?.includes("not valid for this endpoint")) {
           console.log(
             chalk.yellow(
@@ -299,8 +324,8 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
       // a redirect is an answer, not a glitch: it is never followed (the API key
       // would go along), and retrying would only get the same answer
       if (isRedirectError(err)) {
-        console.log(chalk.red(`The endpoint "${endpoint}" answered with a redirect. send does not follow redirects, because they could forward your API key.`));
-        console.log(chalk.gray("Use the final URL as the endpoint (for example the https address, or the one without or with the trailing slash)."));
+        console.error(chalk.red(`The endpoint "${endpoint}" answered with a redirect. send does not follow redirects, because they could forward your API key.`));
+        console.error(chalk.gray("Use the final URL as the endpoint (for example the https address, or the one without or with the trailing slash)."));
         process.exitCode = 1;
         return;
       }
@@ -320,12 +345,14 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   }
 
   if (!data) {
-    console.log(chalk.red("All retries exhausted"));
+    console.error(chalk.red("All retries exhausted"));
     if (lastFailure?.status) {
-      console.log(chalk.gray(`Last status: ${lastFailure.status}`));
-      if (lastFailure.body) console.log(chalk.gray(lastFailure.body));
+      console.error(chalk.gray(`Last status: ${lastFailure.status}`));
+      if (lastFailure.body) console.error(chalk.gray(lastFailure.body));
     } else if (lastFailure?.error instanceof Error) {
-      console.log(chalk.gray(lastFailure.error.message));
+      // an aborted request is the 10 second limit, not a mystery
+      const aborted = lastFailure.error.name === "AbortError" || lastFailure.error.name === "TimeoutError";
+      console.error(chalk.gray(aborted ? `The server did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds.` : describeFetchError(lastFailure.error)));
     }
     process.exitCode = 1;
     return;

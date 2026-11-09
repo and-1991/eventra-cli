@@ -40,7 +40,7 @@ describe("normalizeConfig", () => {
     expect(out.events).toEqual([]);
     expect(out.functionWrappers).toEqual([]);
     expect(out.plugins).toEqual([]);
-    expect(out.sync.include).toEqual(["**/*.{ts,tsx,js,jsx}"]);
+    expect(out.sync.include).toEqual(["**/*.{ts,tsx,js,jsx,mjs,cjs,mts,cts}"]);
     // unchanged: a config without `sync.exclude` must scan what it always scanned
     expect(out.sync.exclude).toEqual(["node_modules", "dist", ".next", ".git"]);
   });
@@ -52,6 +52,9 @@ describe("normalizeConfig", () => {
       ".next",
       ".git",
       "coverage",
+      ".svelte-kit",
+      ".astro",
+      ".angular",
       "**/*.{test,spec}.{ts,tsx,js,jsx}",
       "**/__tests__/**",
       "**/__mocks__/**",
@@ -158,6 +161,43 @@ describe("resolveApiKey / saveLocalApiKey", () => {
 
     const gitignore = await fs.readFile(path.join(tmp, ".gitignore"), "utf8");
     expect(gitignore.split(/\r?\n/)).toContain(LOCAL_CONFIG_NAME);
+  });
+
+  it.skipIf(process.platform === "win32")("creates the key file readable by its owner only, and tightens one written with a wider mode", async () => {
+    await saveLocalApiKey("local-key");
+    expect((await fs.stat(path.join(tmp, LOCAL_CONFIG_NAME))).mode & 0o777).toBe(0o600);
+    await fs.chmod(path.join(tmp, LOCAL_CONFIG_NAME), 0o664);
+    await saveLocalApiKey("another-key");
+    expect((await fs.stat(path.join(tmp, LOCAL_CONFIG_NAME))).mode & 0o777).toBe(0o600);
+  });
+
+  it("says when eventra.local.json is not valid JSON, and carries on without it", async () => {
+    await fs.writeFile(path.join(tmp, LOCAL_CONFIG_NAME), "{ half written");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(await resolveApiKey(normalizeConfig({}))).toBeUndefined();
+      expect(String(warn.mock.calls[0][0])).toContain(`${LOCAL_CONFIG_NAME} is not valid JSON`);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("still saves the key when the file system refuses to change the mode", async () => {
+    const chmod = vi.spyOn(fs, "chmod").mockRejectedValue(new Error("EPERM") as never);
+    try {
+      await saveLocalApiKey("local-key");
+      expect((await fs.readJSON(path.join(tmp, LOCAL_CONFIG_NAME))).apiKey).toBe("local-key");
+    } finally {
+      chmod.mockRestore();
+    }
+  });
+
+  it("does not add a second line when .gitignore already ignores the file with a leading slash or a glob", async () => {
+    for (const existing of [`/${LOCAL_CONFIG_NAME}\n`, `**/${LOCAL_CONFIG_NAME}\n`]) {
+      await fs.writeFile(path.join(tmp, ".gitignore"), existing);
+      await saveLocalApiKey("local-key");
+      expect(await fs.readFile(path.join(tmp, ".gitignore"), "utf8")).toBe(existing);
+    }
   });
 
   it("appends to an existing .gitignore without duplicating the entry", async () => {
@@ -321,5 +361,67 @@ describe("loadConfig", () => {
     const config = await loadConfig();
     expect(config?.apiKey).toBe("k");
     expect(config?.events).toEqual(["a", "b"]);
+  });
+});
+
+describe("normalizeConfig: what a rewrite must not destroy", () => {
+  it("keeps keys the CLI does not know, at the top and inside sync", () => {
+    const out = normalizeConfig({ $schema: "https://example.com/s.json", team: "growth", sync: { include: ["src/**/*.ts"], exclude: [], note: "mine" } } as never) as unknown as Record<string, unknown>;
+    expect(out.$schema).toBe("https://example.com/s.json");
+    expect(out.team).toBe("growth");
+    expect((out.sync as Record<string, unknown>).note).toBe("mine");
+  });
+
+  it("reads a lone string as a list of one for plugins, include and exclude", () => {
+    const out = normalizeConfig({ plugins: "@eventra_dev/cli-plugin-vue", sync: { include: "src/**/*.ts", exclude: "dist" } } as never);
+    expect(out.plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+    expect(out.sync.include).toEqual(["src/**/*.ts"]);
+    expect(out.sync.exclude).toEqual(["dist"]);
+  });
+
+  it("drops non-strings and repeats from plugins", () => {
+    const out = normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-vue", " @eventra_dev/cli-plugin-vue ", 5, null, ""] } as never);
+    expect(out.plugins).toEqual(["@eventra_dev/cli-plugin-vue"]);
+  });
+
+  it("says once that a plugin entry that is not a string is dropped", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      normalizeConfig({ plugins: [{ only: "this-test" }, "@eventra_dev/cli-plugin-vue"] } as never);
+      normalizeConfig({ plugins: [{ only: "this-test" }] } as never);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(String(warn.mock.calls[0][0])).toContain("a package name");
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("reads Windows-style separators in globs as /", () => {
+    const out = normalizeConfig({ sync: { include: ["src\\**\\*.ts", "app\\(group)\\*.ts"], exclude: ["dist\\out"] } });
+    expect(out.sync.include).toEqual(["src/**/*.ts", "app/(group)/*.ts"]);
+    expect(out.sync.exclude).toEqual(["dist/out"]);
+  });
+});
+
+describe("loadConfig: a file that is not an object", () => {
+  let tmp: string;
+  const original = process.cwd();
+  beforeEach(() => {
+    tmp = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-cfg-"));
+    process.chdir(tmp);
+  });
+  afterEach(() => {
+    process.chdir(original);
+    fs.removeSync(tmp);
+  });
+
+  it("returns null for a list, so it is not overwritten with defaults, and says what is wrong", async () => {
+    fs.writeFileSync(path.join(tmp, CONFIG_NAME), "[]");
+    expect(await loadConfig()).toBeNull();
+    expect(await describeConfigProblem()).toMatch(/must contain a JSON object.*a list/);
+    fs.writeFileSync(path.join(tmp, CONFIG_NAME), "null");
+    expect(await describeConfigProblem()).toMatch(/not null/);
+    fs.writeFileSync(path.join(tmp, CONFIG_NAME), "5");
+    expect(await describeConfigProblem()).toMatch(/not a number/);
   });
 });

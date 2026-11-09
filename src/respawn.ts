@@ -15,7 +15,7 @@ const MAX_HEAP_MB = 8192;
 const SHARE_OF_MEMORY = 0.5;
 
 /** Signals a parent passes on, so stopping it stops the child too instead of leaving it running. */
-const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
+const FORWARDED_SIGNALS: readonly NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP", "SIGQUIT"];
 
 /**
  * The old-space limit (MB) worth starting with, or `undefined` to carry on as is: Node's default
@@ -50,7 +50,9 @@ export function usableMemory(total: number, constrained: number | undefined): nu
 
 function runChild(command: string, args: readonly string[], env: NodeJS.ProcessEnv): Promise<number> {
   return new Promise((resolve) => {
-    const child = spawn(command, [...args], { stdio: "inherit", env });
+    // the fourth channel is a pipe the child watches: when this process is killed (SIGKILL cannot be forwarded
+    // or caught) it closes, and the child stops instead of running on with nobody to read its output
+    const child = spawn(command, [...args], { stdio: ["inherit", "inherit", "inherit", "ipc"], env });
     const forwarders = FORWARDED_SIGNALS.map((signal) => {
       const forward = () => child.kill(signal);
       process.on(signal, forward);
@@ -62,8 +64,26 @@ function runChild(command: string, args: readonly string[], env: NodeJS.ProcessE
     };
     // a child that could not start at all (`error`) counts as a failed run, like one killed by a signal
     child.on("error", () => done(1));
-    child.on("exit", (code) => done(code ?? 1));
+    // a child ended by a signal has no code: report it the way a shell does (128 + the signal number)
+    child.on("exit", (code, signal) => done(code ?? 128 + os.constants.signals[signal!]));
   });
+}
+
+interface ParentWatch {
+  on(event: "disconnect", listener: () => void): unknown;
+  send?: unknown;
+  channel?: { unref(): void };
+}
+
+/**
+ * In the process started by `respawnWithMoreHeap`: stop when the process that started it is gone (killed, or its
+ * terminal closed), which closes the channel between them. Does nothing when there is no such channel.
+ */
+export function exitWhenParentDies(proc: ParentWatch = process as unknown as ParentWatch, exit: (code: number) => void = (code) => process.exit(code)): void {
+  if (!proc.send) return;
+  proc.on("disconnect", () => exit(143));
+  // the channel must not be what keeps the process alive once its work is done
+  proc.channel?.unref();
 }
 
 export const defaultRespawnDeps = (): RespawnDeps => ({
@@ -86,7 +106,8 @@ export async function respawnWithMoreHeap(deps: RespawnDeps = defaultRespawnDeps
   if (deps.env[RESPAWN_ENV]) return false;
   // a second process costs startup time, so only a command that scans a project is worth it
   if (!SCANNING_COMMANDS.has(deps.argv[2] ?? "")) return false;
-  const explicit = [deps.env.NODE_OPTIONS ?? "", ...deps.execArgv].some((part) => part.includes("max-old-space-size"));
+  // Node accepts the underscore spelling too (`--max_old_space_size`)
+  const explicit = [deps.env.NODE_OPTIONS ?? "", ...deps.execArgv].some((part) => /max[-_]old[-_]space[-_]size/.test(part));
   if (explicit) return false;
   const heapMb = wantedHeapMb(deps.availableMemoryBytes, deps.heapLimitBytes);
   if (heapMb === undefined) return false;

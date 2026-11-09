@@ -4,7 +4,7 @@ import inquirer from "inquirer";
 import {createRequire} from "module";
 import path from "path";
 
-import {CONFIG_NAME, INIT_EXCLUDE, saveConfig, saveLocalApiKey} from "../config/config";
+import {CONFIG_NAME, INIT_EXCLUDE, SOURCE_GLOB, saveConfig, saveLocalApiKey} from "../config/config";
 import {detectSinkPresets} from "../plugin/builtins/sinkPresets";
 import {EventraConfig, SinkRuleConfig} from "../types";
 import {collectDependencyNames} from "./projectDependencies";
@@ -39,7 +39,22 @@ const FRAMEWORK_PLUGINS: Readonly<Record<string, string>> = {
   svelte: "@eventra_dev/cli-plugin-svelte",
   astro: "@eventra_dev/cli-plugin-astro",
   "@angular/core": "@eventra_dev/cli-plugin-angular",
+  // projects that list only the meta-framework or the CLI, not the base package
+  nuxt: "@eventra_dev/cli-plugin-vue",
+  "@sveltejs/kit": "@eventra_dev/cli-plugin-svelte",
+  "@angular/cli": "@eventra_dev/cli-plugin-angular",
 };
+
+const ANGULAR_PLUGIN = "@eventra_dev/cli-plugin-angular";
+
+/** Node 20.19+, 22.12+ and 23+ can `require()` the ES module the Angular compiler is. */
+export function nodeCanLoadAngularPlugin(version: string): boolean {
+  const [major, minor] = version.split(".").map((part) => Number.parseInt(part, 10));
+  if (major >= 23) return true;
+  if (major === 22) return minor >= 12;
+  if (major === 20) return minor >= 19;
+  return false;
+}
 
 /** True when the plugin package can be loaded from the project, which is where `sync` will look for it. */
 export function isInstalled(plugin: string): boolean {
@@ -60,9 +75,10 @@ function detectPlugins(
   dependencyNames: ReadonlySet<string>,
   installed: (plugin: string) => boolean,
 ): { enabled: string[]; missing: string[] } {
-  const found = Object.entries(FRAMEWORK_PLUGINS)
+  // two dependencies can ask for the same plugin (`vue` and `nuxt`): it is listed once
+  const found = [...new Set(Object.entries(FRAMEWORK_PLUGINS)
     .filter(([dependency]) => dependencyNames.has(dependency))
-    .map(([, plugin]) => plugin);
+    .map(([, plugin]) => plugin))];
   return { enabled: found.filter(installed), missing: found.filter((plugin) => !installed(plugin)) };
 }
 
@@ -73,7 +89,7 @@ const DEFAULT_ENDPOINT = "https://api.eventra.dev/api/v1/cli/events";
  * and an existing eventra.json is never overwritten.
  */
 export async function init(
-  {yes = false, isPluginInstalled = isInstalled}: { yes?: boolean; isPluginInstalled?: (plugin: string) => boolean } = {},
+  {yes = false, isPluginInstalled = isInstalled, nodeVersion = process.versions.node}: { yes?: boolean; isPluginInstalled?: (plugin: string) => boolean; nodeVersion?: string } = {},
 ): Promise<void> {
   if (await fs.pathExists(path.join(process.cwd(), CONFIG_NAME))) {
     if (yes) {
@@ -111,7 +127,11 @@ export async function init(
     ]);
   const dependencyNames = await collectDependencyNames(process.cwd());
   const sinks = await chooseSinks(yes, dependencyNames);
-  const {enabled: plugins, missing: missingPlugins} = detectPlugins(dependencyNames, isPluginInstalled);
+  const detected = detectPlugins(dependencyNames, isPluginInstalled);
+  const missingPlugins = detected.missing;
+  // the Angular plugin cannot be loaded on an older Node: writing it would make every later `sync` fail
+  const angularUnsupported = detected.enabled.includes(ANGULAR_PLUGIN) && !nodeCanLoadAngularPlugin(nodeVersion);
+  const plugins = angularUnsupported ? detected.enabled.filter((plugin) => plugin !== ANGULAR_PLUGIN) : detected.enabled;
   console.log("");
   console.log(chalk.gray("Eventra detects @eventra_dev/eventra-sdk usage:"));
   console.log(chalk.gray('• tracker.track("event.name")'));
@@ -127,7 +147,7 @@ export async function init(
     ...(sinks.length > 0 ? {sinks} : {}),
     sync: {
       include: [
-        "**/*.{ts,tsx,js,jsx}",
+        SOURCE_GLOB,
       ],
       exclude: [...INIT_EXCLUDE],
     },
@@ -136,6 +156,9 @@ export async function init(
   console.log(chalk.green("eventra.json created"),);
   if (plugins.length > 0) {
     console.log(chalk.green(`plugins: ${plugins.join(", ")}`));
+  }
+  if (angularUnsupported) {
+    console.log(chalk.yellow(`${ANGULAR_PLUGIN} was not added: it needs Node.js 20.19+ or 22.12+ (this is ${nodeVersion}). Angular templates are not read until you upgrade Node and add it to "plugins" in ${CONFIG_NAME}.`));
   }
   if (missingPlugins.length > 0) {
     console.log(chalk.yellow(`Component files are not read yet: npm install -D ${missingPlugins.join(" ")}`));

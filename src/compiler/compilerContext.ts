@@ -14,6 +14,32 @@ interface CachedSourceFile {
   readonly sourceFile: ts.SourceFile;
 }
 
+const TS_EXTENDED_CONFIG_NOT_FOUND = 5083;
+const warnedExtends = new Set<string>();
+
+/**
+ * A tsconfig.json that extends a file that does not exist (SvelteKit's `.svelte-kit/tsconfig.json` and Nuxt's
+ * `.nuxt/tsconfig.json` are generated, so a fresh checkout does not have them) loses every alias that file
+ * defines, and calls that go through them are not followed: say so instead of leaving a quietly smaller catalog.
+ */
+function warnMissingExtends(configPath: string, errors: readonly ts.Diagnostic[]): void {
+  for (const error of errors) {
+    if (error.code !== TS_EXTENDED_CONFIG_NOT_FOUND) continue;
+    // TS words it as a sentence already ("File '...' not found."): no second full stop below
+    const message = ts.flattenDiagnosticMessageText(error.messageText, " ").replace(/\.$/, "");
+    // the options are read again on every rebuild (watch): say it once per file
+    const key = `${configPath}\0${message}`;
+    if (warnedExtends.has(key)) continue;
+    warnedExtends.add(key);
+    const hint = /svelte-kit/.test(message)
+      ? ' Run "npx svelte-kit sync" first.'
+      : /\.nuxt/.test(message)
+        ? ' Run "npx nuxt prepare" first.'
+        : "";
+    console.warn(`Eventra: ${path.relative(process.cwd(), configPath)} extends a file that does not exist, so its aliases are not resolved and events behind them may be missed: ${message}.${hint}`);
+  }
+}
+
 export class CompilerContext {
   private readonly registry = new DocumentRegistry();
   // Parsed files survive a program rebuild: a flush changes a handful of files,
@@ -61,13 +87,14 @@ export class CompilerContext {
     if (configPath) {
       const config = ts.readConfigFile(configPath, ts.sys.readFile);
       if (config.error) {
-        throw new Error(ts.flattenDiagnosticMessageText(config.error.messageText, "\n"));
+        throw new Error(`${path.relative(process.cwd(), configPath)}: ${ts.flattenDiagnosticMessageText(config.error.messageText, "\n")}`);
       }
       const parsed = ts.parseJsonConfigFileContent(
         config.config,
         ts.sys,
         path.dirname(configPath),
       );
+      warnMissingExtends(configPath, parsed.errors);
       compilerOptions = {
         ...compilerOptions,
         ...parsed.options,
@@ -126,6 +153,8 @@ export class CompilerContext {
     const config = ts.readConfigFile(configPath, ts.sys.readFile);
     if (config.error) return undefined;
     const parsed = ts.parseJsonConfigFileContent(config.config, ts.sys, dir);
+    // a package of a monorepo has its own tsconfig.json (SvelteKit's, Nuxt's): the same missing-file warning
+    warnMissingExtends(configPath, parsed.errors);
     return {
       ...this.defaultOptions,
       ...parsed.options,

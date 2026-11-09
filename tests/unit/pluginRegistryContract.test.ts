@@ -486,7 +486,7 @@ describe("PluginRegistry attribution: generated template region", () => {
     expect(results.map((o) => o.inTemplateCode)).toEqual([true, undefined]);
   });
 
-  it("the first start marker wins when there are several", async () => {
+  it("every start marker begins a region, also one that is never ended (a file with several components)", async () => {
     const registry = await registryWith("/proj/App.vue", {
       "/proj/App.vue.ts": module("code", REGION_START, "gen", REGION_END, REGION_START, "gen"),
     });
@@ -495,7 +495,7 @@ describe("PluginRegistry attribution: generated template region", () => {
       occurrence({ line: 1, calleeText: "sdk.track" }),
       occurrence({ line: 5, calleeText: "sdk.track" }),
     );
-    expect(results.map((o) => o.inTemplateCode)).toEqual([undefined, undefined]);
+    expect(results.map((o) => o.inTemplateCode)).toEqual([undefined, true]);
   });
 
   it("accepts indented markers and any lowercase framework name", async () => {

@@ -12,16 +12,34 @@ const GLOB_CHARS = /[*?[\]{}()!]/;
 export function expandExcludePatterns(exclude: readonly string[]): string[] {
   const out = new Set<string>();
   for (const entry of exclude) {
-    const pattern = entry.trim();
-    if (!pattern) continue;
-    if (pattern.includes("/") || GLOB_CHARS.test(pattern)) {
-      out.add(pattern);
-    } else {
-      out.add(`**/${pattern}`);
-      out.add(`**/${pattern}/**`);
-    }
+    for (const pattern of excludeGlobs(entry)) out.add(pattern);
   }
   return [...out];
+}
+
+/**
+ * `node_modules` is never scanned, whatever `sync.exclude` lists: a custom list used to drop the default one, and
+ * the scan then crawled every installed package for minutes.
+ */
+export function withDefaultExcludes(exclude: readonly string[]): string[] {
+  return ["node_modules", ...exclude];
+}
+
+/**
+ * The globs one `sync.exclude` entry stands for. `dist` and `dist/` are the folder at any depth, `/dist` and `./dist`
+ * the one at the project root, and anything with a `/` inside or a glob character is written as the user wrote it
+ * (a trailing `/` only says "folder").
+ */
+export function excludeGlobs(entry: string): string[] {
+  let pattern = entry.trim();
+  // `/dist` and `./dist` both name the folder at the project root
+  const anchored = pattern.startsWith("/") || pattern.startsWith("./");
+  pattern = pattern.replace(/^\.\//, "").replace(/^\/+/, "").replace(/\/+$/, "");
+  if (!pattern) return [];
+  if (anchored || pattern.includes("/") || GLOB_CHARS.test(pattern)) {
+    return anchored && !GLOB_CHARS.test(pattern) ? [pattern, `${pattern}/**`] : [pattern];
+  }
+  return [`**/${pattern}`, `**/${pattern}/**`];
 }
 
 // fast-glob runs with dot:false: `*`, `**` and `?` never match a path segment
@@ -110,13 +128,7 @@ export function createFileFilter(
     .filter((p) => p.startsWith("!"))
     .map((p) => globToRegExp(p.slice(1)));
 
-  const excludeRes = exclude
-    .map((p) => p.trim())
-    .filter(Boolean)
-    .map((p) => {
-      const globbed = p.includes("/") || GLOB_CHARS.test(p) ? p : `**/${p}`;
-      return globToRegExp(globbed.replace(/\/+$/, ""));
-    });
+  const excludeRes = exclude.flatMap(excludeGlobs).map((glob) => globToRegExp(glob));
 
   const relative = (absPath: string): string => toPosix(path.relative(cwd, absPath));
 

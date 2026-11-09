@@ -1,7 +1,7 @@
 import chokidar from "chokidar";
 import chalk from "chalk";
 import fs from "fs/promises";
-import fg from "fast-glob";
+import { listFiles } from "../core/listFiles";
 import path from "path";
 
 import { CONFIG_NAME, LOCAL_CONFIG_NAME, requireConfig } from "../config/config";
@@ -9,18 +9,24 @@ import { EVENTRA_SDK_SHIM } from "../analysis/sdk/eventraSdk";
 import { EventraEngine } from "../core/EventraEngine";
 import { persistScanResults } from "../core/scanResults";
 import { createPluginRegistry } from "../plugin/loadPlugins";
-import { createFileFilter, expandExcludePatterns } from "../core/scanFilters";
+import { createFileFilter, expandExcludePatterns, withDefaultExcludes } from "../core/scanFilters";
 import {
   type SkippedFile,
   errorMessage,
   plural,
   reportIgnored,
   reportRejectedNames,
+  reportSyntaxErrors,
   reportSkipped,
+  reportPartial,
+  reportUnreadComponents,
   skippedFrom,
+  type UnreadComponents,
 } from "../core/skipped";
+import { findUnreadComponents, syntaxErrorOf, unreadComponentFor } from "../core/projectScanner";
 import { fileLimit, isOversized, oversizedReason } from "../core/fileLimits";
 import { getVirtualFile } from "../filesystem/getVirtualFile";
+import { MAX_AST_DEPTH, TOO_DEEP_REASON, processFile } from "../filesystem/processFile";
 
 const SDK_TYPES_FILE = "__eventra_sdk_types__.d.ts";
 
@@ -58,7 +64,7 @@ export async function watch(): Promise<WatchHandle | undefined> {
   // The same rules as the initial scan (and as `sync`): plain exclude names match
   // at any depth, and a changed file is only handled when it matches `include`.
   // The config files are written by this process, so they must never trigger a run.
-  const filter = createFileFilter(include, config.sync.exclude, process.cwd(), [
+  const filter = createFileFilter(include, withDefaultExcludes(config.sync.exclude), process.cwd(), [
     CONFIG_NAME,
     LOCAL_CONFIG_NAME,
   ]);
@@ -72,17 +78,17 @@ export async function watch(): Promise<WatchHandle | undefined> {
   // what eventra.json holds now: "keep the known events" while a file is broken
   // must mean the events this process saved last, not the ones at startup
   let saved = config;
+  // component files no plugin reads: like skipped files, they mean the scan is partial, so known events stay
+  let unread: UnreadComponents[] = [];
   const persist = async (): Promise<void> => {
-    saved = await persistScanResults(saved, engine, { preserveKnown: skippedNow.size > 0 });
+    saved = await persistScanResults(saved, engine, { preserveKnown: skippedNow.size > 0 || unread.length > 0 || plugins.getPartialFiles().length > 0 });
   };
   const signature = (): string => JSON.stringify([engine.getAllEvents(), engine.getAllFunctionWrappers()]);
 
-  const files = await fg(include, {
-    ignore: expandExcludePatterns(config.sync.exclude),
-    absolute: true,
-  });
+  const files = await listFiles(include, expandExcludePatterns(withDefaultExcludes(config.sync.exclude)));
 
   const ignoredInitial: SkippedFile[] = [];
+  const syntaxErrorsInitial: SkippedFile[] = [];
   engine.beginPreload();
   await engine.preloadFile(SDK_TYPES_FILE, EVENTRA_SDK_SHIM);
   for (const file of files) {
@@ -96,6 +102,16 @@ export async function watch(): Promise<WatchHandle | undefined> {
       }
       sourceFiles.add(abs);
       const virtualFiles = await plugins.preprocessFile({ fileName: abs, content: raw });
+      const parsedFiles = await Promise.all(virtualFiles.map((virtualFile) => processFile(virtualFile.fileName, virtualFile.content)));
+      // code nested beyond what the TypeScript binder can walk would abort the whole start-up: skip it, say why
+      if (parsedFiles.some((parsed) => parsed.depth > MAX_AST_DEPTH)) {
+        skippedNow.set(abs, { file: abs, reason: TOO_DEEP_REASON });
+        continue;
+      }
+      virtualFiles.forEach((virtualFile, index) => {
+        const syntaxError = syntaxErrorOf(abs, virtualFile.fileName, parsedFiles[index], plugins);
+        if (syntaxError) syntaxErrorsInitial.push(syntaxError);
+      });
 
       for (const virtualFile of virtualFiles) {
         const scanPath = normalize(virtualFile.fileName);
@@ -110,6 +126,10 @@ export async function watch(): Promise<WatchHandle | undefined> {
   engine.endPreload();
   reportSkipped([...skippedNow.values()]);
   reportIgnored(ignoredInitial);
+  reportSyntaxErrors(syntaxErrorsInitial);
+  unread = await findUnreadComponents(config, plugins);
+  reportUnreadComponents(unread);
+  reportPartial(plugins.getPartialFiles());
 
   await engine.runFullAnalysis(
     [SDK_TYPES_FILE, ...trackedFiles].map((f) => getVirtualFile(f)),
@@ -132,6 +152,7 @@ export async function watch(): Promise<WatchHandle | undefined> {
   // about. Project files that live outside the root are added below.
   const watcher = chokidar.watch(process.cwd(), {
     ignoreInitial: true,
+    followSymlinks: false,
     ignored: isExcludedPath,
   });
 
@@ -181,6 +202,7 @@ export async function watch(): Promise<WatchHandle | undefined> {
     let touchedSource = false;
     const skippedThisRun: SkippedFile[] = [];
     const ignoredThisRun: SkippedFile[] = [];
+    const syntaxErrorsThisRun: SkippedFile[] = [];
 
     // imported files outside `include` that changed, appeared or vanished: one rebuild for all of them
     const external = batch.filter((file) => !isSource(file));
@@ -207,6 +229,17 @@ export async function watch(): Promise<WatchHandle | undefined> {
         const virtualFiles = await plugins.preprocessFile({ fileName: file, content: raw });
         sourceFiles.add(file);
         skippedNow.delete(file);
+        const parsedFiles = await Promise.all(virtualFiles.map((virtualFile) => processFile(virtualFile.fileName, virtualFile.content)));
+        if (parsedFiles.some((parsed) => parsed.depth > MAX_AST_DEPTH)) {
+          const skip = { file, reason: TOO_DEEP_REASON };
+          skippedNow.set(file, skip);
+          skippedThisRun.push(skip);
+          continue;
+        }
+        virtualFiles.forEach((virtualFile, index) => {
+          const syntaxError = syntaxErrorOf(file, virtualFile.fileName, parsedFiles[index], plugins);
+          if (syntaxError) syntaxErrorsThisRun.push(syntaxError);
+        });
 
         for (const virtualFile of virtualFiles) {
           const scanPath = normalize(virtualFile.fileName);
@@ -227,6 +260,9 @@ export async function watch(): Promise<WatchHandle | undefined> {
 
     reportSkipped(skippedThisRun);
     reportIgnored(ignoredThisRun);
+    reportSyntaxErrors(syntaxErrorsThisRun);
+    // a file that is now read only in part says so when it becomes so, not only at start-up
+    reportPartial(plugins.getPartialFiles().filter((partial) => batch.some((changed) => normalize(changed) === normalize(partial.file))));
     syncOutsideDeps();
 
     // a batch of imported-only files that changed nothing about the result is not worth a write or a log line
@@ -249,10 +285,23 @@ export async function watch(): Promise<WatchHandle | undefined> {
     });
   };
 
+  const unreadSaid = new Set<string>();
   const schedule = (file: string): void => {
     const abs = normalize(file);
-    if (!shouldHandle(abs)) return;
-    queue.set(abs, true);
+    // a component file nothing reads (a new .vue with no plugin loaded): it is never scanned, so say so once
+    if (!unreadSaid.has(abs) && !filter.isExcluded(abs)) {
+      const unreadGroup = unreadComponentFor(abs, plugins);
+      if (unreadGroup) {
+        unreadSaid.add(abs);
+        reportUnreadComponents([unreadGroup]);
+      }
+    }
+    // a file a plugin built another file's modules from (a component's paired .ts, a `<script src>`): that
+    // file is stale now, whether or not this one is scanned itself
+    const dependents = plugins.dependentsOf(abs).filter((dependent) => dependent !== abs);
+    for (const dependent of dependents) queue.set(dependent, true);
+    if (shouldHandle(abs)) queue.set(abs, true);
+    else if (dependents.length === 0) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => enqueue(run), 200);
   };

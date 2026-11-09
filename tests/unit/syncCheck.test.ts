@@ -10,6 +10,9 @@ const state = vi.hoisted(() => ({
     syntaxErrors?: Array<{ file: string; reason: string }>;
     rejected?: Array<Record<string, unknown>>;
     notes?: Array<{ file: string; reason: string }>;
+    unread?: Array<{ extension: string; plugin: string; files: string[] }>;
+    files?: string[];
+    partial?: Array<{ file: string; reason: string }>;
     dynamic?: Array<Record<string, unknown>>;
   },
   saved: [] as Array<Record<string, unknown>>,
@@ -45,7 +48,9 @@ vi.mock("../../src/core/projectScanner", () => ({
     ignored: state.scan!.ignored ?? [],
     syntaxErrors: state.scan!.syntaxErrors ?? [],
     notes: state.scan!.notes ?? [],
-    files: [],
+    unread: state.scan!.unread ?? [],
+    partial: state.scan!.partial ?? [],
+    files: state.scan!.files ?? ["/p/src/a.ts"],
     results: new Map(),
   }),
 }));
@@ -83,6 +88,105 @@ afterEach(() => {
 });
 
 const printed = (spy: ReturnType<typeof vi.spyOn>) => spy.mock.calls.map((c) => String(c[0])).join("\n");
+
+const UNREAD = [{ extension: "vue", plugin: "@eventra_dev/cli-plugin-vue", files: ["/p/A.vue", "/p/B.vue"] }];
+
+describe("component files no plugin reads", () => {
+  it("sync keeps the known events instead of replacing them with the reduced list, says what is missing and how to fix it", async () => {
+    state.scan!.unread = UNREAD;
+    await sync();
+    expect(state.saved[0].events).toEqual(["kept.event", "new.event", "old.event"]);
+    const out = printed(err);
+    expect(out).toContain("2 .vue files not read");
+    expect(out).toContain("npm install -D @eventra_dev/cli-plugin-vue");
+    expect(out).toContain("2 component files not read (no plugin)");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("sync --strict fails", async () => {
+    state.scan!.unread = UNREAD;
+    await sync({ strict: true });
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("lists at most five files and counts the rest", async () => {
+    const files = Array.from({ length: 8 }, (_, i) => `/p/F${i}.vue`);
+    state.scan!.unread = [{ extension: "vue", plugin: "@eventra_dev/cli-plugin-vue", files }];
+    await sync();
+    expect(printed(err)).toContain("... and 3 more");
+  });
+
+  it("check does not call the scan clean, and does not report known events as removed", async () => {
+    state.scan!.unread = UNREAD;
+    await check();
+    const out = printed(log);
+    expect(out).not.toContain("All good");
+    expect(out).not.toContain("- old.event");
+    expect(out).toContain("2 component files not read (no plugin)");
+    expect(printed(err)).toContain("2 .vue files not read");
+  });
+
+  it("check --strict fails even without drift", async () => {
+    state.scan = { events: ["old.event", "kept.event"], wrappers: ["oldWrapper"], skipped: [], unread: UNREAD };
+    await check({ strict: true });
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+
+  it("a project whose plugins read everything is unaffected", async () => {
+    state.scan = { events: ["old.event", "kept.event"], wrappers: ["oldWrapper"], skipped: [], unread: [] };
+    await check({ strict: true });
+    expect(printed(log)).toContain("All good");
+    expect(exit).not.toHaveBeenCalled();
+  });
+});
+
+describe("files a plugin read only in part", () => {
+  const PARTIAL = [{ file: "/p/src/Big.astro", reason: "template events were not scanned - too many children" }];
+
+  it("sync names them, keeps the known events, counts the scan as not clean and --strict fails", async () => {
+    state.scan = { events: ["new.event"], wrappers: [], skipped: [], partial: PARTIAL };
+    await sync({ strict: true });
+    expect(state.saved[0].events).toEqual(["kept.event", "new.event", "old.event"]);
+    expect(printed(err)).toContain("1 file was read only in part");
+    expect(printed(err)).toContain("src/Big.astro: template events were not scanned");
+    expect(printed(err)).toContain("1 file read only in part");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("sync without --strict still exits 0, and two files are counted in the plural", async () => {
+    state.scan = { events: ["new.event"], wrappers: [], skipped: [], partial: [...PARTIAL, { file: "/p/b.astro", reason: "x" }] };
+    await sync();
+    expect(printed(err)).toContain("2 files were read only in part");
+    expect(process.exitCode).toBeUndefined();
+  });
+
+  it("check does not call it good, does not call known events removed, and --strict fails", async () => {
+    state.scan = { events: ["old.event", "kept.event"], wrappers: ["oldWrapper"], skipped: [], partial: PARTIAL };
+    await check({ strict: true });
+    expect(printed(log)).not.toContain("All good");
+    expect(printed(err)).toContain("read only in part");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("a scan that found no file at all", () => {
+  it("sync keeps the known events, says why, and --strict fails", async () => {
+    state.scan = { events: [], wrappers: [], skipped: [], files: [] };
+    await sync({ strict: true });
+    expect(state.saved[0].events).toEqual(["kept.event", "old.event"]);
+    expect(printed(err)).toContain("No file matched sync.include");
+    expect(printed(err)).toContain("no file matched sync.include");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("check does not call it good, does not report known events as removed, and --strict fails", async () => {
+    state.scan = { events: [], wrappers: [], skipped: [], files: [] };
+    await check({ strict: true });
+    expect(printed(log)).not.toContain("All good");
+    expect(printed(log)).not.toContain("- old.event");
+    expect(exit).toHaveBeenCalledWith(1);
+  });
+});
 
 describe("sync", () => {
   it("fails with exit code 1 when there is no config", async () => {

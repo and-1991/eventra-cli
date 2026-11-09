@@ -1,3 +1,4 @@
+import { TOO_DEEP_REASON, isStackOverflow } from "../filesystem/processFile";
 import path from "path";
 import ts from "typescript";
 
@@ -18,6 +19,9 @@ import { WrapperRegistry } from "../analysis/symbols/wrapperRegistry";
 import { createBuiltinPluginRegistry } from "../plugin/loadPlugins";
 import type { PluginRegistry } from "../plugin/registry";
 
+const TOO_DEEP = TOO_DEEP_REASON;
+
+
 const EMPTY_RESULT = (): ScanResult => ({
   events: new Set(),
   detectedFunctionWrappers: new Set(),
@@ -36,6 +40,7 @@ export class EventraEngine {
   private readonly wrapperRegistry: WrapperRegistry;
   private readonly fileIndices = new Map<string, FileSemanticIndex>();
   private readonly fileResults = new Map<string, ScanResult>();
+  private readonly unanalysable = new Map<string, string>();
   private readonly normalizedPathCache = new Map<string, string>();
   // files whose events count (the scanned sources); files that are in the
   // program only because something imports them are never extracted, as in a
@@ -334,12 +339,16 @@ export class EventraEngine {
       this.fileIndices.delete(normalized);
       return;
     }
-    const index = indexSourceFile(
-      source,
-      this.compiler.getChecker(),
-      this.wrapperRegistry,
-      this.plugins,
-    );
+    let index;
+    try {
+      index = indexSourceFile(source, this.compiler.getChecker(), this.wrapperRegistry, this.plugins);
+    } catch (err) {
+      if (!isStackOverflow(err)) throw err;
+      this.fileIndices.delete(normalized);
+      this.unanalysable.set(normalized, TOO_DEEP);
+      return;
+    }
+    this.unanalysable.delete(normalized);
     this.fileIndices.set(normalized, index);
   }
 
@@ -350,18 +359,31 @@ export class EventraEngine {
       this.fileResults.delete(normalized);
       return EMPTY_RESULT();
     }
-    const result = extractFromIndex(
-      index,
-      config,
-      this.compiler.getChecker(),
-      this.wrapperRegistry,
-      this.evaluationCache,
-      this.resolvedCallCache,
-      this.returnPropagationCache,
-      this.resolvedExportCache,
-    );
+    let result: ScanResult;
+    try {
+      result = extractFromIndex(
+        index,
+        config,
+        this.compiler.getChecker(),
+        this.wrapperRegistry,
+        this.evaluationCache,
+        this.resolvedCallCache,
+        this.returnPropagationCache,
+        this.resolvedExportCache,
+      );
+    } catch (err) {
+      if (!isStackOverflow(err)) throw err;
+      this.fileResults.delete(normalized);
+      this.unanalysable.set(normalized, TOO_DEEP);
+      return EMPTY_RESULT();
+    }
     this.fileResults.set(normalized, result);
     return result;
+  }
+
+  /** Files the analysis could not finish because their code nests too deeply (a stack overflow), with the reason. */
+  getUnanalysableFiles(): ReadonlyMap<string, string> {
+    return this.unanalysable;
   }
 
   async scanFile(fileName: string, config: EventraConfig): Promise<ScanResult> {

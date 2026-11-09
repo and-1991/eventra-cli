@@ -4,6 +4,7 @@ import {
   RESPAWN_ENV,
   SCANNING_COMMANDS,
   defaultRespawnDeps,
+  exitWhenParentDies,
   respawnWithMoreHeap,
   usableMemory,
   wantedHeapMb,
@@ -170,13 +171,94 @@ describe("the real dependencies", () => {
     expect(process.listenerCount("SIGTERM")).toBe(before);
   });
 
-  it("count a child killed by a signal, or one that cannot start, as a failed run", async () => {
+  it("count a child killed by a signal (128 + its number), or one that cannot start (1), as a failed run", async () => {
     const real = defaultRespawnDeps();
-    expect(await real.run(process.execPath, ["-e", "process.kill(process.pid, 'SIGKILL')"], process.env)).toBe(1);
+    expect(await real.run(process.execPath, ["-e", "process.kill(process.pid, 'SIGKILL')"], process.env)).toBe(137);
     expect(await real.run("/definitely/not/a/binary", [], process.env)).toBe(1);
   });
 
   it("do not pass an exit code of 0 through as a failure", async () => {
     expect(await defaultRespawnDeps().run(process.execPath, ["-e", ""], process.env)).toBe(0);
   });
+});
+
+describe("signals and the memory flag, as spelled in real use", () => {
+  it("--max_old_space_size with underscores is the user's choice too", async () => {
+    const via = deps({ env: { NODE_OPTIONS: "--max_old_space_size=2048" } });
+    expect(await respawnWithMoreHeap(via.all)).toBe(false);
+    const flag = deps({ execArgv: ["--max_old_space_size=2048"] });
+    expect(await respawnWithMoreHeap(flag.all)).toBe(false);
+  });
+
+  it("a child ended by a signal reports 128 plus the signal number, as a shell does", async () => {
+    const real = defaultRespawnDeps();
+    const code = await real.run(process.execPath, ["-e", "process.kill(process.pid, 'SIGTERM')"], process.env);
+    expect(code).toBe(143);
+  });
+
+});
+
+describe("a respawned child follows its parent", () => {
+  it("exits with 143 when the channel to the parent closes, and lets go of the channel", () => {
+    const listeners: Record<string, () => void> = {};
+    const unref = vi.fn();
+    const exit = vi.fn();
+    exitWhenParentDies({ on: (event, listener) => void (listeners[event] = listener), send: () => true, channel: { unref } }, exit);
+    expect(unref).toHaveBeenCalledTimes(1);
+    expect(exit).not.toHaveBeenCalled();
+    listeners.disconnect();
+    expect(exit).toHaveBeenCalledWith(143);
+  });
+
+  it("by default really exits the process", () => {
+    const listeners: Record<string, () => void> = {};
+    const exit = vi.spyOn(process, "exit").mockImplementation((() => undefined) as never);
+    try {
+      exitWhenParentDies({ on: (event, listener) => void (listeners[event] = listener), send: () => true });
+      listeners.disconnect();
+      expect(exit).toHaveBeenCalledWith(143);
+    } finally {
+      exit.mockRestore();
+    }
+  });
+
+  it("does nothing when there is no channel (a process nobody started)", () => {
+    const on = vi.fn();
+    exitWhenParentDies({ on }, vi.fn());
+    expect(on).not.toHaveBeenCalled();
+  });
+
+  it("copes with a channel that cannot be released", () => {
+    expect(() => exitWhenParentDies({ on: vi.fn(), send: () => true }, vi.fn())).not.toThrow();
+  });
+
+  it("the real child gets the channel, and it dies when its parent does", async () => {
+    // a parent that starts a child with the same stdio as runChild, then is killed: the child must end by itself
+    const script = `
+      const { spawn } = require("child_process");
+      const child = spawn(process.execPath, ["-e", "process.on('disconnect', () => process.exit(0)); setInterval(() => {}, 1000); process.send && process.channel.unref(); console.log('child:' + process.pid);"], { stdio: ["inherit", "pipe", "inherit", "ipc"] });
+      child.stdout.on("data", (d) => { console.log(String(d).trim()); });
+      setInterval(() => {}, 1000);
+    `;
+    const { spawn } = await import("child_process");
+    const parent = spawn(process.execPath, ["-e", script], { stdio: ["ignore", "pipe", "inherit"] });
+    const pid = await new Promise<number>((resolve) => {
+      parent.stdout.on("data", (d: Buffer) => {
+        const m = /child:(\d+)/.exec(String(d));
+        if (m) resolve(Number(m[1]));
+      });
+    });
+    parent.kill("SIGKILL");
+    const alive = (p: number) => {
+      try {
+        process.kill(p, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    const started = Date.now();
+    while (alive(pid) && Date.now() - started < 8000) await new Promise((r) => setTimeout(r, 100));
+    expect(alive(pid)).toBe(false);
+  }, 20_000);
 });

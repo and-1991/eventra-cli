@@ -12,11 +12,13 @@ describe("expandExcludePatterns", () => {
     ]);
   });
 
-  it("keeps entries that contain a slash or glob characters exactly as written", () => {
+  it("keeps entries that contain a slash or glob characters as written, and reads a trailing / as 'folder'", () => {
     expect(expandExcludePatterns(["src/legacy", "**/*.spec.ts", "build/", "gen?"])).toEqual([
       "src/legacy",
       "**/*.spec.ts",
-      "build/",
+      // `build/` used to be kept as it stood, and fast-glob matches nothing with a trailing slash
+      "**/build",
+      "**/build/**",
       "gen?",
     ]);
   });

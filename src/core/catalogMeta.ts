@@ -102,11 +102,19 @@ export async function collectCatalogMeta(config: EventraConfig): Promise<Catalog
   const withBranch = (meta: CatalogMeta): CatalogMeta => (branch ? { ...meta, branch } : meta);
 
   try {
-    const { engine, skipped } = await scanProject(config);
+    const { engine, skipped, unread, partial, ignored, syntaxErrors, files } = await scanProject(config);
     const scanned = engine.getAllEvents();
     const dynamicCount = countUnresolved(engine.getAllDynamicOccurrences());
     const complete =
-      skipped.length === 0 && !isPullRequestBuild() && sameSet(config.events ?? [], scanned);
+      // every kind of file the scan could not fully read makes the list incomplete, or the server would take
+      // the events that were in them for removed ones
+      skipped.length === 0 &&
+      unread.length === 0 &&
+      partial.length === 0 &&
+      ignored.length === 0 &&
+      syntaxErrors.length === 0 &&
+      files.length > 0 &&
+      !isPullRequestBuild() && sameSet(config.events ?? [], scanned);
     return withBranch({ complete, dynamicCount });
   } catch {
     return withBranch({ complete: false });

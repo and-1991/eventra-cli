@@ -23,6 +23,8 @@ describe("send() — endpoint trust-on-first-use", () => {
     process.env.EVENTRA_API_KEY = "test-key";
     delete process.env.EVENTRA_ENDPOINT;
     process.exitCode = 0;
+    // failures and their details go to stderr; most tests here read all of the output through one spy
+    vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => console.log(...args));
 
     fetchMock = vi.fn().mockResolvedValue({
       ok: true,
@@ -48,6 +50,18 @@ describe("send() — endpoint trust-on-first-use", () => {
     config.endpoint = endpoint;
     await fs.writeJSON(path.join(tmp, CONFIG_NAME), config);
   }
+
+  it("counts a 2xx as delivered whatever the body is, and posts the payload once", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    for (const body of [async () => { throw new SyntaxError("Unexpected end of JSON input"); }, async () => "ok", async () => null, async () => [1]]) {
+      fetchMock.mockReset();
+      fetchMock.mockResolvedValue({ ok: true, status: 204, json: body });
+      process.exitCode = 0;
+      await send();
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(process.exitCode).toBe(0);
+    }
+  });
 
   it("sends immediately when eventra.json has the default endpoint (always trusted, no approval needed)", async () => {
     await setEndpoint(DEFAULT_ENDPOINT);
@@ -450,6 +464,55 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(process.exitCode).toBe(1);
   }, 20_000);
 
+  it("prints what went wrong on stderr, and keeps stdout for what went right", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await setEndpoint(CUSTOM_ENDPOINT);
+    await send();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("not locally approved");
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("eventra send --trust-endpoint");
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("not locally approved");
+    errorSpy.mockClear();
+    logSpy.mockClear();
+    process.env.EVENTRA_API_KEY = "ключ";
+    await setEndpoint(DEFAULT_ENDPOINT);
+    await send();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("cannot be sent");
+    expect(logSpy).not.toHaveBeenCalled();
+    process.env.EVENTRA_API_KEY = "test-key";
+    errorSpy.mockClear();
+    await send();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Events registered successfully");
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("Events registered");
+  });
+
+  it("refuses an API key that cannot go into a header at once, instead of retrying it as a network error", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    process.env.EVENTRA_API_KEY = "ключ-with-accents";
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("cannot be sent");
+    expect(process.exitCode).toBe(1);
+    process.env.EVENTRA_API_KEY = "has a space";
+    process.exitCode = 0;
+    await send();
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("says that an aborted request is the time limit", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    const aborted = new Error("This operation was aborted");
+    aborted.name = "AbortError";
+    fetchMock.mockRejectedValue(aborted);
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    await send();
+    const output = logSpy.mock.calls.flat().join("\n");
+    expect(output).toContain("did not answer within 10 seconds");
+    expect(output).not.toContain("This operation was aborted");
+  }, 20_000);
+
   it("fails the process once retries are exhausted on repeated network errors (fetch throws)", async () => {
     await setEndpoint(DEFAULT_ENDPOINT);
     fetchMock.mockRejectedValue(new Error("network down"));
@@ -575,6 +638,31 @@ describe("send() - catalog fields", () => {
     expect(legacy).toEqual({ events: ["a"], cli: expect.objectContaining({ runtime: "node" }) });
     expect(process.exitCode).toBe(0);
   });
+
+  it("repeats it also for a validator that words the refusal its own way (property complete should not exist)", async () => {
+    fetchMock
+      .mockResolvedValueOnce({ ok: false, status: 400, text: async () => '{"message":["property complete should not exist"],"statusCode":400}' })
+      .mockResolvedValueOnce(ok);
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sentBody(1)).not.toHaveProperty("complete");
+    expect(process.exitCode).toBe(0);
+  });
+
+  it("sends a key that was pasted with spaces or a line break around it, trimmed", async () => {
+    process.env.EVENTRA_API_KEY = "  test-key\n";
+    await send();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect((fetchMock.mock.calls[0][1] as { headers: Record<string, string> }).headers["x-api-key"]).toBe("test-key");
+  });
+
+  it("says why a connection failed, not only 'fetch failed'", async () => {
+    fetchMock.mockRejectedValue(Object.assign(new TypeError("fetch failed"), { cause: { code: "ECONNREFUSED" } }));
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await send();
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("fetch failed (ECONNREFUSED)");
+  }, 20_000);
 
   it("does not loop when the plain request is rejected too", async () => {
     fetchMock.mockResolvedValue({

@@ -34,7 +34,7 @@ export function findWorkspacePackages(rootDir: string): ReadonlyMap<string, stri
     : stringList((workspaces as Record<string, unknown> | undefined)?.packages);
   let fromPnpm: string[] = [];
   try {
-    fromPnpm = pnpmWorkspacePatterns(fs.readFileSync(path.join(rootDir, "pnpm-workspace.yaml"), "utf8"));
+    fromPnpm = pnpmWorkspacePatterns(fs.readFileSync(path.join(rootDir, "pnpm-workspace.yaml"), "utf8").replace(/^\uFEFF/, ""));
   } catch {
     // no pnpm-workspace.yaml (or an unreadable one): the package.json patterns are all there is
   }

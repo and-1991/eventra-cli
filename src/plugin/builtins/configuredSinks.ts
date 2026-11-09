@@ -75,14 +75,28 @@ export function resolveSinkRules(
   return resolved;
 }
 
-/** `a.b.c` / `this.a.b` / `a?.b` -> "a.b.c"; null for anything that isn't a plain property path. */
+/** The name a member is read by: `.track`, `["track"]`. */
+function memberName(e: ts.PropertyAccessExpression | ts.ElementAccessExpression): string | null {
+  if (ts.isPropertyAccessExpression(e)) return e.name.text;
+  return e.argumentExpression && ts.isStringLiteralLike(e.argumentExpression) ? e.argumentExpression.text : null;
+}
+
+/**
+ * `a.b.c` / `this.a.b` / `a?.b` / `a["b"]` -> "a.b.c"; null for anything that isn't a plain property path.
+ * The one call allowed in a path is Amplitude's legacy `amplitude.getInstance()`: `amplitude.getInstance().logEvent`.
+ */
 function calleePath(expr: ts.Expression): string | null {
   const e = unwrapExpression(expr);
   if (ts.isIdentifier(e)) return e.text;
   if (e.kind === ts.SyntaxKind.ThisKeyword) return "this";
-  if (ts.isPropertyAccessExpression(e)) {
-    const head = calleePath(e.expression);
-    return head === null ? null : `${head}.${e.name.text}`;
+  if (ts.isCallExpression(e) && e.arguments.length === 0 && ts.isPropertyAccessExpression(e.expression) && e.expression.name.text === "getInstance") {
+    const head = calleePath(e.expression.expression);
+    return head === null ? null : `${head}.getInstance()`;
+  }
+  if (ts.isPropertyAccessExpression(e) || ts.isElementAccessExpression(e)) {
+    const name = memberName(e);
+    const head = name === null ? null : calleePath(e.expression);
+    return head === null ? null : `${head}.${name}`;
   }
   return null;
 }
@@ -314,7 +328,7 @@ export function createConfiguredSinkDetector(rules: readonly ResolvedSinkRule[])
     detect({ call, checker }) {
       const callee = unwrapExpression(call.expression);
       // `gtag(...)` / `x.capture(...)`: the name actually being called.
-      const last = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) ? callee.name.text : null;
+      const last = ts.isIdentifier(callee) ? callee.text : ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee) ? memberName(callee) : null;
       const path = calleePath(callee);
 
       for (const rule of rules) {
@@ -328,7 +342,7 @@ export function createConfiguredSinkDetector(rules: readonly ResolvedSinkRule[])
         // (`x` in `x.capture(...)`) or, for a bare call, the called name itself comes from.
         if (
           rule.modules &&
-          !expressionFromModules(ts.isPropertyAccessExpression(callee) ? callee.expression : callee, checker, rule.modules, 0)
+          !expressionFromModules(ts.isPropertyAccessExpression(callee) || ts.isElementAccessExpression(callee) ? callee.expression : callee, checker, rule.modules, 0)
         ) {
           continue;
         }

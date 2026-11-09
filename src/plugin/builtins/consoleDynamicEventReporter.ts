@@ -21,7 +21,17 @@ const CAUSE_TEXT: Readonly<Record<string, string>> = {
   template: "a template string with a part that is not known",
   call: "the result of a call",
   expression: "an expression that is not a plain value",
+  callback: "a parameter of a callback given to forEach, map, an event listener and the like: its values are not in the code",
 };
+
+// `__eventraChild2_0.prototype.ButtonComponent`: how a plugin writes "the component ButtonComponent used in a template"
+const COMPONENT_CALLEE = /^__eventraChild\w*\.prototype\.(\w+)$/;
+
+/** The name of what is called, without the plugin's internal wiring. */
+function calleeName(calleeText: string): string {
+  const component = COMPONENT_CALLEE.exec(calleeText);
+  return component ? `<${component[1]}>` : calleeText;
+}
 
 function line(occ: DynamicOccurrence, withCause: boolean): string {
   const values = occ.resolvedValues.length > 0 ? ` (resolved: ${occ.resolvedValues.map(printable).join(", ")})` : "";
@@ -31,9 +41,9 @@ function line(occ: DynamicOccurrence, withCause: boolean): string {
     return `~ template of ${file}: event="${printable(occ.eventExpression ?? "")}"${values}${cause}`;
   }
   if (occ.inTemplateCode) {
-    return `~ template of ${file}: ${occ.calleeText}(...)${values}${cause}`;
+    return `~ template of ${file}: ${calleeName(occ.calleeText)}(...)${values}${cause}`;
   }
-  return `~ ${file}:${occ.line} ${occ.calleeText}(...)${values}${cause}`;
+  return `~ ${file}:${occ.line} ${calleeName(occ.calleeText)}(...)${values}${cause}`;
 }
 
 const consoleDynamicEventReporter: DynamicEventReporter = {

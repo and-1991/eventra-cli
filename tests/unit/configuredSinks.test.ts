@@ -660,7 +660,7 @@ describe("sinks: receiver resolution edge cases", () => {
     expect(events).toEqual([]);
   });
 
-  it("ignores bare calls, element access and non-property callees for receiver-vetted and plain rules", async () => {
+  it("ignores bare calls and non-property callees for receiver-vetted and plain rules", async () => {
     const { events } = await scan([...CAP, { callee: "analytics.track" }], {
       "a.ts": `
         import { init } from "posthog-js";
@@ -668,7 +668,6 @@ describe("sinks: receiver resolution edge cases", () => {
         declare function capture(n: string): void;
         declare function foo(): any;
         capture("nope_bare");
-        analytics["track"]("nope_element_access");
         foo().analytics.track("nope_call_head");
         (foo())("nope_call_callee");
         init();
@@ -1469,5 +1468,116 @@ describe("sinks: hand-edited config with wrong types", () => {
     );
     expect(warnings).toHaveLength(3);
     expect(registry.getSinkDetectors().map((d) => d.name)).toEqual(["eventra-sdk"]);
+  });
+});
+
+describe("sinks: how a call is written", () => {
+  it("reads analytics[\"track\"](...) like analytics.track(...)", async () => {
+    const { events } = await scan([{ callee: "analytics.track" }], {
+      "a.ts": `declare const analytics: any;\nanalytics["track"]("element.access");\nanalytics.track("dotted");\n`,
+    });
+    expect(events).toEqual(["dotted", "element.access"]);
+  });
+
+  it("does not read a computed member name", async () => {
+    const { events } = await scan([{ callee: "analytics.track" }], {
+      "a.ts": `declare const analytics: any; declare const k: string;\nanalytics[k]("computed");\n`,
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("amplitude preset: the legacy global amplitude.getInstance().logEvent(...), with no import", async () => {
+    const { events } = await scan([{ preset: "amplitude" }], {
+      "a.ts": `declare const amplitude: any;\namplitude.getInstance().logEvent("legacy.event");\namplitude.getInstance().logEvent({ event_type: "legacy.object" });\n`,
+    });
+    expect(events).toEqual(["legacy.event", "legacy.object"]);
+  });
+
+  it("only getInstance() is allowed as a call inside the path", async () => {
+    const { events } = await scan([{ preset: "amplitude" }], {
+      "a.ts": `declare const amplitude: any;\namplitude.other().logEvent("not.this");\namplitude.getInstance(1).logEvent("nor.this");\n`,
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("a receiver vetted against a package works with an element access too", async () => {
+    const { events } = await scan([{ preset: "posthog" }], {
+      "a.ts": `import { PostHog } from "posthog-node";\nconst client = new PostHog("k");\nclient["capture"]({ distinctId: "u", event: "vetted.element" });\n`,
+    });
+    expect(events).toEqual(["vetted.element"]);
+  });
+});
+
+describe("the SDK loaded with require", () => {
+  const SDK = "@eventra_dev/eventra-sdk";
+  const run = async (code: string) => (await scan([], { "a.ts": code })).events;
+
+  it("const { Eventra } = require(sdk)", async () => {
+    expect(await run(`declare const require: any;\nconst { Eventra } = require("${SDK}");\nconst t = new Eventra({ apiKey: "k" });\nt.track("destructured.require");\n`)).toEqual(["destructured.require"]);
+  });
+
+  it("const { Eventra: Tracker } = require(sdk)", async () => {
+    expect(await run(`declare const require: any;\nconst { Eventra: Tracker } = require("${SDK}");\nnew Tracker({ apiKey: "k" }).track("renamed.require");\n`)).toEqual(["renamed.require"]);
+  });
+
+  it("const Eventra = require(sdk).Eventra", async () => {
+    expect(await run(`declare const require: any;\nconst Eventra = require("${SDK}").Eventra;\nconst t = new Eventra({ apiKey: "k" });\nt.track("member.require");\n`)).toEqual(["member.require"]);
+  });
+
+  it("const sdk = require(sdk); new sdk.Eventra()", async () => {
+    expect(await run(`declare const require: any;\nconst sdk = require("${SDK}");\nconst t = new sdk.Eventra({ apiKey: "k" });\nt.track("namespace.require");\n`)).toEqual(["namespace.require"]);
+  });
+
+  it("new (require(sdk).Eventra)() and an awaited require", async () => {
+    expect(await run(`declare const require: any;\nnew (require("${SDK}")).Eventra({ apiKey: "k" }).track("inline.require");\n`)).toEqual(["inline.require"]);
+  });
+
+  it("another package, or a different export, is not the SDK", async () => {
+    expect(
+      await run(`declare const require: any;\nconst { Eventra } = require("other-sdk");\nnew Eventra({ apiKey: "k" }).track("other.package");\nconst { Other } = require("${SDK}");\nnew Other().track("other.export");\nconst x = require("${SDK}").Other;\nnew x().track("other.member");\nconst y = require("other");\nnew y.Eventra().track("other.ns");\n`),
+    ).toEqual([]);
+  });
+
+  it("a require with a computed or missing specifier is ignored", async () => {
+    expect(await run(`declare const require: any; declare const name: string;\nconst { Eventra } = require(name);\nnew Eventra().track("computed.require");\nconst { Eventra: E2 } = require();\nnew E2().track("no.arg");\n`)).toEqual([]);
+  });
+});
+
+describe("sinks and require: shapes that must not match", () => {
+  it("getInstance() on something that is not a plain path is ignored", async () => {
+    const { events } = await scan([{ preset: "amplitude" }], {
+      "a.ts": `declare const f: any;\nf().getInstance().logEvent("not.a.path");\n`,
+    });
+    expect(events).toEqual([]);
+  });
+
+  it("new (call()).Eventra() is not read as a require of the SDK", async () => {
+    const { events } = await scan([], {
+      "a.ts": `declare function load(): any;\nnew (load()).Eventra({ apiKey: "k" }).track("from.a.call");\n`,
+    });
+    expect(events).toEqual([]);
+  });
+});
+
+describe("the SDK reached through .call and import = require", () => {
+  const SDK = "@eventra_dev/eventra-sdk";
+  const run = async (code: string) => (await scan([], { "a.ts": code })).events;
+
+  it("tracker.track.call(thisArg, name) reads the second argument", async () => {
+    expect(await run(`import { Eventra } from "${SDK}";\nconst t = new Eventra({ apiKey: "k" });\nt.track.call(t, "via.call");\nt["track"].call(null, "via.call.element");\nt.track.call(t);\nt.track.call(t, { event: "object.shape" } as any);\n`)).toEqual(["via.call", "via.call.element"]);
+  });
+
+  it(".call on something that is not the SDK's track is not read", async () => {
+    expect(await run(`declare const other: any;\nother.track.call(other, "not.sdk");\nother.send.call(other, "nor.this");\n`)).toEqual([]);
+  });
+
+  it("a wrapper that passes its parameter through .call is followed at its callers", async () => {
+    expect(await run(`import { Eventra } from "${SDK}";\nconst t = new Eventra({ apiKey: "k" });\nfunction wrap(name: string) { t.track.call(t, name); }\nwrap("through.wrapper");\n`)).toEqual(["through.wrapper"]);
+  });
+
+  it("import sdk = require(...) is the module, like const sdk = require(...)", async () => {
+    expect(await run(`import sdk = require("${SDK}");\nconst t = new sdk.Eventra({ apiKey: "k" });\nt.track("import.equals");\n`)).toEqual(["import.equals"]);
+    expect(await run(`import other = require("other-sdk");\nconst t = new other.Eventra({ apiKey: "k" });\nt.track("not.sdk");\n`)).toEqual([]);
+    expect(await run(`import Eq = Some.Namespace;\nnew Eq.Eventra().track("not.a.require");\ndeclare namespace Some { namespace Namespace { class Eventra {} } }\n`)).toEqual([]);
   });
 });

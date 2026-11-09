@@ -17,13 +17,19 @@ const config = (events: string[]): EventraConfig => ({
 const occurrence = (resolvedValues: string[]) =>
   ({ resolvedValues }) as unknown as Parameters<typeof countUnresolved>[0][number];
 
-function fakeScan(events: string[], skipped: unknown[] = [], dynamic: string[][] = []) {
+function fakeScan(events: string[], skipped: unknown[] = [], dynamic: string[][] = [], unread: unknown[] = [], extra: Record<string, unknown> = {}) {
   scanProject.mockResolvedValue({
     engine: {
       getAllEvents: () => events,
       getAllDynamicOccurrences: () => dynamic.map(occurrence),
     },
     skipped,
+    unread,
+    ignored: [],
+    syntaxErrors: [],
+    partial: [],
+    files: ["/p/a.ts"],
+    ...extra,
   });
 }
 
@@ -189,6 +195,18 @@ describe("collectCatalogMeta", () => {
   it("is incomplete when a file was skipped", async () => {
     fakeScan(["a"], [{ file: "x", reason: "bad" }]);
     expect((await collectCatalogMeta(config(["a"]))).complete).toBe(false);
+  });
+
+  it("is incomplete when component files were not read because no plugin handles them", async () => {
+    fakeScan(["a"], [], [], [{ extension: "vue", plugin: "@eventra_dev/cli-plugin-vue", files: ["/p/A.vue"] }]);
+    expect((await collectCatalogMeta(config(["a"]))).complete).toBe(false);
+  });
+
+  it("is incomplete when a file was over the size limit, had a syntax error, or nothing matched at all", async () => {
+    for (const extra of [{ partial: [{ file: "a.astro", reason: "x" }] }, { ignored: [{ file: "big.js", reason: "file is larger than 2 MB" }] }, { syntaxErrors: [{ file: "a.ts", reason: "line 1" }] }, { files: [] }]) {
+      fakeScan(["a"], [], [], [], extra);
+      expect((await collectCatalogMeta(config(["a"]))).complete).toBe(false);
+    }
   });
 
   it("is incomplete when eventra.json is out of date (extra, missing or different names)", async () => {

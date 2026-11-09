@@ -26,14 +26,26 @@ interface TemplateRegion {
   readonly to: number;
 }
 
-// 1-based lines of the generated template region in a virtual module, or undefined when it has none
-function templateRegionOf(content: string): TemplateRegion | undefined {
+// 1-based lines of every generated template region in a virtual module (a file with several Angular components has one
+// per component), none when it has none
+function templateRegionsOf(content: string): TemplateRegion[] {
   const lines = content.split("\n");
-  const start = lines.findIndex((line) => TEMPLATE_REGION_START.test(line));
-  if (start === -1) return undefined;
-  const end = lines.findIndex((line, index) => index > start && TEMPLATE_REGION_END.test(line));
-  return { from: start + 1, to: end === -1 ? Infinity : end + 1 };
+  const regions: TemplateRegion[] = [];
+  let from = -1;
+  lines.forEach((line, index) => {
+    if (from === -1 && TEMPLATE_REGION_START.test(line)) from = index;
+    else if (from !== -1 && TEMPLATE_REGION_END.test(line)) {
+      regions.push({ from: from + 1, to: index + 1 });
+      from = -1;
+    }
+  });
+  // a region that is never ended runs to the end of the module
+  if (from !== -1) regions.push({ from: from + 1, to: Infinity });
+  return regions;
 }
+
+const inRegion = (regions: readonly TemplateRegion[] | undefined, line: number): boolean =>
+  regions !== undefined && regions.some((region) => line >= region.from && line <= region.to);
 
 // `__eventra_x_template_event__(expr)` (callText may be cut with an ellipsis)
 function templateExpression(occurrence: DynamicOccurrence): string {
@@ -53,7 +65,9 @@ export class PluginRegistry {
   private readonly sourceToVirtuals = new Map<string, string[]>();
   // what plugins said about a file that is not an error, by file; replaced each time the file is transformed
   private readonly pluginNotes = new Map<string, readonly string[]>();
-  private readonly templateRegions = new Map<string, TemplateRegion>();
+  private readonly partialFiles = new Map<string, readonly string[]>();
+  private readonly dependenciesOf = new Map<string, readonly string[]>();
+  private readonly templateRegions = new Map<string, readonly TemplateRegion[]>();
 
   registerFilePreprocessor(preprocessor: FilePreprocessor): void {
     if (this.preprocessors.some((p) => p.name === preprocessor.name)) {
@@ -123,6 +137,31 @@ export class PluginRegistry {
     else this.pluginNotes.delete(key);
   }
 
+  /** Records (or, when empty, forgets) why a source file was read only in part. */
+  setPartial(fileName: string, reasons: readonly string[]): void {
+    const key = this.normalizePath(fileName);
+    if (reasons.length > 0) this.partialFiles.set(key, reasons);
+    else this.partialFiles.delete(key);
+  }
+
+  /** The files a plugin read only in part, as `{ file, reason }`. */
+  getPartialFiles(): { file: string; reason: string }[] {
+    return [...this.partialFiles].flatMap(([file, reasons]) => reasons.map((reason) => ({ file, reason })));
+  }
+
+  /** Records (or, when empty, forgets) the other files a source's generated modules were built from. */
+  setDependencies(fileName: string, dependencies: readonly string[]): void {
+    const key = this.normalizePath(fileName);
+    if (dependencies.length > 0) this.dependenciesOf.set(key, dependencies.map((dependency) => this.normalizePath(dependency)));
+    else this.dependenciesOf.delete(key);
+  }
+
+  /** The source files whose generated modules were built from `file`: they are stale when it changes. */
+  dependentsOf(file: string): string[] {
+    const key = this.normalizePath(file);
+    return [...this.dependenciesOf].filter(([, dependencies]) => dependencies.includes(key)).map(([source]) => source);
+  }
+
   /** Every note a plugin left about a file, as `{ file, reason }`, in the order the files were read. */
   getPluginNotes(): { file: string; reason: string }[] {
     return [...this.pluginNotes].flatMap(([file, notes]) => notes.map((reason) => ({ file, reason })));
@@ -141,9 +180,9 @@ export class PluginRegistry {
         for (const stale of this.sourceToVirtuals.get(sourceKey) ?? []) this.templateRegions.delete(stale);
         for (const file of files) {
           const key = this.normalizePath(file.fileName);
-          const region = templateRegionOf(file.content);
-          if (region === undefined) this.templateRegions.delete(key);
-          else this.templateRegions.set(key, region);
+          const regions = templateRegionsOf(file.content);
+          if (regions.length === 0) this.templateRegions.delete(key);
+          else this.templateRegions.set(key, regions);
         }
         this.sourceToVirtuals.set(
           sourceKey,
@@ -190,6 +229,23 @@ export class PluginRegistry {
    * at the file the user wrote, and flag the ones that come from generated
    * code so reporters do not print a line number that exists nowhere.
    */
+  /**
+   * Whether `line` of a plugin's generated module is code the user wrote (a script), not code the plugin
+   * generated from a template. A syntax error on such a line is the user's.
+   */
+  isUserWrittenLine(virtualFile: string, line: number): boolean {
+    return !inRegion(this.templateRegions.get(this.normalizePath(virtualFile)), line);
+  }
+
+  /** The file the user wrote that a generated (virtual) file came from, or undefined for a plain file. */
+  getSourceForVirtual(virtualFile: string): string | undefined {
+    const key = this.normalizePath(virtualFile);
+    for (const [source, virtuals] of this.sourceToVirtuals) {
+      if (source !== key && virtuals.includes(key)) return source;
+    }
+    return undefined;
+  }
+
   attributeToSources<T extends DynamicOccurrence>(occurrences: readonly T[]): readonly T[] {
     if (this.sourceToVirtuals.size === 0) {
       return occurrences;
@@ -197,13 +253,17 @@ export class PluginRegistry {
     const virtualToSource = new Map<string, string>();
     for (const [source, virtuals] of this.sourceToVirtuals) {
       for (const virtual of virtuals) {
-        if (virtual !== source) {
+        // A module that IS the file (an Angular component with an inline template: the template's calls are
+        // spliced into the real class) is attributed too when it holds generated code, so such a call is
+        // shown as "template of <file>" and not at a line that is not in the file.
+        if (virtual !== source || this.templateRegions.has(virtual)) {
           virtualToSource.set(virtual, source);
         }
       }
     }
     return occurrences.map((occurrence) => {
-      const source = virtualToSource.get(this.normalizePath(occurrence.fileName));
+      const key = this.normalizePath(occurrence.fileName);
+      const source = virtualToSource.get(key) ?? (TEMPLATE_CALLEE.test(occurrence.calleeText) && this.sourceToVirtuals.has(key) ? key : undefined);
       if (!source) {
         return occurrence;
       }
@@ -217,8 +277,7 @@ export class PluginRegistry {
         };
       }
       // ordinary code the plugin copied out of the template: its line is in the generated text
-      const region = this.templateRegions.get(this.normalizePath(occurrence.fileName));
-      if (region !== undefined && occurrence.line >= region.from && occurrence.line <= region.to) {
+      if (inRegion(this.templateRegions.get(this.normalizePath(occurrence.fileName)), occurrence.line)) {
         return { ...occurrence, fileName: source, inTemplateCode: true };
       }
       // an Angular template module embeds the component class: lines there
