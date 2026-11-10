@@ -61,6 +61,10 @@ describe("normalizeConfig", () => {
     ]);
   });
 
+  it("keeps an event name written twice once", () => {
+    expect(normalizeConfig({ events: ["b", "a", "b", "a"] }).events).toEqual(["a", "b"]);
+  });
+
   it("sorts events alphabetically", () => {
     const out = normalizeConfig({
       events: ["c", "a", "b"],

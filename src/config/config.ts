@@ -83,7 +83,8 @@ function eventList(value: unknown): string[] {
   }
   const names = value.filter((item): item is string => typeof item === "string");
   if (names.length !== value.length) warnConfig(`${entries(value.length - names.length)} of "events" in eventra.json ${value.length - names.length === 1 ? "is" : "are"} not a string and ignored.`);
-  return names;
+  // a name written twice is one event: it would otherwise be sent, and counted in "Sent N events", twice
+  return [...new Set(names)];
 }
 
 // every top-level key the CLI itself reads or writes; anything else in eventra.json is the user's and is kept
