@@ -74,7 +74,11 @@ async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promi
     // Node appends a "Require stack" of its own paths to a missing module: the first line says it all
     /* v8 ignore next */
     const message = (err instanceof Error ? err.message : String(err)).split("\n")[0].replace(/\.$/, "");
-    throw new Error(`Failed to load plugin "${trimmed}": ${message}.${pluginLoadHint(trimmed)}`);
+    // the plugin itself is missing (not one of its own dependencies): say what to install
+    const code = (err as { code?: unknown } | null)?.code;
+    const notInstalled = (code === "ERR_MODULE_NOT_FOUND" || code === "MODULE_NOT_FOUND") && message.includes(`'${trimmed}'`);
+    const install = notInstalled ? ` Install it in your project with: npm install -D ${trimmed}` : "";
+    throw new Error(`Failed to load plugin "${trimmed}": ${message}.${pluginLoadHint(trimmed)}${install}`);
   }
 
   const candidate = await resolvePluginExport(mod);

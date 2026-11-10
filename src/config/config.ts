@@ -146,6 +146,9 @@ export function normalizeConfig(config: Partial<EventraConfig>): EventraConfig {
   const include = stringList(config.sync?.include);
   const exclude = stringList(config.sync?.exclude);
   for (const [name, raw, list] of [["include", config.sync?.include, include], ["exclude", config.sync?.exclude, exclude]] as const) {
+    if (raw !== undefined && list === undefined) {
+      warnConfig(`"sync.${name}" in eventra.json must be a list of patterns (or one pattern as text); the default is used.`);
+    }
     if (Array.isArray(raw) && list !== undefined && list.length !== raw.length) {
       warnConfig(`${entries(raw.length - list.length)} of "sync.${name}" in eventra.json ${raw.length - list.length === 1 ? "is" : "are"} not a string and ignored.`);
     }
@@ -342,10 +345,12 @@ async function ensureGitignored(entry: string): Promise<void> {
  * legacy inline `apiKey` in `eventra.json` (kept for backward compatibility only).
  */
 export async function resolveApiKey(config: EventraConfig): Promise<string | undefined> {
-  if (process.env.EVENTRA_API_KEY) return process.env.EVENTRA_API_KEY;
+  // a key made of spaces or a line break is no key: it must not hide the next source, nor be sent empty
+  const fromEnv = process.env.EVENTRA_API_KEY?.trim();
+  if (fromEnv) return fromEnv;
   const { apiKey } = await readLocalSecrets();
-  if (apiKey) return apiKey;
-  return config.apiKey || undefined;
+  if (apiKey?.trim()) return apiKey.trim();
+  return config.apiKey?.trim() || undefined;
 }
 
 /** Persists an API key to the gitignored local secrets file, never to `eventra.json`. */

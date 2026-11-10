@@ -61,6 +61,19 @@ describe("normalizeConfig", () => {
     ]);
   });
 
+  it("warns when sync.include or sync.exclude is neither a list nor text, and uses the defaults", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      const out = normalizeConfig({ sync: { include: 5 as unknown as string[], exclude: { a: 1 } as unknown as string[] } });
+      const text = warn.mock.calls.map((call) => String(call[0])).join("\n");
+      expect(text).toContain('"sync.include" in eventra.json must be a list of patterns');
+      expect(text).toContain('"sync.exclude" in eventra.json must be a list of patterns');
+      expect(out.sync.include.length).toBeGreaterThan(0);
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
   it("keeps an event name written twice once", () => {
     expect(normalizeConfig({ events: ["b", "a", "b", "a"] }).events).toEqual(["a", "b"]);
   });
@@ -144,6 +157,20 @@ describe("resolveApiKey / saveLocalApiKey", () => {
 
   it("uses the legacy inline apiKey as a last resort", async () => {
     expect(await resolveApiKey(baseConfig("inline-key"))).toBe("inline-key");
+  });
+
+  it("treats a key of only spaces as no key, in every source", async () => {
+    process.env.EVENTRA_API_KEY = "   \n";
+    expect(await resolveApiKey(baseConfig())).toBeUndefined();
+    expect(await resolveApiKey(baseConfig("  "))).toBeUndefined();
+    // a blank variable does not hide the next source
+    await saveLocalApiKey("local-key");
+    expect(await resolveApiKey(baseConfig("inline-key"))).toBe("local-key");
+  });
+
+  it("returns a key without the spaces around it", async () => {
+    process.env.EVENTRA_API_KEY = "  env-key \n";
+    expect(await resolveApiKey(baseConfig())).toBe("env-key");
   });
 
   it("prefers eventra.local.json over the legacy inline apiKey", async () => {

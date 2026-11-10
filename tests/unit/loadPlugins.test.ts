@@ -228,6 +228,20 @@ describe("createPluginRegistry — trusted specifier import path", () => {
     );
   });
 
+  it("says what to install when the plugin is not installed", async () => {
+    const config = normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-not-installed-anywhere"] });
+
+    await expect(createPluginRegistry(config)).rejects.toThrow(
+      /npm install -D @eventra_dev\/cli-plugin-not-installed-anywhere/,
+    );
+  });
+
+  it("does not suggest an install when the plugin is there but fails to load", async () => {
+    const config = normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-fixture-import-throws"] });
+
+    await expect(createPluginRegistry(config)).rejects.not.toThrow(/npm install -D/);
+  });
+
   it("tolerates a config with no plugins field at all (bypassing normalizeConfig's default [])", async () => {
     // normalizeConfig always fills in `plugins: []`, so exercise the `config.plugins ?? []`
     // fallback directly with a hand-built config that omits the field, as a caller of
