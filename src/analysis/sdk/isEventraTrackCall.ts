@@ -1,6 +1,9 @@
+import * as fs from "fs";
+import * as path from "path";
 import ts from "typescript";
 
-import { isEventraSdkModuleSpecifier } from "./eventraSdk";
+import { EVENTRA_SDK_PACKAGE, isEventraSdkModuleSpecifier } from "./eventraSdk";
+import { declaredTypeOfIdentifier } from "../shared/declaredType";
 
 function isTrackCallee(expr: ts.Expression): boolean {
   if (ts.isPropertyAccessExpression(expr) || ts.isPropertyAccessChain(expr)) {
@@ -56,12 +59,50 @@ function isEventraImportDeclaration(decl: ts.Declaration): boolean {
 }
 /* v8 ignore stop */
 
+const sdkPackageByDir = new Map<string, boolean>();
+
+/**
+ * Whether `dir` lies inside the installed SDK package: the nearest `package.json` above it that has a name is the
+ * SDK's. A `node_modules/@eventra_dev/eventra-sdk` folder and a workspace link to it (the compiler follows the link
+ * to the real folder, whatever its path) both count; a folder of the user's that happens to be called
+ * "eventra-sdk" does not. A `package.json` with no name (a `dist/cjs` folder's `{"type": "commonjs"}`) or one that
+ * cannot be read is passed over.
+ */
+function isInSdkPackage(dir: string): boolean {
+  const known = sdkPackageByDir.get(dir);
+  if (known !== undefined) return known;
+  let result = false;
+  let name: unknown;
+  try {
+    name = (JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")) as { name?: unknown } | null)?.name;
+  } catch {
+    name = undefined;
+  }
+  if (typeof name === "string") {
+    result = name === EVENTRA_SDK_PACKAGE;
+  } else {
+    const parent = path.dirname(dir);
+    result = parent !== dir && isInSdkPackage(parent);
+  }
+  sdkPackageByDir.set(dir, result);
+  return result;
+}
+
+/**
+ * The SDK's own `Eventra` class: declared inside `declare module "@eventra_dev/eventra-sdk"` (the CLI's own
+ * stand-in for the SDK's types, which the compiler prefers to an installed copy), or in a declaration file of the
+ * installed package. A class of the user's that is merely called `Eventra` is not the SDK, wherever it lives.
+ */
 function isEventraClassDeclaration(decl: ts.Declaration): boolean {
   if (!ts.isClassDeclaration(decl) || decl.name?.text !== "Eventra") {
     return false;
   }
-  const file = decl.getSourceFile().fileName.replace(/\\/g, "/");
-  return file.includes("eventra-sdk") || file.includes("@eventra_dev");
+  const ambient = ts.findAncestor(decl.parent, ts.isModuleDeclaration);
+  if (ambient) {
+    return ts.isStringLiteral(ambient.name) && isEventraSdkModuleSpecifier(ambient.name.text);
+  }
+  const file = decl.getSourceFile();
+  return file.isDeclarationFile && isInSdkPackage(path.dirname(file.fileName));
 }
 
 function isEventraSymbol(symbol: ts.Symbol, checker: ts.TypeChecker, depth = 0): boolean {
@@ -173,11 +214,6 @@ function typeLooksLikeEventra(type: ts.Type, checker: ts.TypeChecker, depth = 0)
     return true;
   }
 
-  const typeStr = checker.typeToString(type);
-  if (typeStr === "Eventra" || /^Eventra<.*>$/.test(typeStr)) {
-    return true;
-  }
-
   if (type.isUnionOrIntersection()) {
     return type.types.some((t) => typeLooksLikeEventra(t, checker, depth + 1));
   }
@@ -219,25 +255,54 @@ function functionOf(decl: ts.Declaration): ts.FunctionLikeDeclaration | undefine
   return undefined;
 }
 
+// Every `identifier = value` in a file, by the symbol assigned to. Built once per file and checker: walking the whole
+// declaring file again for each `x.track()` made a file with thousands of such calls quadratic (20k calls took minutes).
+// Keyed by checker, since a new program (watch mode) has new symbols.
+const assignmentsCache = new WeakMap<ts.TypeChecker, WeakMap<ts.SourceFile, Map<ts.Symbol, ts.Expression[]>>>();
+
+function assignmentsIn(file: ts.SourceFile, checker: ts.TypeChecker): Map<ts.Symbol, ts.Expression[]> {
+  let byFile = assignmentsCache.get(checker);
+  if (!byFile) {
+    byFile = new WeakMap();
+    assignmentsCache.set(checker, byFile);
+  }
+  let found = byFile.get(file);
+  if (found) return found;
+  const assignments = new Map<ts.Symbol, ts.Expression[]>();
+  const visit = (node: ts.Node): void => {
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken && ts.isIdentifier(node.left)) {
+      const symbol = checker.getSymbolAtLocation(node.left);
+      if (symbol) {
+        const list = assignments.get(symbol);
+        if (list) list.push(node.right);
+        else assignments.set(symbol, [node.right]);
+      }
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(file);
+  found = assignments;
+  byFile.set(file, found);
+  return found;
+}
+
 /** `t = new Eventra(...)` anywhere in the file of a variable's declaration: a lazily filled `let t: any`. */
 function assignedValues(symbol: ts.Symbol, checker: ts.TypeChecker): ts.Expression[] {
   const values: ts.Expression[] = [];
   const files = new Set((symbol.getDeclarations() ?? []).map((decl) => decl.getSourceFile()));
   for (const file of files) {
-    const visit = (node: ts.Node): void => {
-      if (
-        ts.isBinaryExpression(node) &&
-        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-        ts.isIdentifier(node.left) &&
-        checker.getSymbolAtLocation(node.left) === symbol
-      ) {
-        values.push(node.right);
-      }
-      ts.forEachChild(node, visit);
-    };
-    visit(file);
+    values.push(...(assignmentsIn(file, checker).get(symbol) ?? []));
   }
   return values;
+}
+
+/**
+ * True when a bare identifier's declared type has nothing of the SDK in it, so the type at this spot cannot be the
+ * SDK either (see declaredTypeOfIdentifier: this skips TypeScript's per-spot flow analysis).
+ */
+function declaredTypeRulesOutEventra(receiver: ts.Expression, checker: ts.TypeChecker): boolean {
+  const declared = declaredTypeOfIdentifier(receiver, checker);
+  return declared !== undefined && !typeLooksLikeEventra(declared, checker);
 }
 
 function isEventraReceiverExpression(
@@ -261,9 +326,11 @@ function isEventraReceiverExpression(
     return isEventraNewExpression(receiver.expression, checker);
   }
 
-  const type = checker.getTypeAtLocation(receiver);
-  if (typeLooksLikeEventra(type, checker)) {
-    return true;
+  if (!declaredTypeRulesOutEventra(receiver, checker)) {
+    const type = checker.getTypeAtLocation(receiver);
+    if (typeLooksLikeEventra(type, checker)) {
+      return true;
+    }
   }
 
   // `getTracker().track(...)` where the getter's type is lost (`any`) but what it returns is a tracker

@@ -1,8 +1,9 @@
 import chalk from "chalk";
 import inquirer from "inquirer";
 
-import {getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint, warnInlineApiKey} from "../config/config";
+import {getLegacyTrustedEndpoint, getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint, warnInlineApiKey} from "../config/config";
 import { collectCatalogMeta } from "../core/catalogMeta";
+import { printable } from "../core/skipped";
 import pkg from "../../package.json";
 
 const CLI_VERSION = pkg.version;
@@ -160,6 +161,13 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     if (endpoint !== trusted) {
       if (!opts.trustEndpoint) {
         console.error(chalk.red(`Endpoint "${endpoint}" from eventra.json is not locally approved.`));
+        if ((await getLegacyTrustedEndpoint()) === endpoint) {
+          console.error(
+            chalk.gray(
+              "It was approved in eventra.local.json, which is no longer read for this: a file inside the repository can be committed by anyone. Approvals are now kept in your user folder.",
+            ),
+          );
+        }
         console.error(
           chalk.gray(
             "If this is expected (e.g. a self-hosted ingest URL), approve it once with:",
@@ -170,7 +178,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
         return;
       }
       await trustEndpoint(endpoint);
-      console.log(chalk.green(`Endpoint "${endpoint}" approved and saved to eventra.local.json`));
+      console.log(chalk.green(`Endpoint "${endpoint}" approved for this project (saved outside the repository)`));
     }
   }
 
@@ -297,7 +305,8 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
       if (!outcome.retryable) {
         // permanent failure — surface immediately
         console.error(chalk.red(`Request failed (${outcome.status})`));
-        if (outcome.body) console.error(chalk.gray(outcome.body));
+        // the server's text goes to a terminal: an escape sequence in it must not be run
+        if (outcome.body) console.error(chalk.gray(printable(outcome.body)));
         if (outcome.status === 403 && outcome.body?.includes("not valid for this endpoint")) {
           console.log(
             chalk.yellow(
@@ -348,11 +357,11 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
     console.error(chalk.red("All retries exhausted"));
     if (lastFailure?.status) {
       console.error(chalk.gray(`Last status: ${lastFailure.status}`));
-      if (lastFailure.body) console.error(chalk.gray(lastFailure.body));
+      if (lastFailure.body) console.error(chalk.gray(printable(lastFailure.body)));
     } else if (lastFailure?.error instanceof Error) {
       // an aborted request is the 10 second limit, not a mystery
       const aborted = lastFailure.error.name === "AbortError" || lastFailure.error.name === "TimeoutError";
-      console.error(chalk.gray(aborted ? `The server did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds.` : describeFetchError(lastFailure.error)));
+      console.error(chalk.gray(aborted ? `The server did not answer within ${FETCH_TIMEOUT_MS / 1000} seconds.` : printable(describeFetchError(lastFailure.error))));
     }
     process.exitCode = 1;
     return;
@@ -362,12 +371,12 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
   // created events
   if (data.created?.length) {
     console.log(chalk.green("\nNew events:"));
-    data.created.forEach((e: string) => console.log(chalk.green(`+ ${e}`)));
+    data.created.forEach((e: string) => console.log(chalk.green(`+ ${printable(String(e))}`)));
   }
   // existing events
   if (data.existing?.length) {
     console.log(chalk.gray("\nExisting events:"));
-    data.existing.forEach((e: string) => console.log(chalk.gray(`• ${e}`)));
+    data.existing.forEach((e: string) => console.log(chalk.gray(`• ${printable(String(e))}`)));
   }
   // processing notice
   if (data.created?.length) {

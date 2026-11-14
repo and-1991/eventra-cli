@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-1359%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-1404%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -22,7 +22,7 @@ Eventra CLI statically discovers analytics events from [**@eventra_dev/eventra-s
 
 ## Overview
 
-The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`.
+The CLI scans TypeScript and JavaScript with the TypeScript compiler API and extracts **only** calls to `Eventra.prototype.track()` on instances of `Eventra` imported from `@eventra_dev/eventra-sdk`. A class of your own that is also called `Eventra` is not the SDK, and its `track()` calls are not counted.
 
 It does **not** detect generic `track()`, Segment, Google Analytics, or other libraries out of the box - but you can opt in to a third-party library with [`sinks`](#third-party-analytics-sinks) (PostHog, Segment, Amplitude and Google Analytics 4 have built-in presets). Framework files (e.g. `.vue`, `.svelte`, `.astro`, Angular's `.html` templates) require an optional [plugin](#plugins).
 
@@ -100,7 +100,7 @@ function trackDestructured({ event: name }: { event: string }) {
 trackDestructured({ event: "checkout" });
 ```
 
-A wrapper can call another wrapper, at any depth and across files. `trackEvent("x")` is found even when it only reaches the SDK through `capture`:
+A wrapper can call another wrapper, across files, up to a chain of eight wrappers (a cycle stops there too). `trackEvent("x")` is found even when it only reaches the SDK through `capture`:
 
 ```ts
 // capture.ts
@@ -136,7 +136,7 @@ These are limits, not bugs: the component is scanned as before, so nothing alrea
 
 | Where | Not followed |
 |-------|--------------|
-| Any code | a function given to `forEach`, `map`, `filter`, `addEventListener`, `then` and the like (`items.forEach((n) => track(n))`): its values are not in the code, so the call is listed as a dynamic name (`callback`) and fails `--strict`; a function given to a function of your own (`outer((s) => track(s))`) is listed "Inside a wrapper", and what `outer` passes it is not traced; calls through `.apply` and `.bind` (`track.call(this, name)` is read); a function handed to `forEach(wrapper)` by name |
+| Any code | a function given to `forEach`, `map`, `filter`, `addEventListener`, `then` and the like (`items.forEach((n) => track(n))`): its values are not in the code, so the call is listed as a dynamic name (`callback`) and fails `--strict`; a function given to a function of your own (`outer((s) => track(s))`) is listed "Inside a wrapper", and what `outer` passes it is not traced; calls through `.call`, `.apply` and `.bind`, except the SDK's own `tracker.track.call(thisArg, name)`, which is read (`trackWrapper.call(null, "x")` is not); a function handed to `forEach(wrapper)` by name |
 | React / JSX | a spread of something the analysis cannot see into (`{...load()}`, `{...unknownProps}`); a prop's default when the attribute is omitted; components from `node_modules`; a value that comes from a loop variable (`items.map(i => <B n={i.name} />)`) is a dynamic occurrence, not an event |
 | Vue | an Options API component whose `export default` is not the last statement, or whose `props` is not written out in the object; `this` inside a nested `function`; components registered by name and `<component :is>`; Nuxt auto-imported components (no `import`); a normal `<script>` with its own `export default` |
 | Svelte | `<svelte:component this={X}>`; `$$props` / `$$restProps`; a mixed prop value (`y="p-{x}"`; on `event` it is read as a template literal); an instance script with `export default`, `export *` or an import after code |
@@ -285,9 +285,9 @@ A code file that nests more than about 500 levels (a chain of a thousand `f().g(
 
 A `.vue`, `.svelte` or `.astro` file (anywhere `sync.exclude` does not exclude) is only read when its plugin is listed in `plugins`. When it is not, `sync` and `check` say how many files were left out and which package to install, count the scan as not clean, and `sync` keeps the events already in `eventra.json` instead of replacing them with the shorter list.
 
-`eventra.local.json` (it holds your API key) is created readable by you only. `eventra.json` keys the CLI does not know (such as `$schema`) are kept when it rewrites the file. A file whose code nests too deeply to analyse (for example a chain of thousands of `+`) is listed as skipped instead of stopping the scan. Errors are printed as one message; set `EVENTRA_DEBUG=1` for the stack trace. `eventra send` prints what went wrong (a refused endpoint, a missing key, a failed request, with its reason such as `ECONNREFUSED`) on stderr and keeps stdout for what went right. A key pasted with a space or a line break around it is trimmed.
+`eventra.local.json` (it holds your API key) is created readable by you only, and is never written through a symbolic link: if it is a link (for example one committed to the repository), `init` and `send` stop with a message instead of overwriting the file it points to. `eventra.json` keys the CLI does not know (such as `$schema`) are kept when it rewrites the file. A file whose code nests too deeply to analyse (for example a chain of thousands of `+`) is listed as skipped instead of stopping the scan. Errors are printed as one message; set `EVENTRA_DEBUG=1` for the stack trace. `eventra send` prints its errors (a refused endpoint, a missing key, a request that failed for good, with its reason such as `ECONNREFUSED`) on stderr; progress, warnings and the `Attempt n/4 failed ... Retrying` lines go to stdout. An `eventra.json` that exists but cannot be read (broken JSON, not an object) is reported by `send` as `eventra.json not found. Run 'eventra init'`; `sync` and `check` name the real problem. A key pasted with a space or a line break around it is trimmed.
 
-A `.ts`/`.tsx`/`.js`/`.jsx` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`.
+Text from the scanned repository and from the server (file names, event names, skip reasons, the server's error text) is printed with control characters shown as `\x1b`, `\n` and the like, so an escape sequence in a file name or a reply is never run by your terminal. A `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`.
 
 ### `eventra check`
 
@@ -333,7 +333,7 @@ Uploads `events` from config to the Eventra API. Requires an API key and an endp
 eventra send --trust-endpoint
 ```
 
-This records the endpoint in `eventra.local.json` (gitignored). If `eventra.json`'s `endpoint` later changes to a different value — e.g. a PR silently pointing it at another host — `send` blocks again until re-approved, so a committed config change alone can't redirect where your API key and events get sent.
+This records the approval for this project folder in your user settings, outside every repository: `~/.config/eventra/trusted-endpoints.json` (`$XDG_CONFIG_HOME/eventra` when set, `%APPDATA%\eventra` on Windows, or the folder in `EVENTRA_CONFIG_DIR`). If `eventra.json`'s `endpoint` later changes to a different value - e.g. a PR silently pointing it at another host - `send` blocks again until re-approved, and a file committed to the repository cannot approve it, so a committed change alone can't redirect where your API key and events get sent. (Before 2.6.8 the approval was kept in `eventra.local.json`, which a pull request could commit with `git add -f`; an approval found there is no longer used, and `send` says so and asks you to approve once more.)
 
 `EVENTRA_ENDPOINT` always wins over `eventra.json`: when it is set (and not empty), that is where events and the API key go, whatever the committed file says. The committed `endpoint` is only used when the variable is unset or empty, and then it needs the approval described above. (Before 2.6.3 the committed value won and the variable only skipped the approval prompt; a pull request could use that to redirect a CI run.)
 
@@ -486,7 +486,7 @@ External plugins export an object (or factory) with:
 
 No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads the plugin, converts `staticSinks` into its own internal sink detectors, and calls `transform()` on matching files; the plugin never imports anything from the CLI itself.
 
-**Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, restricting to `@eventra_dev/cli-plugin-*` means nothing outside that scope can ever be loaded this way. Any other entry in `plugins` is skipped with a console warning instead of being imported - third-party/community plugins aren't supported today. A plugin listed twice is loaded once, an entry that is not a string is skipped with a warning, and a plugin that cannot be loaded stops the scan with one line naming it (`EVENTRA_DEBUG=1` adds the stack).
+**Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, only names of the form `@eventra_dev/cli-plugin-*` are loaded. The check is on the name in `plugins` only: whatever your `node_modules` holds under that name is imported, so a `package.json` that installs something else under that name (an npm alias such as `"@eventra_dev/cli-plugin-vue": "npm:other-package"`, a `file:` or git dependency, or a folder committed into `node_modules`) is loaded too. Review changes to `package.json` and the lockfile as you would for any dependency (they can run install scripts anyway). Any other entry in `plugins` is skipped with a console warning instead of being imported - third-party/community plugins aren't supported today. A plugin listed twice is loaded once, an entry that is not a string is skipped with a warning, and a plugin that cannot be loaded stops the scan with one line naming it (`EVENTRA_DEBUG=1` adds the stack).
 
 ---
 
@@ -553,11 +553,11 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **1359 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1404 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** - 66 test files covering core modules:
+**Unit tests (vitest)** - 76 test files covering core modules:
 
 | Module | Covers |
 |---|---|
@@ -575,15 +575,16 @@ Two test layers, **1359 unit tests + 14 e2e fixtures + 3 `check` exit-code scena
 | `vue-shaped`/`svelte-shaped`/`astro-shaped` external plugin | Adapter path for script + template virtual modules and `staticSinks`, one suite per framework |
 | `processFile` | Script-kind detection, import/export specifier extraction |
 | `extractTemplateExpressions` | Vue/Svelte/Astro attribute patterns |
-| `config` | `normalizeConfig` (sort events, dedupe wrappers, defaults, preserve `apiKey`/`endpoint`/`sync`/`plugins`); `resolveApiKey` env-var > `eventra.local.json` > legacy-inline priority, `saveLocalApiKey`'s gitignore-append |
+| `config` | `normalizeConfig` (sort events, dedupe wrappers, defaults, preserve `apiKey`/`endpoint`/`sync`/`plugins`); `resolveApiKey` env-var > `eventra.local.json` > legacy-inline priority, `saveLocalApiKey`'s gitignore-append, no write through a symbolic link, endpoint approvals in the per-user folder (never read from `eventra.local.json`) |
 | `scanResults` (`buildConfigFromScan`) | Replace events + wrappers, preserve everything else |
 | `hash` | Stability and uniqueness |
+| `SDK class origin` | Only the SDK's own `Eventra` class counts: one declared in the CLI's `declare module "@eventra_dev/eventra-sdk"` stand-in or in a `.d.ts` of the installed package (a workspace link included); a class of your own named `Eventra`, or a folder called `eventra-sdk`, does not |
 | `cross-file SDK detection` | Direct `.track()` and wrapper calls resolve across files even when the call-site file never imports the SDK package itself |
 | `dynamic event reporter` | Dynamic vs. static call classification, end-to-end `registerDynamicEventReporter` invocation |
-| `load plugins` | Trusted-specifier allowlist (`^@eventra_dev/cli-plugin-[a-z0-9-]+$`), accepted/rejected plugin shapes |
+| `load plugins` | Trusted-specifier allowlist (`^@eventra_dev\/cli-plugin-[a-z0-9]+(?:-[a-z0-9]+)*$`), accepted/rejected plugin shapes |
 | `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution - a hand-written fixture; a real `nuxt prepare` project was also verified manually, but that check is not automated |
 | `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
-| `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval |
+| `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval, an approval committed in `eventra.local.json` ignored |
 | `wrapper detector plugin` | A custom `WrapperDetector` (e.g. a template-literal wrapper shape the built-in analyzer can't cover) alongside the built-in fallback |
 | `configured sinks` | `sinks` rules and the PostHog, Segment, Amplitude and GA4 presets: every call shape, receivers traced through imports, re-exports, hooks, typed fields and aliases, the `when` guard, spaced names, wrong-typed config, circular chains |
 | `sink presets` | The package table behind the presets: detection per package, order, legacy and detect-only flags, rules vetted only against their own preset's packages |

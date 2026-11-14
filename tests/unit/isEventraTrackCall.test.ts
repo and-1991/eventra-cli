@@ -10,7 +10,7 @@ import { isEventraSdkTrackCall } from "../../src/analysis/sdk/isEventraTrackCall
 
 // This suite extends coverage of isEventraSdkTrackCall beyond what
 // crossFileSdkDetection.test.ts already exercises (the cross-file
-// `.track()`/wrapper detection fix from AUDIT-CLI-SDK.md #9). That file
+// `.track()`/wrapper detection fix from docs/audits/AUDIT-CLI-SDK.md #9 in the monorepo). That file
 // covers the cross-file identifier/wrapper path end-to-end via EventraEngine;
 // this file targets isEventraSdkTrackCall directly (call, checker) => boolean
 // and sweeps the receiver/callee shapes the function itself branches on:
@@ -26,17 +26,11 @@ function makeProject(): { root: string; cleanup: () => void } {
 }
 
 /**
- * A real npm install of @eventra_dev/eventra-sdk resolves through
- * node_modules, so its own declaration file's path always contains
- * "@eventra_dev/eventra-sdk" — that substring match
- * (isEventraClassDeclaration in isEventraTrackCall.ts) is how a *direct*
- * `new Eventra(...).track(...)` chain (no intermediate variable) gets
- * detected, since that receiver shape bypasses the generic
- * type-string fallback entirely. Placing the shim at a matching path
- * here mirrors that real resolution layout instead of the shorter
- * "__eventra_sdk_types__.d.ts" virtual name other suites use (which is
- * sufficient for *those* suites only because they all go through an
- * intermediate variable, hitting the generic type-string fallback instead).
+ * The shim is placed where a real npm install of @eventra_dev/eventra-sdk would put the SDK's declarations. The
+ * SDK's `Eventra` is recognised by the shim's own `declare module "@eventra_dev/eventra-sdk"` block, wherever the
+ * file is (other suites use the "__eventra_sdk_types__.d.ts" name the scanner gives it), or by the name in the
+ * installed package's package.json (see eventraClassOrigin.test.ts); a class of the user's that is merely
+ * called `Eventra` never counts.
  */
 function shimPath(root: string): string {
   return path.join(root, "node_modules", "@eventra_dev", "eventra-sdk", "dist", "index.d.ts");

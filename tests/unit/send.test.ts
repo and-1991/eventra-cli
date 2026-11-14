@@ -99,18 +99,29 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(CUSTOM_ENDPOINT);
 
-    const local = await fs.readJSON(path.join(tmp, LOCAL_CONFIG_NAME));
-    expect(local.trustedEndpoint).toBe(CUSTOM_ENDPOINT);
-
-    // gitignored, so it can never end up committed alongside eventra.json
-    const gitignore = await fs.readFile(path.join(tmp, ".gitignore"), "utf8");
-    expect(gitignore).toContain(LOCAL_CONFIG_NAME);
+    // the approval is kept outside the project, never in a file a PR could commit
+    expect(await fs.pathExists(path.join(tmp, LOCAL_CONFIG_NAME))).toBe(false);
 
     fetchMock.mockClear();
     await send();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(fetchMock.mock.calls[0]?.[0]).toBe(CUSTOM_ENDPOINT);
     expect(process.exitCode).toBe(0);
+  });
+
+  it("ignores an approval committed in eventra.local.json, and says why", async () => {
+    // C1 of the 2026-11-10 audit: a PR adds eventra.local.json (git add -f) next to its endpoint
+    await setEndpoint(CUSTOM_ENDPOINT);
+    await fs.writeJSON(path.join(tmp, LOCAL_CONFIG_NAME), { trustedEndpoint: CUSTOM_ENDPOINT });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(process.exitCode).toBe(1);
+    const out = logSpy.mock.calls.flat().join("\n");
+    expect(out).toContain("not locally approved");
+    expect(out).toContain("no longer read for this");
   });
 
   it("re-blocks when eventra.json's endpoint changes again after being trusted", async () => {
@@ -281,6 +292,23 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(fetchMock).not.toHaveBeenCalled();
     expect(logSpy.mock.calls.flat().join("\n")).toContain("No events found");
     expect(process.exitCode).toBe(1);
+  });
+
+  it("prints the server's error text with escape sequences shown, not run", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockResolvedValue({
+      ok: false,
+      status: 401,
+      text: async () => "bad\u001b]8;;http://evil\u0007key",
+    });
+
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await send();
+
+    const output = [...logSpy.mock.calls, ...errSpy.mock.calls].flat().join("\n");
+    expect(output).not.toContain("\u001b");
+    expect(output).toContain("bad\\x1b]8;;http://evil\\x07key");
   });
 
   it("fails the process on a definitive non-retryable failure (e.g. 401)", async () => {

@@ -59,7 +59,7 @@ export function formatSkipped(skipped: readonly SkippedFile[], cwd: string): str
     `Skipped ${skipped.length} file${skipped.length === 1 ? "" : "s"} that could not be analysed:`,
   ];
   for (const { file, reason } of skipped) {
-    lines.push(`  ${path.relative(cwd, file).replace(/\\/g, "/")}: ${reason}`);
+    lines.push(`  ${relativeTo(cwd, file)}: ${printable(reason)}`);
   }
   return lines;
 }
@@ -85,7 +85,7 @@ export function formatIgnored(ignored: readonly SkippedFile[], cwd: string): str
     `Ignored ${ignored.length} file${ignored.length === 1 ? "" : "s"} (not analysed):`,
   ];
   for (const { file, reason } of ignored) {
-    lines.push(`  ${path.relative(cwd, file).replace(/\\/g, "/")}: ${reason}`);
+    lines.push(`  ${relativeTo(cwd, file)}: ${printable(reason)}`);
   }
   return lines;
 }
@@ -97,7 +97,8 @@ export function reportIgnored(ignored: readonly SkippedFile[], cwd: string = pro
   console.error(chalk.gray(lines.join("\n")));
 }
 
-const relativeTo = (cwd: string, file: string): string => path.relative(cwd, file).replace(/\\/g, "/");
+// a file name comes from the repository being scanned: it can hold an escape sequence like any string in it
+const relativeTo = (cwd: string, file: string): string => printable(path.relative(cwd, file).replace(/\\/g, "/"));
 
 /**
  * Files the parser reported a syntax error in. They are analysed all the same, so this is a heads-up,
@@ -107,7 +108,7 @@ export function formatSyntaxErrors(files: readonly SkippedFile[], cwd: string): 
   if (files.length === 0) return [];
   const lines = [`Syntax errors in ${files.length} file${files.length === 1 ? "" : "s"} (events after the error may be missed):`];
   for (const { file, reason } of files) {
-    lines.push(`  ${relativeTo(cwd, file)}: ${reason}`);
+    lines.push(`  ${relativeTo(cwd, file)}: ${printable(reason)}`);
   }
   return lines;
 }
@@ -124,7 +125,7 @@ export function formatPluginNotes(notes: readonly SkippedFile[], cwd: string): s
   if (notes.length === 0) return [];
   const lines = [`Notes from plugins on ${notes.length} file${notes.length === 1 ? "" : "s"}:`];
   for (const { file, reason } of notes) {
-    lines.push(`  ${relativeTo(cwd, file)}: ${reason}`);
+    lines.push(`  ${relativeTo(cwd, file)}: ${printable(reason)}`);
   }
   return lines;
 }
@@ -148,7 +149,7 @@ export function formatRejectedNames(rejected: readonly RejectedName[], cwd: stri
   for (const item of shown) {
     const file = relativeTo(cwd, item.fileName);
     const where = item.inTemplate || item.inTemplateCode ? `template of ${file}` : `${file}:${item.line}`;
-    lines.push(`  ${where} "${printable(item.name)}": ${item.reason}`);
+    lines.push(`  ${where} "${printable(item.name)}": ${printable(item.reason)}`);
   }
   return lines;
 }
@@ -213,7 +214,7 @@ export function reportPartial(partial: readonly SkippedFile[], cwd: string = pro
   if (partial.length === 0) return;
   const files = new Set(partial.map((item) => item.file)).size;
   const lines = [`${files} file${files === 1 ? " was" : "s were"} read only in part (the events in what was left out are not in this scan):`];
-  for (const { file, reason } of partial) lines.push(`  ${relativeTo(cwd, file)}: ${reason}`);
+  for (const { file, reason } of partial) lines.push(`  ${relativeTo(cwd, file)}: ${printable(reason)}`);
   console.error(chalk.yellow(lines.join("\n")));
 }
 

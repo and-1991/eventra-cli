@@ -51,6 +51,23 @@ describe("processFile", () => {
     expect(out.content).toContain("const c");
   });
 
+  it("reads .mts and .cts as TypeScript without JSX, so a generic arrow or an angle-bracket cast is not a syntax error", async () => {
+    const code = 'export const g = <T>(x: T): T => x;\nexport const s = <string>"x";\n';
+    for (const name of ["/x.mts", "/x.cts"]) {
+      const out = await processFile(name, code);
+      expect(out.scriptKind).toBe(ts.ScriptKind.TS);
+      expect(out.syntaxError).toBeUndefined();
+    }
+  });
+
+  it("reads .mjs and .cjs as JavaScript, as .js is", async () => {
+    for (const name of ["/x.mjs", "/x.cjs"]) {
+      const out = await processFile(name, "export const A = () => 1;");
+      expect(out.scriptKind).toBe(ts.ScriptKind.JS);
+      expect(out.syntaxError).toBeUndefined();
+    }
+  });
+
   it("does not report a valid file, a type error, or TypeScript syntax in a script", async () => {
     expect((await processFile("/x.ts", "export const A: number = 'not a number';")).syntaxError).toBeUndefined();
     expect((await processFile("/x.tsx", "export const A = () => <div>{1}</div>;")).syntaxError).toBeUndefined();

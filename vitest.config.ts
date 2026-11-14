@@ -5,6 +5,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/unit/**/*.test.ts"],
     globals: false,
+    setupFiles: ["tests/unit/setup-config-dir.ts"],
     // Most tests build a real TypeScript program; the 5s default is not
     // enough on a loaded or small CI runner and fails the suite at random.
     testTimeout: 60_000,
@@ -14,7 +15,7 @@ export default defineConfig({
       // resolverTestUtils.ts is fixture/test-support code (its `throw new
       // Error` guards only fire when a *test* is written wrong), not product
       // code - it shouldn't be held to the same coverage bar as src/.
-      exclude: ["tests/unit/resolverTestUtils.ts", "tests/differential/**"],
+      exclude: ["tests/unit/resolverTestUtils.ts", "tests/unit/setup-config-dir.ts", "tests/differential/**"],
       thresholds: {
         statements: 100,
         branches: 100,

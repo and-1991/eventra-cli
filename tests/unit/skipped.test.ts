@@ -70,6 +70,13 @@ describe("formatSkipped / reportSkipped", () => {
     expect(formatSkipped([], "/p")).toEqual([]);
   });
 
+  it("shows an escape sequence in a file name or reason instead of sending it to the terminal", () => {
+    const lines = formatSkipped([{ file: "/p/src/\u001b[2Jx.ts", reason: "bad \u001b[31m" }], "/p");
+
+    expect(lines[1]).toBe("  src/\\x1b[2Jx.ts: bad \\x1b[31m");
+    expect(formatSyntaxErrors([{ file: "/p/\u202ea.ts", reason: "x" }], "/p")[1]).toBe("  \\u202ea.ts: x");
+  });
+
   it("lists each file once, relative to the project, under one header", () => {
     expect(formatSkipped(skipped, "/p")).toEqual([
       "Skipped 2 files that could not be analysed:",

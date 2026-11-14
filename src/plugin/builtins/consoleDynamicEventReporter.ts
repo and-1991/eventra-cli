@@ -12,7 +12,8 @@ function displayPath(fileName: string): string {
   // path.relative always joins with path.sep, so that is the only separator to look for
   const outside = relative === ".." || relative.startsWith(`..${path.sep}`);
   const shown = relative && !outside && !path.isAbsolute(relative) ? relative : fileName;
-  return shown.replace(/\\/g, "/");
+  // a file name comes from the scanned repository and can hold an escape sequence
+  return printable(shown.replace(/\\/g, "/"));
 }
 
 const CAUSE_TEXT: Readonly<Record<string, string>> = {
@@ -30,7 +31,7 @@ const COMPONENT_CALLEE = /^__eventraChild\w*\.prototype\.(\w+)$/;
 /** The name of what is called, without the plugin's internal wiring. */
 function calleeName(calleeText: string): string {
   const component = COMPONENT_CALLEE.exec(calleeText);
-  return component ? `<${component[1]}>` : calleeText;
+  return component ? `<${component[1]}>` : printable(calleeText);
 }
 
 function line(occ: DynamicOccurrence, withCause: boolean): string {

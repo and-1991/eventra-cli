@@ -1,6 +1,8 @@
 import chalk from "chalk";
 import fs from "fs-extra";
+import os from "os";
 import path from "path";
+import { randomBytes } from "crypto";
 
 import { MAX_FILE_CHARS, fileLimit } from "../core/fileLimits";
 import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
@@ -290,6 +292,7 @@ export async function saveConfig(config: EventraConfig): Promise<void> {
 
 interface LocalSecrets {
   apiKey?: string;
+  /** Read only to tell the user that approvals moved out of this file; never trusted (see getTrustedEndpoint). */
   trustedEndpoint?: string;
 }
 
@@ -312,17 +315,41 @@ async function readLocalSecrets(): Promise<LocalSecrets> {
   }
 }
 
-async function writeLocalSecrets(patch: LocalSecrets): Promise<void> {
-  const localPath = path.join(process.cwd(), LOCAL_CONFIG_NAME);
-  const next: LocalSecrets = { ...(await readLocalSecrets()), ...patch };
-  const out: LocalSecrets = {};
-  if (next.apiKey) out.apiKey = next.apiKey;
-  if (next.trustedEndpoint) out.trustedEndpoint = next.trustedEndpoint;
+/**
+ * Writes `content` to `filePath` with mode 600, never through a symbolic link: a repository can commit
+ * `eventra.local.json` as a link to any file (a shell profile, a tracked source file), and following it
+ * would overwrite that file, or put the API key into a file that gets committed. The data goes to a
+ * temporary file next to it first and is renamed into place, so a reader never sees half a file.
+ */
+async function writePrivateFile(filePath: string, content: string): Promise<void> {
+  const stat = await fs.lstat(filePath).catch(() => undefined);
+  if (stat?.isSymbolicLink()) {
+    throw new Error(
+      `${filePath} is a symbolic link. Eventra stores an API key there and does not write through links: delete the link and run the command again.`,
+    );
+  }
+  if (stat && !stat.isFile()) {
+    throw new Error(`${filePath} is not a regular file: delete it and run the command again.`);
+  }
+  const tmpPath = `${filePath}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
+  try {
+    // "wx": fails instead of following anything already at the temporary name
+    await fs.writeFile(tmpPath, content, { mode: 0o600, flag: "wx" });
+    await fs.rename(tmpPath, filePath);
+  } catch (err) {
+    // a failed cleanup must not hide the error that matters
+    await Promise.allSettled([fs.remove(tmpPath)]);
+    throw err;
+  }
+}
 
-  // the file holds an API key: readable by its owner only (the mode applies when it is created; an old
-  // file written with the default mode is tightened too)
-  await fs.writeFile(localPath, `${JSON.stringify(out, null, 2)}\n`, { mode: 0o600 });
-  await fs.chmod(localPath, 0o600).catch(() => undefined);
+async function writeLocalSecrets(patch: { apiKey: string }): Promise<void> {
+  const localPath = path.join(process.cwd(), LOCAL_CONFIG_NAME);
+  // the key is all the file holds; an old `trustedEndpoint` is dropped, approvals live outside the repository now
+  const out: LocalSecrets = { apiKey: patch.apiKey };
+
+  // the file holds an API key: readable by its owner only
+  await writePrivateFile(localPath, `${JSON.stringify(out, null, 2)}\n`);
   await ensureGitignored(LOCAL_CONFIG_NAME);
 }
 
@@ -359,17 +386,64 @@ export async function saveLocalApiKey(apiKey: string): Promise<void> {
 }
 
 /**
- * The `endpoint` a locally-run `eventra send` last approved, trust-on-first-use
- * style — a non-default `endpoint` sourced from the *committed* `eventra.json`
- * must match this before it's used, so a PR silently changing it can't redirect
- * `send` (and the API key with it) without a human approving it locally once.
+ * Where endpoint approvals are kept: a per-user folder outside every repository
+ * (`$EVENTRA_CONFIG_DIR`, else `$XDG_CONFIG_HOME/eventra`, `%APPDATA%\\eventra` on Windows,
+ * `~/.config/eventra`). They used to live in `eventra.local.json` inside the project, but a pull
+ * request can commit that file (`git add -f`) together with an `endpoint` in `eventra.json` and so
+ * approve its own endpoint, which is exactly what the approval exists to stop.
  */
-export async function getTrustedEndpoint(): Promise<string | undefined> {
-  const { trustedEndpoint } = await readLocalSecrets();
-  return trustedEndpoint;
+export function eventraConfigDir(): string {
+  if (process.env.EVENTRA_CONFIG_DIR) return process.env.EVENTRA_CONFIG_DIR;
+  if (process.env.XDG_CONFIG_HOME) return path.join(process.env.XDG_CONFIG_HOME, "eventra");
+  if (process.platform === "win32" && process.env.APPDATA) return path.join(process.env.APPDATA, "eventra");
+  return path.join(os.homedir(), ".config", "eventra");
 }
 
-/** Records `endpoint` as locally approved (see `getTrustedEndpoint`). */
+const TRUST_FILE = "trusted-endpoints.json";
+
+async function projectKey(): Promise<string> {
+  // the real path, so the same project reached through a link is one entry
+  return fs.realpath(process.cwd()).catch(() => path.resolve(process.cwd()));
+}
+
+async function readTrustStore(): Promise<Record<string, string>> {
+  const file = path.join(eventraConfigDir(), TRUST_FILE);
+  try {
+    const parsed = await fs.readJSON(file);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: Record<string, string> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (typeof value === "string" && value) out[key] = value;
+    }
+    return out;
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * The `endpoint` that `eventra send --trust-endpoint` approved for this project, trust-on-first-use
+ * style: a non-default `endpoint` from the committed `eventra.json` must match it before it is used,
+ * so a PR changing it cannot redirect `send` (and the API key with it). Read from the per-user
+ * folder only (see `eventraConfigDir`), never from a file inside the project.
+ */
+export async function getTrustedEndpoint(): Promise<string | undefined> {
+  return (await readTrustStore())[await projectKey()];
+}
+
+/** Records `endpoint` as approved for this project (see `getTrustedEndpoint`). */
 export async function trustEndpoint(endpoint: string): Promise<void> {
-  await writeLocalSecrets({ trustedEndpoint: endpoint });
+  const dir = eventraConfigDir();
+  await fs.mkdirp(dir, { mode: 0o700 });
+  const store = await readTrustStore();
+  store[await projectKey()] = endpoint;
+  await writePrivateFile(path.join(dir, TRUST_FILE), `${JSON.stringify(store, null, 2)}\n`);
+}
+
+/**
+ * An approval left in `eventra.local.json` by a CLI before 2.6.8. It is never trusted; `send` only
+ * uses it to explain why an endpoint that used to work needs approving once more.
+ */
+export async function getLegacyTrustedEndpoint(): Promise<string | undefined> {
+  return (await readLocalSecrets()).trustedEndpoint;
 }

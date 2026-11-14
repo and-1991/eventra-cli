@@ -262,3 +262,19 @@ describe("scanProject: syntax errors in a plugin's component files", () => {
     expect((await scanProject(withPlugin())).syntaxErrors).toEqual([]);
   });
 });
+
+describe("scanProject: many calls of another tracker's track()", () => {
+  // C5 of AUDIT-2026-11-10: 20k such calls took minutes (quadratic); now linear. 10k ran ~4.5 s before the fix and
+  // ~1.3 s after, so the bound leaves room for a slow CI machine while still catching a return of the old growth.
+  it("scans a file with 10,000 analytics.track() calls in linear time", async () => {
+    write("src/seg.ts", "export const analytics = { track(name: string, props?: object) {} };\n");
+    const calls = Array.from({ length: 10_000 }, (_, i) => `analytics.track("seg_${i}", { i: ${i} });`).join("\n");
+    write("src/app.ts", `${SDK_IMPORT}import { analytics } from "./seg";\nt.track("real.event");\n${calls}\n`);
+
+    const started = Date.now();
+    const { engine } = await scanProject(config());
+
+    expect(engine.getAllEvents()).toEqual(["real.event"]);
+    expect(Date.now() - started).toBeLessThan(15_000);
+  }, 60_000);
+});

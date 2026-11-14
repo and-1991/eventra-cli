@@ -15,6 +15,8 @@ import {
   saveConfig,
   saveLocalApiKey,
   trustEndpoint,
+  eventraConfigDir,
+  getLegacyTrustedEndpoint,
   warnInlineApiKey,
 } from "../../src/config/config";
 import { EventraConfig } from "../../src/types";
@@ -259,11 +261,113 @@ describe("resolveApiKey / saveLocalApiKey", () => {
     expect(await getTrustedEndpoint()).toBeUndefined();
   });
 
-  it("getTrustedEndpoint / trustEndpoint round-trip through eventra.local.json", async () => {
+  it("getTrustedEndpoint / trustEndpoint round-trip through the per-user folder, per project", async () => {
     expect(await getTrustedEndpoint()).toBeUndefined();
 
     await trustEndpoint("https://ingest.example.com/api/v1/cli/events");
     expect(await getTrustedEndpoint()).toBe("https://ingest.example.com/api/v1/cli/events");
+    expect(await fs.pathExists(path.join(tmp, LOCAL_CONFIG_NAME))).toBe(false);
+
+    const store = await fs.readJSON(path.join(eventraConfigDir(), "trusted-endpoints.json"));
+    expect(store[await fs.realpath(tmp)]).toBe("https://ingest.example.com/api/v1/cli/events");
+    if (process.platform !== "win32") {
+      expect((await fs.stat(path.join(eventraConfigDir(), "trusted-endpoints.json"))).mode & 0o777).toBe(0o600);
+    }
+
+    // another project has no approval
+    const other = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-config-other-"));
+    process.chdir(other);
+    try {
+      expect(await getTrustedEndpoint()).toBeUndefined();
+    } finally {
+      process.chdir(tmp);
+      fs.removeSync(other);
+    }
+  });
+
+  it("never reads an approval from eventra.local.json", async () => {
+    await fs.writeJSON(path.join(tmp, LOCAL_CONFIG_NAME), { trustedEndpoint: "https://evil.example.com" });
+
+    expect(await getTrustedEndpoint()).toBeUndefined();
+    expect(await getLegacyTrustedEndpoint()).toBe("https://evil.example.com");
+  });
+
+  it("drops an old trustedEndpoint from eventra.local.json when the key is saved", async () => {
+    await fs.writeJSON(path.join(tmp, LOCAL_CONFIG_NAME), { trustedEndpoint: "https://x.example.com" });
+    await saveLocalApiKey("k");
+
+    expect(await fs.readJSON(path.join(tmp, LOCAL_CONFIG_NAME))).toEqual({ apiKey: "k" });
+  });
+
+  it("treats a damaged approvals file as no approval", async () => {
+    const file = path.join(eventraConfigDir(), "trusted-endpoints.json");
+    await fs.mkdirp(eventraConfigDir());
+    for (const content of ["{ not json", "[1]", "null", JSON.stringify({ [await fs.realpath(tmp)]: 5 })]) {
+      await fs.writeFile(file, content);
+      expect(await getTrustedEndpoint()).toBeUndefined();
+    }
+    await fs.remove(file);
+  });
+
+  it("keys a project by its path when the real path cannot be read", async () => {
+    const realpath = vi.spyOn(fs, "realpath").mockRejectedValue(new Error("gone") as never);
+    try {
+      await trustEndpoint("https://ingest.example.com/a");
+      expect(await getTrustedEndpoint()).toBe("https://ingest.example.com/a");
+    } finally {
+      realpath.mockRestore();
+    }
+  });
+
+  it("refuses to write eventra.local.json through a symbolic link", async () => {
+    // C2 of the 2026-11-10 audit: a repo commits eventra.local.json -> some other file
+    const victim = path.join(tmp, "victim.txt");
+    await fs.writeFile(victim, "keep me");
+    await fs.symlink(victim, path.join(tmp, LOCAL_CONFIG_NAME));
+
+    await expect(saveLocalApiKey("secret")).rejects.toThrow("is a symbolic link");
+    expect(await fs.readFile(victim, "utf8")).toBe("keep me");
+    expect((await fs.readdir(tmp)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("refuses to write eventra.local.json when it is not a regular file", async () => {
+    await fs.mkdir(path.join(tmp, LOCAL_CONFIG_NAME));
+
+    await expect(saveLocalApiKey("secret")).rejects.toThrow("is not a regular file");
+  });
+
+  it("removes its temporary file when the write fails", async () => {
+    const rename = vi.spyOn(fs, "rename").mockRejectedValue(new Error("disk full") as never);
+    try {
+      await expect(saveLocalApiKey("secret")).rejects.toThrow("disk full");
+    } finally {
+      rename.mockRestore();
+    }
+    expect((await fs.readdir(tmp)).filter((f) => f.endsWith(".tmp"))).toEqual([]);
+  });
+
+  it("finds the approvals folder from the environment, else the home folder", () => {
+    const saved = { ...process.env };
+    const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+    try {
+      process.env.EVENTRA_CONFIG_DIR = "/custom";
+      expect(eventraConfigDir()).toBe("/custom");
+
+      delete process.env.EVENTRA_CONFIG_DIR;
+      process.env.XDG_CONFIG_HOME = "/xdg";
+      expect(eventraConfigDir()).toBe(path.join("/xdg", "eventra"));
+
+      delete process.env.XDG_CONFIG_HOME;
+      Object.defineProperty(process, "platform", { value: "win32" });
+      process.env.APPDATA = "C:/AppData";
+      expect(eventraConfigDir()).toBe(path.join("C:/AppData", "eventra"));
+
+      delete process.env.APPDATA;
+      expect(eventraConfigDir()).toBe(path.join(os.homedir(), ".config", "eventra"));
+    } finally {
+      Object.defineProperty(process, "platform", platform);
+      process.env = saved;
+    }
   });
 });
 

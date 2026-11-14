@@ -1,6 +1,7 @@
 import ts from "typescript";
 
 import {resolveExportedSymbol} from "./exportResolver";
+import {memberOfDeclaredType} from "../shared/declaredType";
 import {ResolvedCallCache} from "../cache/resolvedCallCache";
 import {ResolvedExportCache} from "../cache/resolvedExportCache";
 import {unwrapExpression} from "../shared/utils";
@@ -196,9 +197,9 @@ function resolveDeclaration(declaration: ts.Declaration, checker: ts.TypeChecker
 }
 
 function getExpressionSymbol(expression: ts.Expression, checker: ts.TypeChecker): ts.Symbol | undefined {
-  // analytics.track()
+  // analytics.track(): from the declared type of `analytics` when that settles it, which skips a flow analysis per call
   if (ts.isPropertyAccessExpression(expression,)) {
-    return checker.getSymbolAtLocation(expression.name);
+    return memberOfDeclaredType(expression.expression, expression.name.text, checker) ?? checker.getSymbolAtLocation(expression.name);
   }
   // analytics?.track()
   // A PropertyAccessChain has the exact same SyntaxKind (PropertyAccessExpression)

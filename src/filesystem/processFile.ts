@@ -57,11 +57,14 @@ export interface ProcessedFile {
   readonly syntaxError?: { readonly line: number; readonly message: string };
 }
 
+// `.mts` and `.cts` are TypeScript without JSX, as `.ts` is: read as JavaScript, `<T>(x: T) => x` and `<string>value`
+// looked like broken JSX and were reported as syntax errors. `.mjs` and `.cjs` are JavaScript, as `.js` is (the
+// compiler reads them the same way).
 function getScriptKind(fileName: string): ts.ScriptKind {
   if (fileName.endsWith(".tsx")) {
     return ts.ScriptKind.TSX;
   }
-  if (fileName.endsWith(".ts")) {
+  if (fileName.endsWith(".ts") || fileName.endsWith(".mts") || fileName.endsWith(".cts")) {
     return ts.ScriptKind.TS;
   }
   if (fileName.endsWith(".jsx")) {
