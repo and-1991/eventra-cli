@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-1404%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-1419%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -100,6 +100,8 @@ function trackDestructured({ event: name }: { event: string }) {
 trackDestructured({ event: "checkout" });
 ```
 
+A wrapper called through `call` or `apply` counts too: `trackFeature.call(this, "purchase")` reads the name after `this`, and `trackFeature.apply(this, ["purchase"])` reads it from the array when the array is written out in place.
+
 A wrapper can call another wrapper, across files, up to a chain of eight wrappers (a cycle stops there too). `trackEvent("x")` is found even when it only reaches the SDK through `capture`:
 
 ```ts
@@ -161,6 +163,8 @@ tracker.track(`feature_${type}`);
 
 tracker.track(flag ? "path.a" : "path.b");
 ```
+
+A template whose every part has one known value (`const type = "signup"`) is that one name, `feature_signup`, and is not listed as a dynamic name.
 
 ### Cross-file
 
@@ -287,7 +291,7 @@ A `.vue`, `.svelte` or `.astro` file (anywhere `sync.exclude` does not exclude) 
 
 `eventra.local.json` (it holds your API key) is created readable by you only, and is never written through a symbolic link: if it is a link (for example one committed to the repository), `init` and `send` stop with a message instead of overwriting the file it points to. `eventra.json` keys the CLI does not know (such as `$schema`) are kept when it rewrites the file. A file whose code nests too deeply to analyse (for example a chain of thousands of `+`) is listed as skipped instead of stopping the scan. Errors are printed as one message; set `EVENTRA_DEBUG=1` for the stack trace. `eventra send` prints its errors (a refused endpoint, a missing key, a request that failed for good, with its reason such as `ECONNREFUSED`) on stderr; progress, warnings and the `Attempt n/4 failed ... Retrying` lines go to stdout. An `eventra.json` that exists but cannot be read (broken JSON, not an object) is reported by `send` as `eventra.json not found. Run 'eventra init'`; `sync` and `check` name the real problem. A key pasted with a space or a line break around it is trimmed.
 
-Text from the scanned repository and from the server (file names, event names, skip reasons, the server's error text) is printed with control characters shown as `\x1b`, `\n` and the like, so an escape sequence in a file name or a reply is never run by your terminal. A `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`.
+Text from the scanned repository and from the server (file names, event names, skip reasons, the server's error text) is printed with control characters shown as `\x1b`, `\n` and the like, so an escape sequence in a file name or a reply is never run by your terminal. A `.ts`/`.tsx`/`.mts`/`.cts`/`.js`/`.jsx`/`.mjs`/`.cjs` file the TypeScript parser reports syntax errors for is still scanned, but it is listed in a separate note: events after the error may be missed. It is not a skipped file, so it does not keep known events, but `--strict` fails on it. Event names the CLI cannot accept (see [Event name rules](#event-name-rules-aligned-with-sdk)) are listed in a note as well. When the scan was not clean (skipped files, syntax errors, rejected or dynamic names, files over the size limit), the last line says so: `The scan was not clean: 1 skipped file, ...`. A component file whose template holds an expression that does not parse (for example an Astro `onclick={() => track("x"}`, which the Astro compiler lets through) is listed the same way, without a line number (`the code built from the template does not parse`).
 
 ### `eventra check`
 
@@ -486,7 +490,7 @@ External plugins export an object (or factory) with:
 
 No dependency on `@eventra_dev/eventra-cli` is required — the host CLI loads the plugin, converts `staticSinks` into its own internal sink detectors, and calls `transform()` on matching files; the plugin never imports anything from the CLI itself.
 
-**Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, only names of the form `@eventra_dev/cli-plugin-*` are loaded. The check is on the name in `plugins` only: whatever your `node_modules` holds under that name is imported, so a `package.json` that installs something else under that name (an npm alias such as `"@eventra_dev/cli-plugin-vue": "npm:other-package"`, a `file:` or git dependency, or a folder committed into `node_modules`) is loaded too. Review changes to `package.json` and the lockfile as you would for any dependency (they can run install scripts anyway). Any other entry in `plugins` is skipped with a console warning instead of being imported - third-party/community plugins aren't supported today. A plugin listed twice is loaded once, an entry that is not a string is skipped with a warning, and a plugin that cannot be loaded stops the scan with one line naming it (`EVENTRA_DEBUG=1` adds the stack).
+**Only official `@eventra_dev/cli-plugin-*` packages can be loaded.** `eventra.json` is meant to be committed to git, so its `plugins` array is effectively PR-editable; since the CLI `import()`s whatever is listed there, an arbitrary specifier would be arbitrary code execution on every machine that runs `sync`/`check`/`watch`. Because `@eventra_dev` is an npm scope only the Eventra maintainers can publish to, only names of the form `@eventra_dev/cli-plugin-*` are loaded. Before importing, the CLI also reads the `name` in the installed package's own `package.json`: a package that calls itself something else (an npm alias such as `"@eventra_dev/cli-plugin-vue": "npm:other-package"`, or a git dependency of another package) is refused with a message. A `file:` dependency or a folder committed into `node_modules` can still claim the official name in its `package.json` and be loaded. Review changes to `package.json` and the lockfile as you would for any dependency (they can run install scripts anyway). Any other entry in `plugins` is skipped with a console warning instead of being imported - third-party/community plugins aren't supported today. A plugin listed twice is loaded once, an entry that is not a string is skipped with a warning, and a plugin that cannot be loaded stops the scan with one line naming it (`EVENTRA_DEBUG=1` adds the stack).
 
 ---
 
@@ -553,7 +557,7 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **1404 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1419 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 

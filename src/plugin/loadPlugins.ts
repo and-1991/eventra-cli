@@ -1,4 +1,5 @@
 import { createRequire } from "module";
+import fs from "fs";
 import path from "path";
 
 import type { EventraConfig } from "../types";
@@ -53,6 +54,44 @@ function resolveFromProject(spec: string): string {
   }
 }
 
+/** The `name` of the nearest package.json above a resolved file, or undefined when there is none. */
+export function installedPackageName(resolved: string): string | undefined {
+  let dir = path.dirname(resolved);
+  for (;;) {
+    const manifest = path.join(dir, "package.json");
+    if (fs.existsSync(manifest)) {
+      let name: unknown;
+      try {
+        name = (JSON.parse(fs.readFileSync(manifest, "utf8")) as { name?: unknown } | null)?.name;
+      } catch {
+        name = undefined;
+      }
+      // a package.json without a name (a nested build folder) or one that cannot be read is not the
+      // package's own: keep looking upwards
+      if (typeof name === "string") return name;
+    }
+    const parent = path.dirname(dir);
+    if (parent === dir) return undefined;
+    dir = parent;
+  }
+}
+
+/**
+ * The name in `plugins` only says what to import. An npm alias
+ * (`"@eventra_dev/cli-plugin-vue": "npm:other-package"`) or a git dependency
+ * installs another package under that name, and its own package.json says so:
+ * such a package is refused instead of being run.
+ */
+function assertInstalledUnderItsOwnName(spec: string, resolved: string): void {
+  if (resolved === spec) return; // not found in the project: import() reports the missing package
+  const name = installedPackageName(resolved);
+  if (name !== undefined && name !== spec) {
+    throw new Error(
+      `Refusing to load plugin "${spec}": the package installed under that name is "${name}" (an npm alias or a renamed package). Install the official package with: npm install -D ${spec}`,
+    );
+  }
+}
+
 async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promise<void> {
   const trimmed = spec.trim();
   // Defensive-only: the sole caller (createPluginRegistry) already does
@@ -62,9 +101,12 @@ async function loadExternalPlugin(registry: PluginRegistry, spec: string): Promi
   /* v8 ignore next */
   if (!trimmed) return;
 
+  const resolved = resolveFromProject(trimmed);
+  assertInstalledUnderItsOwnName(trimmed, resolved);
+
   let mod: unknown;
   try {
-    mod = await import(resolveFromProject(trimmed));
+    mod = await import(resolved);
   } catch (err) {
     // Node's dynamic import() only ever rejects with an Error (module
     // resolution, syntax, or evaluation errors are all Error instances) —

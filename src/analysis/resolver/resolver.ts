@@ -446,13 +446,17 @@ export function resolveNodeValue(node: ts.Node, checker: ts.TypeChecker, context
     }
     if (ts.isTemplateExpression(node)) {
       let values = [node.head.text];
+      // a template whose every part is one known value (`feature_${type}` with `const type = "signup"`)
+      // is that one name, not a dynamic one
+      let dynamic = false;
       for (const span of node.templateSpans) {
         const resolved = resolveNodeValue(span.expression, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+        if (resolved.dynamic || resolved.values.length !== 1) dynamic = true;
         values = concat(values, resolved.values.map(value => value + span.literal.text));
       }
       return {
         values: unique(values),
-        dynamic: true,
+        dynamic,
       };
     }
     if (ts.isConditionalExpression(node)) {

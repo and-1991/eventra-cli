@@ -3,7 +3,7 @@ import * as os from "os";
 import * as path from "path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { createPluginRegistry, isTrustedPluginSpecifier } from "../../src/plugin/loadPlugins";
+import { createPluginRegistry, installedPackageName, isTrustedPluginSpecifier } from "../../src/plugin/loadPlugins";
 import { normalizeConfig } from "../../src/config/config";
 import type { EventraConfig } from "../../src/types";
 
@@ -287,6 +287,71 @@ describe("createPluginRegistry: resolves plugins from the user's project", () =>
       expect(registry.getIncludePatterns()).toContain("**/*.localtest");
     } finally {
       fs.rmSync(project, { recursive: true, force: true });
+    }
+  });
+
+  const PLUGIN_JS =
+    'module.exports = { id: "aliastest", includeGlobs: ["**/*.aliastest"], match: () => false, transform: async () => ({ modules: [] }) };';
+
+  // a package folder under the official name, holding whatever package.json `manifest` is (none when null)
+  const withInstalled = async (manifest: string | null, run: () => Promise<void>, extra?: (dir: string) => void) => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-plugin-alias-"));
+    try {
+      const dir = path.join(project, "node_modules", "@eventra_dev", "cli-plugin-aliastest");
+      fs.mkdirSync(dir, { recursive: true });
+      if (manifest !== null) fs.writeFileSync(path.join(dir, "package.json"), manifest);
+      fs.writeFileSync(path.join(dir, "index.js"), PLUGIN_JS);
+      extra?.(dir);
+      vi.spyOn(process, "cwd").mockReturnValue(project);
+      await run();
+    } finally {
+      fs.rmSync(project, { recursive: true, force: true });
+    }
+  };
+  const load = () => createPluginRegistry(normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-aliastest"] }));
+
+  it("refuses a package installed under the official name that calls itself something else (an npm alias)", async () => {
+    await withInstalled(JSON.stringify({ name: "evil-package", main: "index.js" }), async () => {
+      await expect(load()).rejects.toThrow(
+        'Refusing to load plugin "@eventra_dev/cli-plugin-aliastest": the package installed under that name is "evil-package"',
+      );
+    });
+  });
+
+  it("looks past a nested package.json without a name to the package's own", async () => {
+    await withInstalled(
+      JSON.stringify({ name: "evil-package" }),
+      async () => {
+        await expect(
+          createPluginRegistry(normalizeConfig({ plugins: ["@eventra_dev/cli-plugin-aliastest/dist/index.js".replace("/dist/index.js", "")] })),
+        ).rejects.toThrow(/"evil-package"/);
+      },
+      (dir) => {
+        fs.mkdirSync(path.join(dir, "dist"));
+        fs.writeFileSync(path.join(dir, "dist", "package.json"), JSON.stringify({ type: "commonjs" }));
+        fs.writeFileSync(path.join(dir, "dist", "index.js"), PLUGIN_JS);
+        fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({ name: "evil-package", main: "dist/index.js" }));
+      },
+    );
+  });
+
+  it("still loads a package folder that has no package.json at all", async () => {
+    await withInstalled(null, async () => {
+      expect((await load()).getIncludePatterns()).toContain("**/*.aliastest");
+    });
+  });
+
+  it("installedPackageName reads the nearest named package.json, skipping unreadable and nameless ones", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "eventra-pkg-name-"));
+    try {
+      fs.writeFileSync(path.join(root, "package.json"), JSON.stringify({ name: "outer" }));
+      fs.mkdirSync(path.join(root, "a", "b"), { recursive: true });
+      fs.writeFileSync(path.join(root, "a", "package.json"), "{ not json");
+      fs.writeFileSync(path.join(root, "a", "b", "package.json"), "null");
+      expect(installedPackageName(path.join(root, "a", "b", "index.js"))).toBe("outer");
+      expect(installedPackageName(path.join(os.tmpdir(), "no-such-dir-eventra", "x.js"))).toBeUndefined();
+    } finally {
+      fs.rmSync(root, { recursive: true, force: true });
     }
   });
 

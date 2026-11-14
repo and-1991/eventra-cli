@@ -335,13 +335,17 @@ export async function watch(): Promise<WatchHandle | undefined> {
       });
     });
 
-  process.on("SIGINT", async (): Promise<void> => {
+  const onSigint = async (): Promise<void> => {
     await watcher.close();
     process.exit(0);
-  });
+  };
+  process.on("SIGINT", onSigint);
 
   return {
     close: async (): Promise<void> => {
+      // the listener belongs to this watch: closing it removes the listener too, so watching again does
+      // not pile up SIGINT listeners (Node warns past 10)
+      process.off("SIGINT", onSigint);
       if (timer) clearTimeout(timer);
       await watcher.close();
       await chain;

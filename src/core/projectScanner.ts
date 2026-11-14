@@ -56,8 +56,15 @@ const COMPONENT_EXTENSION = /\.(?:vue|svelte|astro)$/i;
 export function syntaxErrorOf(file: string, moduleName: string, parsed: ProcessedFile, plugins: PluginRegistry): SkippedFile | undefined {
   const error = parsed.syntaxError;
   if (!error) return undefined;
-  const users = moduleName === file || (!moduleName.toLowerCase().endsWith(".html.ts") && plugins.isUserWrittenLine(moduleName, error.line));
-  return users ? { file, reason: `line ${error.line}: ${error.message}` } : undefined;
+  // an Angular template module is built by the plugin from the HTML, which reports its own errors
+  if (moduleName !== file && moduleName.toLowerCase().endsWith(".html.ts")) return undefined;
+  if (moduleName === file || plugins.isUserWrittenLine(moduleName, error.line)) {
+    return { file, reason: `line ${error.line}: ${error.message}` };
+  }
+  // In the part a plugin builds from the template the line is the module's, not the file's, so it is
+  // not shown. The expressions there are copied as the user wrote them: a broken one (an Astro
+  // `onclick={() => track("x"}`, which the Astro compiler lets through) used to go unreported.
+  return { file, reason: `the code built from the template does not parse (${error.message}): check the expressions in the template` };
 }
 
 /** The plugin that would read a component file nothing reads, or undefined when the file is not one or something reads it. */
@@ -101,6 +108,12 @@ export async function scanProject(config: EventraConfig): Promise<ProjectScanRes
     // a component file in `include` with no plugin for it is not TypeScript: it is reported as unread instead
     if (COMPONENT_EXTENSION.test(file) && !plugins.getFilePreprocessors().some((preprocessor) => preprocessor.test(file))) continue;
     try {
+      // A UTF-16 code unit takes at most 3 bytes in UTF-8, so a file of more than 3 bytes per allowed
+      // character is over the limit whatever it holds: refused before reading it (a link to a huge file)
+      if ((await fs.stat(file)).size > limit * 3) {
+        ignored.push({ file, reason: oversizedReason(limit) });
+        continue;
+      }
       const raw = await fs.readFile(file, "utf8");
       if (isOversized(raw, limit)) {
         ignored.push({ file, reason: oversizedReason(limit) });

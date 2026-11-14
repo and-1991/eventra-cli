@@ -13,7 +13,7 @@ import {getValueSymbol} from "../symbols/symbolUtils";
 import {eventNameRejection, normalizeEventName} from "../shared/eventValidation";
 import {DynamicOccurrence, RejectedName, recordDynamicOccurrence, recordRejectedName} from "../shared/dynamicOccurrence";
 import {objectLiteralOf, objectPropertyValue} from "../shared/objectLiteral";
-import {callSiteArgument, callSiteExpression, WrapperCallSite} from "../shared/callSite";
+import {CallForm, callSiteArgumentFor, callSiteExpression, callThrough, WrapperCallSite} from "../shared/callSite";
 
 function resolveObjectPath(expression: ts.Expression, path: readonly string[], checker: ts.TypeChecker): ts.Expression | null {
   let current: ts.Expression = expression;
@@ -33,12 +33,21 @@ function resolveObjectPath(expression: ts.Expression, path: readonly string[], c
 
 export function extractPropagationEvents(call: WrapperCallSite, checker: ts.TypeChecker, wrapperRegistry: WrapperRegistry, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, evaluationCache: EvaluationCache, exportCache: ResolvedExportCache, events: Set<string>, visited: Set<ts.Signature>, dynamicOccurrences: DynamicOccurrence[], rejectedNames: RejectedName[]): void {
   const callee = callSiteExpression(call);
-  const resolved = callee && resolveFunctionFromCall(callee, checker, resolvedCallCache, exportCache);
-  if (!resolved) {
-    return;
-  }
-  const semantic = wrapperRegistry.get(resolved);
+  let resolved = callee && resolveFunctionFromCall(callee, checker, resolvedCallCache, exportCache);
+  let semantic = resolved ? wrapperRegistry.get(resolved) : undefined;
+  let form: CallForm = "direct";
   if (!semantic) {
+    // `trackWrapper.call(this, "x")` / `.apply(this, ["x"])` call the wrapper too; tried only when the call
+    // itself is not a wrapper, so a wrapper that is a method named `call` keeps working as before
+    const through = callThrough(call);
+    if (!through) {
+      return;
+    }
+    resolved = resolveFunctionFromCall(through.callee, checker, resolvedCallCache, exportCache);
+    semantic = resolved ? wrapperRegistry.get(resolved) : undefined;
+    form = through.form;
+  }
+  if (!resolved || !semantic) {
     return;
   }
   const signature = checker.getSignatureFromDeclaration(resolved);
@@ -62,18 +71,18 @@ export function extractPropagationEvents(call: WrapperCallSite, checker: ts.Type
       if (!ts.isCallExpression(call) && (propagation.sourceParameterIndex !== 0 || propagation.propertyPath.length === 0)) {
         continue;
       }
-      extractPropagation(propagation, call, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events, dynamicOccurrences, rejectedNames);
+      extractPropagation(propagation, call, form, checker, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache, events, dynamicOccurrences, rejectedNames);
     }
   } finally {
     visited.delete(signature);
   }
 }
 
-function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSite, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[], rejectedNames: RejectedName[]): void {
+function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSite, form: CallForm, checker: ts.TypeChecker, evaluationCache: EvaluationCache, resolvedCallCache: ResolvedCallCache, returnPropagationCache: ReturnPropagationCache, exportCache: ResolvedExportCache, events: Set<string>, dynamicOccurrences: DynamicOccurrence[], rejectedNames: RejectedName[]): void {
   // Call site can omit the argument and rely on the parameter's own default
   // value (`function f(event = "x") {}` called as `f()`) - that default is a
   // real static literal, so fall back to it instead of dropping the call site.
-  const argument = callSiteArgument(call, propagation.sourceParameterIndex) ?? propagation.sourceParameter.initializer;
+  const argument = callSiteArgumentFor(call, propagation.sourceParameterIndex, form) ?? propagation.sourceParameter.initializer;
   if (!argument) {
     return;
   }

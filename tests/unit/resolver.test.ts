@@ -82,6 +82,21 @@ describe("resolveNodeValue - literals", () => {
       const arg = findCallArgument(sf, "track(");
       const result = resolve(project, arg);
       expect(result.values).toEqual(["prefix-abc"]);
+      // every part is one known value: one name, not a dynamic one (C10 of AUDIT-2026-11-10)
+      expect(result.dynamic).toBe(false);
+    } finally {
+      project.cleanup();
+    }
+  });
+
+  it.each([
+    ["a part with several possible values", "declare const flag: boolean;\nconst kind = flag ? \"a\" : \"b\";\ntrack(`prefix-${kind}`);", ["prefix-a", "prefix-b"]],
+    ["a part with no known value", "declare const kind: string;\ntrack(`prefix-${kind}`);", []],
+  ])("keeps a template dynamic when it has %s", (_label, code, values) => {
+    const project = buildProject({ "a.ts": code });
+    try {
+      const result = resolve(project, findCallArgument(project.file("a.ts"), "track("));
+      expect(result.values).toEqual(values);
       expect(result.dynamic).toBe(true);
     } finally {
       project.cleanup();

@@ -1,7 +1,7 @@
 import chalk from "chalk";
 import inquirer from "inquirer";
 
-import {getLegacyTrustedEndpoint, getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint, warnInlineApiKey} from "../config/config";
+import {describeConfigProblem, getLegacyTrustedEndpoint, getTrustedEndpoint, loadConfig, resolveApiKey, saveLocalApiKey, trustEndpoint, warnInlineApiKey} from "../config/config";
 import { collectCatalogMeta } from "../core/catalogMeta";
 import { printable } from "../core/skipped";
 import pkg from "../../package.json";
@@ -134,7 +134,9 @@ type SendResponse = {
 export async function send(opts: { trustEndpoint?: boolean } = {}) {
   const config = await loadConfig();
   if (!config) {
-    console.error(chalk.red("eventra.json not found. Run 'eventra init'"));
+    // a file with bad JSON is not a missing file: say which one it is, as sync and check do
+    const problem = await describeConfigProblem();
+    console.error(chalk.red(problem.endsWith("not found") ? `${problem}. Run 'eventra init'` : problem));
     process.exitCode = 1;
     return;
   }
@@ -322,7 +324,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
 
       if (attempt < MAX_ATTEMPTS - 1) {
         const delay = backoffMs(attempt);
-        console.log(
+        console.error(
           chalk.yellow(
             `Attempt ${attempt + 1}/${MAX_ATTEMPTS} failed (${outcome.status}). Retrying in ${Math.round(delay)} ms...`,
           ),
@@ -343,7 +345,7 @@ export async function send(opts: { trustEndpoint?: boolean } = {}) {
 
       if (attempt < MAX_ATTEMPTS - 1) {
         const delay = backoffMs(attempt);
-        console.log(
+        console.error(
           chalk.yellow(
             `Attempt ${attempt + 1}/${MAX_ATTEMPTS} failed (network error). Retrying in ${Math.round(delay)} ms...`,
           ),

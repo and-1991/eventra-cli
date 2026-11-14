@@ -40,3 +40,28 @@ export function callSiteExpression(site: WrapperCallSite): ts.Expression | null 
 export function callSiteArgument(site: WrapperCallSite, index: number): ts.Expression | undefined {
   return ts.isCallExpression(site) ? site.arguments[index] : index === 0 ? jsxPropsAsObjectLiteral(site) : undefined;
 }
+
+/** How a function is called: directly, or through `Function.prototype.call` / `apply`. */
+export type CallForm = "direct" | "call" | "apply";
+
+/** `wrapper.call(thisArg, ...)` / `wrapper.apply(thisArg, [...])`: the function called and the form, or null. */
+export function callThrough(site: WrapperCallSite): { callee: ts.Expression; form: "call" | "apply" } | null {
+  if (!ts.isCallExpression(site) || !ts.isPropertyAccessExpression(site.expression)) return null;
+  const name = site.expression.name.text;
+  return name === "call" || name === "apply" ? { callee: site.expression.expression, form: name } : null;
+}
+
+/**
+ * The argument the called function receives at `index`. Through `.call` the first argument is `this`, so
+ * the rest shift by one; through `.apply` they come from an array written out in place (an array the
+ * analysis cannot see, or a spread before the index, gives nothing).
+ */
+export function callSiteArgumentFor(site: WrapperCallSite, index: number, form: CallForm): ts.Expression | undefined {
+  if (form === "direct" || !ts.isCallExpression(site)) return callSiteArgument(site, index);
+  if (form === "call") return site.arguments[index + 1];
+  const list = site.arguments[1];
+  if (!list || !ts.isArrayLiteralExpression(list)) return undefined;
+  const before = list.elements.slice(0, index + 1);
+  if (before.some((element) => ts.isSpreadElement(element))) return undefined;
+  return list.elements[index];
+}

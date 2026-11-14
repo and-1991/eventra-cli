@@ -355,6 +355,17 @@ describe("watch", () => {
     expect(exit).toHaveBeenCalledWith(0);
     on.mockRestore();
   }, 60_000);
+
+  it("removes its SIGINT listener when closed, so watching again does not pile them up", async () => {
+    const before = process.listenerCount("SIGINT");
+
+    for (let i = 0; i < 3; i++) {
+      const h = await watch();
+      expect(process.listenerCount("SIGINT")).toBe(before + 1);
+      await h!.close();
+      expect(process.listenerCount("SIGINT")).toBe(before);
+    }
+  }, 60_000);
 });
 
 

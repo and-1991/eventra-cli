@@ -343,6 +343,36 @@ describe("send() — endpoint trust-on-first-use", () => {
     expect(process.exitCode).toBe(1);
   }, 20_000);
 
+  it("says eventra.json is not valid JSON instead of 'not found' when it is malformed", async () => {
+    fs.writeFileSync(path.join(tmp, CONFIG_NAME), "{ broken");
+
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    await send();
+
+    const output = errSpy.mock.calls.flat().join("\n");
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(output).toContain("eventra.json is not valid JSON");
+    expect(output).not.toContain("not found");
+    expect(process.exitCode).toBe(1);
+  });
+
+  it("prints retry progress on stderr, keeping stdout for the result", async () => {
+    await setEndpoint(DEFAULT_ENDPOINT);
+    fetchMock.mockRejectedValueOnce(new Error("network down")).mockResolvedValue({
+      ok: true,
+      status: 200,
+      json: async () => ({ created: ["a"], existing: [] }),
+    });
+    const errSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await send();
+
+    expect(errSpy.mock.calls.flat().join("\n")).toContain("Attempt 1/4 failed (network error)");
+    expect(logSpy.mock.calls.flat().join("\n")).not.toContain("Attempt 1/4");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("Events registered successfully");
+  }, 20_000);
+
   it("fails the process when eventra.json doesn't exist", async () => {
     await fs.remove(path.join(tmp, CONFIG_NAME));
 
@@ -350,7 +380,7 @@ describe("send() — endpoint trust-on-first-use", () => {
     await send();
 
     expect(fetchMock).not.toHaveBeenCalled();
-    expect(logSpy.mock.calls.flat().join("\n")).toContain("eventra.json not found");
+    expect(logSpy.mock.calls.flat().join("\n")).toContain("eventra.json not found. Run 'eventra init'");
     expect(process.exitCode).toBe(1);
   });
 

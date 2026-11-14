@@ -29,7 +29,8 @@ vi.mock("@eventra_dev/cli-plugin-fixture-syntax", () => ({
   },
 }));
 
-import { scanProject } from "../../src/core/projectScanner";
+import { scanProject, syntaxErrorOf } from "../../src/core/projectScanner";
+import { PluginRegistry } from "../../src/plugin/registry";
 import { normalizeConfig } from "../../src/config/config";
 import type { EventraConfig } from "../../src/types";
 
@@ -117,6 +118,23 @@ describe("scanProject: skipped files", () => {
   it("returns an empty list for a clean project", async () => {
     write("src/app.ts", `${SDK_IMPORT}t.track("real.event");\n`);
     expect((await scanProject(config())).skipped).toEqual([]);
+  });
+});
+
+describe("scanProject: a file far over the size limit", () => {
+  it("is ignored by its size on disk, without being read", async () => {
+    write("src/app.ts", `${SDK_IMPORT}t.track("real.event");\n`);
+    write("src/huge.ts", "x".repeat(700));
+    const readSpy = vi.spyOn(fs.promises, "readFile");
+
+    const { engine, ignored } = await scanProject(
+      config({ sync: { include: ["**/*.ts"], exclude: ["node_modules"], maxFileSize: 200 } }),
+    );
+
+    expect(engine.getAllEvents()).toEqual(["real.event"]);
+    expect(ignored.map((i) => path.basename(i.file))).toEqual(["huge.ts"]);
+    expect(readSpy.mock.calls.some(([f]) => String(f).endsWith("app.ts"))).toBe(true);
+    expect(readSpy.mock.calls.some(([f]) => String(f).endsWith("huge.ts"))).toBe(false);
   });
 });
 
@@ -241,9 +259,11 @@ describe("scanProject: syntax errors in a plugin's component files", () => {
     expect(syntaxErrors[0].reason).toMatch(/^line 1:/);
   });
 
-  it("says nothing about a broken line inside the generated template region", async () => {
+  it("reports a broken line inside the generated template region for the file, without a line it cannot map (PL4)", async () => {
     write("src/B.syn", `export {};\n// --- vue template (auto-generated) ---\nconst a = ;\n// --- end template ---\n`);
-    expect((await scanProject(withPlugin())).syntaxErrors).toEqual([]);
+    const { syntaxErrors } = await scanProject(withPlugin());
+    expect(syntaxErrors.map((e) => path.relative(cwd, e.file))).toEqual(["src/B.syn"]);
+    expect(syntaxErrors[0].reason).toMatch(/^the code built from the template does not parse \(.+\): check the expressions in the template$/);
   });
 
   it("a component file in include is left to the unread list also when some other plugin is loaded", async () => {
@@ -277,4 +297,16 @@ describe("scanProject: many calls of another tracker's track()", () => {
     expect(engine.getAllEvents()).toEqual(["real.event"]);
     expect(Date.now() - started).toBeLessThan(15_000);
   }, 60_000);
+});
+
+describe("syntaxErrorOf", () => {
+  const parsed = { syntaxError: { line: 3, message: "')' expected." } } as unknown as Parameters<typeof syntaxErrorOf>[2];
+
+  it("leaves an Angular template module to the plugin, which reports its own errors", () => {
+    expect(syntaxErrorOf("/p/a.component.html", "/p/a.component.HTML.ts", parsed, new PluginRegistry())).toBeUndefined();
+  });
+
+  it("gives the line of a plain file", () => {
+    expect(syntaxErrorOf("/p/a.ts", "/p/a.ts", parsed, new PluginRegistry())?.reason).toBe("line 3: ')' expected.");
+  });
 });
