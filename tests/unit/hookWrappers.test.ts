@@ -233,7 +233,6 @@ describe("a returned member that is not a function it defined", () => {
 });
 
 describe("posthog-js loaded with a dynamic import", () => {
-  const CALL = `export const f = (e: string) => track(e);`;
 
   it("reads `const { default: client } = await import(...)`", async () => {
     expect(

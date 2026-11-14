@@ -38,7 +38,8 @@
     "clean": "rm -rf dist",
     "test:mutation": "stryker run",
     "check:presets": "tsx scripts/check-preset-packages.ts",
-    "typecheck": "tsc --noEmit -p tsconfig.json"
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "eslint src tests"
   },
   "dependencies": {
     "chalk": "^4.1.2",
@@ -50,6 +51,7 @@
     "typescript": "^5.3.0"
   },
   "devDependencies": {
+    "@eslint/js": "^9.18.0",
     "@stryker-mutator/core": "9.6.1",
     "@stryker-mutator/vitest-runner": "9.6.1",
     "@types/fs-extra": "^11.0.4",
@@ -57,7 +59,10 @@
     "@types/node": "^20.0.0",
     "@vitest/coverage-v8": "^4.1.7",
     "cross-spawn": "^7.0.6",
+    "eslint": "^9.18.0",
+    "globals": "^16.0.0",
     "tsx": "^4.7.0",
+    "typescript-eslint": "^8.20.0",
     "vitest": "^4.1.7"
   },
   "keywords": [

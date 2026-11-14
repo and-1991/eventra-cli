@@ -10,7 +10,6 @@ import { WrapperRegistry } from "../../src/analysis/symbols/wrapperRegistry";
 import { ResolvedExportCache } from "../../src/analysis/cache/resolvedExportCache";
 import { PluginRegistry } from "../../src/plugin/registry";
 import type { SinkDetector, WrapperDetector } from "../../src/plugin/types";
-import type { TrackSink } from "../../src/analysis/shared/propagation";
 
 function makeProject(): { root: string; cleanup: () => void } {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "scanner-"));

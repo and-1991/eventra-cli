@@ -1,7 +1,7 @@
 import ts from "typescript";
 
 import { isEventraSdkTrackCall, trackNameArgument } from "../../analysis/sdk/isEventraTrackCall";
-import type { TrackedArgument, TrackSink } from "../../analysis/shared/propagation";
+import type { TrackedArgument } from "../../analysis/shared/propagation";
 import { unwrapExpression } from "../../analysis/shared/utils";
 import type { PluginRegistry } from "../registry";
 import type { SinkDetector } from "../types";

@@ -244,6 +244,7 @@ describe("values taken from the scanned code", () => {
       occurrence({ line: 4, inTemplate: true, eventExpression: "a\u202eb" }),
     );
     const text = printed().map((call) => String(call[0])).join("\n");
+    // eslint-disable-next-line no-control-regex -- the test is about the control character itself
     expect(text).not.toMatch(/\u001b|\u202e/);
     expect(text).toContain("evil\\x1b[2Jwipe");
     expect(text).toContain('event="a\\u202eb"');
@@ -251,6 +252,7 @@ describe("values taken from the scanned code", () => {
 });
 
 describe("the name of what is called", () => {
+  // eslint-disable-next-line no-control-regex -- strips the colour codes chalk adds
   const printed = () => log.mock.calls.flat().join("\n").replace(/\u001b\[[0-9;]*m/g, "");
 
   it("a component used in an Angular template is shown as <Component>, not as the plugin's wiring", async () => {

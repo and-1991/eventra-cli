@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
-import ts from "typescript";
 
 import { CompilerContext } from "../../src/compiler/compilerContext";
 import { scanSource } from "../../src/analysis/scanner/scanner";

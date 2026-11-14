@@ -146,7 +146,6 @@ describe("registerExternalCliPlugin", () => {
       id: "throwing-plugin-non-error",
       includeGlobs: [],
       match: () => true,
-      // eslint-disable-next-line @typescript-eslint/only-throw-error
       transform: async () => {
         throw "raw-string-failure";
       },
