@@ -4,6 +4,7 @@ import ts from "typescript";
 
 import { EVENTRA_SDK_PACKAGE, isEventraSdkModuleSpecifier } from "./eventraSdk";
 import { declaredTypeOfIdentifier } from "../shared/declaredType";
+import { unwrapExpression } from "../shared/utils";
 
 function isTrackCallee(expr: ts.Expression): boolean {
   if (ts.isPropertyAccessExpression(expr) || ts.isPropertyAccessChain(expr)) {
@@ -31,6 +32,7 @@ function isTrackCallee(expr: ts.Expression): boolean {
 // shape where a symbol reaches isEventraSymbol's declaration loop while
 // one of its own declarations is still an ImportSpecifier/ImportClause.
 /* v8 ignore start */
+// Stryker disable all: unreachable, see the v8 ignore above
 function getImportDeclarationForSpecifier(decl: ts.Node): ts.ImportDeclaration | null {
   let current: ts.Node | undefined = decl;
   while (current) {
@@ -57,6 +59,7 @@ function isEventraImportDeclaration(decl: ts.Declaration): boolean {
   }
   return false;
 }
+// Stryker restore all
 /* v8 ignore stop */
 
 const sdkPackageByDir = new Map<string, boolean>();
@@ -89,12 +92,15 @@ function isInSdkPackage(dir: string): boolean {
 }
 
 /**
- * The SDK's own `Eventra` class: declared inside `declare module "@eventra_dev/eventra-sdk"` (the CLI's own
- * stand-in for the SDK's types, which the compiler prefers to an installed copy), or in a declaration file of the
- * installed package. A class of the user's that is merely called `Eventra` is not the SDK, wherever it lives.
+ * The SDK's own `Eventra` class, or its `EventraScope` (what `withUser()` returns, whose `track()` sends events the
+ * same way): declared inside `declare module "@eventra_dev/eventra-sdk"` (the CLI's own stand-in for the SDK's
+ * types, which the compiler prefers to an installed copy), or in a declaration file of the installed package. A
+ * class or interface of the user's that merely has one of these names is not the SDK, wherever it lives.
  */
 function isEventraClassDeclaration(decl: ts.Declaration): boolean {
-  if (!ts.isClassDeclaration(decl) || decl.name?.text !== "Eventra") {
+  const isClass = ts.isClassDeclaration(decl) && decl.name?.text === "Eventra";
+  const isScope = ts.isInterfaceDeclaration(decl) && decl.name.text === "EventraScope";
+  if (!isClass && !isScope) {
     return false;
   }
   const ambient = ts.findAncestor(decl.parent, ts.isModuleDeclaration);
@@ -110,10 +116,12 @@ function isEventraSymbol(symbol: ts.Symbol, checker: ts.TypeChecker, depth = 0):
   // checker.getAliasedSymbol always resolves a whole (even multi-hop)
   // alias/re-export chain in a single call rather than one hop at a time
   // (verified empirically), so depth realistically never exceeds 1.
+  // Stryker disable all: unreachable, see the v8 ignore below
   /* v8 ignore next 3 */
   if (depth > 10) {
     return false;
   }
+  // Stryker restore all
 
   if (symbol.flags & ts.SymbolFlags.Alias) {
     return isEventraSymbol(checker.getAliasedSymbol(symbol), checker, depth + 1);
@@ -122,8 +130,10 @@ function isEventraSymbol(symbol: ts.Symbol, checker: ts.TypeChecker, depth = 0):
   // A real ts.Symbol.getDeclarations() always returns an array (possibly
   // empty), never undefined - the `?? []` is defensive against the wider
   // `Declaration[] | undefined` type, not a reachable second outcome.
+  // Stryker disable all: unreachable, see the v8 ignore below
   /* v8 ignore next */
   for (const decl of symbol.getDeclarations() ?? []) {
+  // Stryker restore all
     if (isEventraImportDeclaration(decl) || isEventraClassDeclaration(decl)) {
       return true;
     }
@@ -204,10 +214,12 @@ function typeLooksLikeEventra(type: ts.Type, checker: ts.TypeChecker, depth = 0)
   // `A | (B | C)` normalizes to the single-level `A | B | C`), so the only
   // recursive call below in practice never nests deep enough to approach
   // this bound.
+  // Stryker disable all: unreachable, see the v8 ignore below
   /* v8 ignore next 3 */
   if (depth > 8) {
     return false;
   }
+  // Stryker restore all
 
   const symbol = type.getSymbol();
   if (symbol && isEventraSymbol(symbol, checker)) {
@@ -322,6 +334,18 @@ function isEventraReceiverExpression(
     return isEventraNewExpression(receiver, checker);
   }
 
+  // `tracker.withUser(id).track(...)`: the scope sends like the tracker it came from, also when the tracker's
+  // type is lost (`let tracker: any`, a getter that creates it on first use)
+  if (
+    ts.isCallExpression(receiver) &&
+    (ts.isPropertyAccessExpression(receiver.expression) || ts.isPropertyAccessChain(receiver.expression)) &&
+    receiver.expression.name.text === "withUser" &&
+    // Stryker disable next-line ArithmeticOperator: equivalent, the walk goes down a finite expression and ends anyway
+    isEventraReceiverExpression(receiver.expression.expression, checker, hops + 1)
+  ) {
+    return true;
+  }
+
   if (ts.isCallExpression(receiver) && ts.isNewExpression(receiver.expression)) {
     return isEventraNewExpression(receiver.expression, checker);
   }
@@ -353,8 +377,10 @@ function isEventraReceiverExpression(
     }
     // See the identical `?? []` above isEventraSymbol's declaration loop: a
     // real ts.Symbol here always has a declarations array.
+    // Stryker disable all: unreachable, see the v8 ignore below
     /* v8 ignore next */
     if (assignedValues(symbol, checker).some((value) => isEventraReceiverExpression(value, checker, hops + 1))) {
+    // Stryker restore all
       return true;
     }
     for (const decl of symbol.getDeclarations() ?? []) {
@@ -382,12 +408,14 @@ function isEventraReceiverExpression(
       // a *bare* identifier's resolved symbol can't have a PropertyDeclaration
       // among its own declarations, so this is unreachable from the
       // `ts.isIdentifier(receiver)` branch above.
+      // Stryker disable all: unreachable, see the v8 ignore below
       /* v8 ignore next 5 */
       if (ts.isPropertyDeclaration(decl) && decl.type) {
         const propType = checker.getTypeFromTypeNode(decl.type);
         if (typeLooksLikeEventra(propType, checker)) {
           return true;
         }
+      // Stryker restore all
       }
     }
   }
@@ -409,6 +437,46 @@ export function trackNameArgument(call: ts.CallExpression): number {
   return isTrackDotCall(call.expression) ? 1 : 0;
 }
 
+const IDENTITY_METHODS = new Set(["identify", "withUser"]);
+
+/** `instance.identify(...)` or `instance.withUser(...)` where instance is Eventra from @eventra_dev/eventra-sdk. */
+export function isEventraSdkIdentityCall(call: ts.CallExpression, checker: ts.TypeChecker): boolean {
+  const expr = call.expression;
+  let receiver: ts.Expression | undefined;
+  if ((ts.isPropertyAccessExpression(expr) || ts.isPropertyAccessChain(expr)) && IDENTITY_METHODS.has(expr.name.text)) {
+    receiver = expr.expression;
+  } else if (
+    ts.isElementAccessExpression(expr) &&
+    ts.isStringLiteral(expr.argumentExpression) &&
+    IDENTITY_METHODS.has(expr.argumentExpression.text)
+  ) {
+    receiver = expr.expression;
+  }
+  return receiver !== undefined && isEventraReceiverExpression(receiver, checker);
+}
+
+/**
+ * Whether an SDK `track` call may carry a user id: its options name `userId` (a property or a getter), spread
+ * something in, or are not written out (a variable). Only options written out without `userId`, or none at all, count as no user.
+ */
+export function trackCallMayPassUser(call: ts.CallExpression): boolean {
+  const options = call.arguments[trackNameArgument(call) + 1];
+  if (!options) return false;
+  const literal = unwrapExpression(options);
+  if (!ts.isObjectLiteralExpression(literal)) return true;
+  return literal.properties.some(
+    (property) =>
+      ts.isSpreadAssignment(property) ||
+      // a getter (`get userId() { ... }`) passes a user as well as a plain property
+      ((ts.isPropertyAssignment(property) ||
+        ts.isShorthandPropertyAssignment(property) ||
+        ts.isGetAccessorDeclaration(property)) &&
+        // Stryker disable next-line ConditionalExpression: equivalent, a computed name has no text to equal "userId"
+        (ts.isIdentifier(property.name) || ts.isStringLiteral(property.name)) &&
+        property.name.text === "userId"),
+  );
+}
+
 /** Only `instance.track(...)` (or `instance.track.call(...)`) where instance is Eventra from @eventra_dev/eventra-sdk. */
 export function isEventraSdkTrackCall(
   call: ts.CallExpression,
@@ -422,19 +490,23 @@ export function isEventraSdkTrackCall(
 
   // isTrackCallee above only returns true for these same three shapes, so
   // the `: undefined` side of this ternary is never actually taken.
+  // Stryker disable all: unreachable, see the v8 ignore below
   /* v8 ignore next 5 */
   const receiver =
     ts.isPropertyAccessExpression(expr) ||
     ts.isPropertyAccessChain(expr) ||
     ts.isElementAccessExpression(expr)
       ? expr.expression
+  // Stryker restore all
       : undefined;
 
   // ...and so `receiver` is never actually undefined here either.
+  // Stryker disable all: unreachable, see the v8 ignore below
   /* v8 ignore next 3 */
   if (!receiver) {
     return false;
   }
+  // Stryker restore all
 
   return isEventraReceiverExpression(receiver, checker);
 }

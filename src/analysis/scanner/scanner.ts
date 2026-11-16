@@ -4,6 +4,7 @@ import {unwrapExpression} from "../shared/utils";
 import {FileSemanticIndex, TrackCall} from "../shared/types";
 import {TrackSink, WrapperSemanticInfo} from "../shared/propagation";
 import {detectTrackSink} from "./sinkDetector";
+import {isEventraSdkIdentityCall, trackCallMayPassUser} from "../sdk/isEventraTrackCall";
 import {detectJsxEventAttribute} from "./jsxEventAttribute";
 import {analyzeWrapperPropagation} from "./analyzer/propagationAnalyzer";
 import {componentClassOfRender} from "../symbols/classComponent";
@@ -20,6 +21,9 @@ export function scanSource(
   const wrappers: WrapperSemanticInfo[] = [];
   const trackCalls: TrackCall[] = [];
   const functions: ts.FunctionLikeDeclaration[] = [];
+  let identityCalls = 0;
+  let sdkTrackCalls = 0;
+  let sdkTrackCallsWithUser = 0;
 
   // Walked with an explicit stack: a long `"a" + "a" + ...` chain nests thousands of levels deep, and a
   // recursive walk overflowed the call stack and aborted the whole scan.
@@ -35,6 +39,15 @@ export function scanSource(
     // sink detection
     if (ts.isCallExpression(node)) {
       const sink = detectTrackSink(node, checker, plugins);
+      // Stryker disable next-line LogicalOperator: equivalent, a track() sink is never an identify()/withUser() call
+      if (!sink && isEventraSdkIdentityCall(node, checker)) {
+        identityCalls++;
+      }
+      // the SDK's detector already resolved the receiver: no second type walk here
+      if (sink?.eventraSdk) {
+        sdkTrackCalls++;
+        if (trackCallMayPassUser(node)) sdkTrackCallsWithUser++;
+      }
       if (sink) {
         sinks.push(sink);
         const trackedArguments = sink.trackedArguments.map(tracked => {
@@ -132,5 +145,6 @@ export function scanSource(
     trackCalls,
     wrappers,
     functions,
+    identity: { identityCalls, trackCalls: sdkTrackCalls, trackCallsWithUser: sdkTrackCallsWithUser },
   };
 }

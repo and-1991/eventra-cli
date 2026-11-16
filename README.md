@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-1419%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-1460%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -70,7 +70,14 @@ tracker.track("checkout.completed");
 tracker.track("app.loaded", { userId: "user_123" });
 tracker?.track("optional.chain");
 tracker["track"]("element.access");
+
+// SDK 2.1.0: a tracker bound to one user
+tracker.withUser(req.user.id).track("invoice.created");
+const scope = tracker.withUser(userId);
+scope.track("invoice.paid");
 ```
+
+A scope from `withUser()` counts like the SDK itself when it is called directly or kept in a variable whose type is known. A scope stored on an untyped object (`req.tracker = tracker.withUser(id)`, then `req.tracker.track("x")`) is not followed: call `withUser()` where you track.
 
 The SDK loaded with `require` is read the same way, in `.js`, `.cjs` and `.ts` files: `const { Eventra } = require("@eventra_dev/eventra-sdk")`, `const Eventra = require("@eventra_dev/eventra-sdk").Eventra`, or `const sdk = require("@eventra_dev/eventra-sdk"); new sdk.Eventra(...)`. The specifier has to be a string; `require(name)` is not followed.
 
@@ -296,6 +303,8 @@ Text from the scanned repository and from the server (file names, event names, s
 ### `eventra check`
 
 Compares config with the current scan (events + wrappers). Exit code `1` on drift. Files with syntax errors and rejected event names are listed in notes, as for `sync`. When files were skipped, known events that were not found are not reported as removed (they cannot be verified) and the skipped files are listed.
+
+When the code calls the SDK's `track()` but no call can carry a user id (none passes `userId`, a spread or an options variable) and nothing calls `identify()` or `withUser()`, `check` prints one tip: the dashboard cannot count users without them. It is never a failure, `--strict` included, and it disappears as soon as one call may pass a user.
 
 `check` prints `All good` only when the events match **and** the scan was clean. If the events match but something was skipped, has a syntax error, was rejected or is a dynamic name it could not resolve, it prints `No drift, but the scan was not clean: ...` instead. The exit code is still `0` for that, so an existing pipeline does not start failing; `eventra check --strict` exits `1` on any of them, and on a file over the size limit. Use `--strict` in CI.
 
@@ -557,11 +566,13 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **1419 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1460 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
-**Unit tests (vitest)** - 76 test files covering core modules:
+**Mutation testing** (`pnpm test:mutation`, Stryker, list in `stryker.conf.json`) covers the files that decide what counts as an event: `src/analysis/sdk/isEventraTrackCall.ts` (only the real SDK class and its `withUser()` scope), the built-in SDK sink, the `check` tip and the scanner's identity counts, besides the detection and config code listed there. Code that is unreachable for v8 is excluded for Stryker too. Tests that call `process.chdir()` are skipped under Stryker (`vitest.stryker.config.ts`), since its worker threads do not support it.
+
+**Unit tests (vitest)** - 79 test files covering core modules:
 
 | Module | Covers |
 |---|---|

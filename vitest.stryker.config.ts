@@ -17,6 +17,7 @@ export default mergeConfig(
         "tests/unit/documentRegistry.test.ts",
         "tests/unit/config.test.ts",
         "tests/unit/scanResults.test.ts",
+        "tests/unit/depth-links-config-send.test.ts",
       ],
     },
   }),

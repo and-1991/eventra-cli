@@ -11,7 +11,7 @@ import { ResolvedExportCache } from "../analysis/cache/resolvedExportCache";
 import { ReturnPropagationCache } from "../analysis/cache/returnPropagationCache";
 import { indexSourceFile, extractFromIndex } from "../analysis/engine/analyzeFile";
 import { resolveWrapperChains } from "../analysis/scanner/wrapperChains";
-import { FileSemanticIndex } from "../analysis/shared/types";
+import { FileSemanticIndex, IdentityUsage } from "../analysis/shared/types";
 import { DynamicOccurrence, RejectedName } from "../analysis/shared/dynamicOccurrence";
 import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { EventraConfig, ScanResult } from "../types";
@@ -437,6 +437,19 @@ export class EventraEngine {
       }
     }
     return [...events].sort();
+  }
+
+  /** How the scanned code tells the SDK whose events they are, summed over every indexed file. */
+  getIdentityUsage(): IdentityUsage {
+    let identityCalls = 0;
+    let trackCalls = 0;
+    let trackCallsWithUser = 0;
+    for (const index of this.fileIndices.values()) {
+      identityCalls += index.identity.identityCalls;
+      trackCalls += index.identity.trackCalls;
+      trackCallsWithUser += index.identity.trackCallsWithUser;
+    }
+    return { identityCalls, trackCalls, trackCallsWithUser };
   }
 
   getAllFunctionWrappers(): string[] {

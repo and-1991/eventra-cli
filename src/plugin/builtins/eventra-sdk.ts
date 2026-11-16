@@ -33,7 +33,7 @@ const eventraSdkSinkDetector: SinkDetector = {
     if (trackedArguments.length === 0) {
       return null;
     }
-    return { call, trackedArguments };
+    return { call, trackedArguments, eventraSdk: true };
   },
 };
 

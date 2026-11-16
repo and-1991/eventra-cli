@@ -68,16 +68,22 @@ export function isValidEventName(value: string): boolean {
 
 export const EVENTRA_SDK_SHIM = `declare module "@eventra_dev/eventra-sdk" {
   export interface TrackOptions {
-    userId?: string;
+    userId?: string | number | null;
     properties?: Record<string, unknown>;
   }
   export interface TrackerOptions {
     apiKey: string;
     endpoint?: string;
   }
+  export interface EventraScope {
+    track(name: string, options?: TrackOptions): void;
+  }
   export class Eventra {
     constructor(options: TrackerOptions);
     track(name: string, options?: TrackOptions): void;
+    identify(userId: string | number): void;
+    reset(): void;
+    withUser(userId: string | number | null | undefined): EventraScope;
   }
 }
 `;

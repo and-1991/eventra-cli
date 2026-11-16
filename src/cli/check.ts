@@ -1,5 +1,7 @@
 import chalk from "chalk";
 
+import type { IdentityUsage } from "../analysis/shared/types";
+
 import { normalizeDynamicEvents } from "../analysis/sdk/eventraSdk";
 import { requireConfig, saveConfig } from "../config/config";
 import { scanProject } from "../core/projectScanner";
@@ -11,6 +13,19 @@ function diffSets(found: Set<string>, known: Set<string>): { added: string[]; re
     added: [...found].filter((e) => !known.has(e)),
     removed: [...known].filter((e) => !found.has(e)),
   };
+}
+
+/**
+ * A tip, never a failure: the code calls the SDK's `track()` but no call can carry a user id and nothing calls
+ * `identify()` or `withUser()`, so the dashboard cannot count users. Silent when any call may pass a `userId`.
+ */
+export function identifyHint(usage: IdentityUsage): string | null {
+  if (usage.trackCalls === 0 || usage.trackCallsWithUser > 0 || usage.identityCalls > 0) return null;
+  return (
+    "Tip: no Eventra track() call passes a userId and nothing calls identify() or withUser(), so the dashboard " +
+    "cannot count users. Call tracker.identify(userId) after sign-in (withUser() on a server): " +
+    "https://eventra.dev/docs#sdk-identify"
+  );
 }
 
 export async function check({ fix = false, strict = false }: { fix?: boolean; strict?: boolean } = {}) {
@@ -51,12 +66,16 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
     wrapperDiff.removed = [];
   }
 
+  // a file that was not analysed may hold the identify() call: say nothing rather than something false
+  const tip = incomplete || syntaxErrors.length > 0 ? null : identifyHint(engine.getIdentityUsage());
+
   if (fix) {
     await saveConfig(buildConfigFromScan(config, engine, { preserveKnown: incomplete }));
     console.log(chalk.green("Synced"));
     reportSkipped(skipped);
     reportIgnored(ignored);
     reportNotes();
+    if (tip) console.error(chalk.gray(tip));
     if (notes.length > 0) console.error(chalk.yellow(`The scan was not clean: ${notes.join(", ")}.`));
     if (strictFailure) process.exitCode = 1;
     return;
@@ -81,6 +100,7 @@ export async function check({ fix = false, strict = false }: { fix?: boolean; st
   reportSkipped(skipped);
   reportIgnored(ignored);
   reportNotes();
+  if (tip) console.error(chalk.gray(tip));
   if (unverified > 0) {
     console.error(
       chalk.gray(`${plural(unverified, "known entry", "known entries")} could not be verified because files were skipped or not read.`),

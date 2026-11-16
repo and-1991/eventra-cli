@@ -13,6 +13,8 @@ export interface TrackSink {
   // a JSX element is the call of its component, with the props object as its one argument
   readonly call: WrapperCallSite;
   readonly trackedArguments: readonly TrackedArgument[];
+  // set by the built-in detector of @eventra_dev/eventra-sdk: a track() of the SDK itself, not of another tracker
+  readonly eventraSdk?: boolean;
 }
 
 export interface WrapperPropagation {

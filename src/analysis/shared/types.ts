@@ -16,6 +16,16 @@ export interface TrackCall {
   readonly calleeText: string;
 }
 
+/**
+ * Calls of the Eventra SDK that say whose an event is: `identify()`/`withUser()` on the real SDK class, and SDK
+ * `track()` calls, with those that may pass a `userId` counted apart. Used for `check`'s hint to identify users.
+ */
+export interface IdentityUsage {
+  readonly identityCalls: number;
+  readonly trackCalls: number;
+  readonly trackCallsWithUser: number;
+}
+
 export interface FileSemanticIndex {
   readonly fileName: string;
   readonly sourceFile: ts.SourceFile;
@@ -27,4 +37,6 @@ export interface FileSemanticIndex {
   readonly wrappers: readonly WrapperSemanticInfo[];
   // every function declared in the file, for the cross-file wrapper chain pass
   readonly functions?: readonly ts.FunctionLikeDeclaration[];
+  // how the file tells the SDK whose events they are (see IdentityUsage)
+  readonly identity: IdentityUsage;
 }

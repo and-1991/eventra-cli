@@ -24,7 +24,13 @@
     "src/plugin/builtins/consoleDynamicEventReporter.ts",
     "src/analysis/shared/callSite.ts",
     "src/analysis/scanner/wrapperChains.ts",
-    "src/analysis/scanner/analyzer/propagationAnalyzer.ts"
+    "src/analysis/scanner/analyzer/propagationAnalyzer.ts",
+    "src/analysis/sdk/isEventraTrackCall.ts",
+    "src/plugin/builtins/eventra-sdk.ts",
+    "src/cli/check.ts:20-30",
+    "src/cli/check.ts:68-71",
+    "src/analysis/scanner/scanner.ts:40-50",
+    "src/core/EventraEngine.ts:442-453"
   ],
   "reporters": [
     "clear-text",

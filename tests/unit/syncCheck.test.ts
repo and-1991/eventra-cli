@@ -14,6 +14,7 @@ const state = vi.hoisted(() => ({
     files?: string[];
     partial?: Array<{ file: string; reason: string }>;
     dynamic?: Array<Record<string, unknown>>;
+    identity?: { identityCalls: number; trackCalls: number; trackCallsWithUser: number };
   },
   saved: [] as Array<Record<string, unknown>>,
 }));
@@ -42,6 +43,7 @@ vi.mock("../../src/core/projectScanner", () => ({
       getAllFunctionWrappers: () => state.scan!.wrappers,
       getAllDynamicOccurrences: () => state.scan!.dynamic ?? [],
       getAllRejectedNames: () => state.scan!.rejected ?? [],
+      getIdentityUsage: () => state.scan!.identity ?? { identityCalls: 0, trackCalls: 0, trackCallsWithUser: 0 },
     },
     plugins: { runDynamicEventReporters: async () => {}, attributeToSources: <T>(items: T[]) => items },
     skipped: state.scan!.skipped,
@@ -497,5 +499,51 @@ describe("check", () => {
     expect(printed(log)).toContain("+ e");
     expect(printed(log)).toContain("+ newWrapper");
     expect(exit).toHaveBeenCalledWith(1);
+  });
+});
+
+describe("check: hint to identify users", () => {
+  beforeEach(() => {
+    state.config!.events = ["kept.event", "new.event"];
+    state.config!.functionWrappers = [];
+  });
+
+  it("prints a tip when SDK calls never carry a user and nothing identifies one, and the scan is still All good", async () => {
+    state.scan!.identity = { identityCalls: 0, trackCalls: 3, trackCallsWithUser: 0 };
+    await check({ strict: true });
+    expect(printed(err)).toContain("Tip: no Eventra track() call passes a userId");
+    expect(printed(err)).toContain("https://eventra.dev/docs#sdk-identify");
+    expect(printed(err)).toContain("cannot count users. Call tracker.identify(userId) after sign-in (withUser() on a server)");
+    expect(printed(log)).toContain("All good");
+    expect(exit).not.toHaveBeenCalled();
+  });
+
+  it("prints it with --fix too", async () => {
+    state.scan!.identity = { identityCalls: 0, trackCalls: 1, trackCallsWithUser: 0 };
+    await check({ fix: true });
+    expect(printed(err)).toContain("Tip: no Eventra track() call passes a userId");
+  });
+
+  it("stays silent when the scan was incomplete or had syntax errors, since the call may be in a file not read", async () => {
+    state.scan!.identity = { identityCalls: 0, trackCalls: 3, trackCallsWithUser: 0 };
+    state.scan!.skipped = SKIP;
+    await check({});
+    expect(printed(err)).not.toContain("Tip:");
+
+    err.mockClear();
+    state.scan!.skipped = [];
+    state.scan!.syntaxErrors = [{ file: "/p/src/auth.ts", reason: "';' expected." }];
+    await check({});
+    expect(printed(err)).not.toContain("Tip:");
+  });
+
+  it.each([
+    ["a call may pass a userId", { identityCalls: 0, trackCalls: 3, trackCallsWithUser: 1 }],
+    ["identify() or withUser() is called", { identityCalls: 1, trackCalls: 3, trackCallsWithUser: 0 }],
+    ["the SDK is not called at all", { identityCalls: 0, trackCalls: 0, trackCallsWithUser: 0 }],
+  ])("stays silent when %s", async (_label, identity) => {
+    state.scan!.identity = identity;
+    await check({});
+    expect(printed(err)).not.toContain("Tip:");
   });
 });
