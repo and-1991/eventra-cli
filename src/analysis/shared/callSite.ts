@@ -65,3 +65,15 @@ export function callSiteArgumentFor(site: WrapperCallSite, index: number, form: 
   if (before.some((element) => ts.isSpreadElement(element))) return undefined;
   return list.elements[index];
 }
+
+/**
+ * The index of the argument that fills `parameter`. A TypeScript `this:` parameter is only a type for `this`,
+ * not an argument (`function track(this: Ctx, name: string)` is called `track("x")` or `track.call(ctx, "x")`),
+ * so the parameters after it are one argument earlier. -1 when `parameter` is not one of `fn`'s.
+ */
+export function argumentIndexOf(fn: ts.SignatureDeclaration, parameter: ts.ParameterDeclaration): number {
+  const index = fn.parameters.indexOf(parameter);
+  const first = fn.parameters[0];
+  const hasThis = first !== undefined && ts.isIdentifier(first.name) && first.name.text === "this";
+  return hasThis && index > 0 ? index - 1 : index;
+}

@@ -3,7 +3,7 @@ import ts from "typescript";
 import {TrackSink, WrapperPropagation, WrapperSemanticInfo} from "../../shared/propagation";
 import {getFunctionSymbol} from "../../symbols/symbolUtils";
 import {unwrapExpression, getPropertyName} from "../../shared/utils";
-import {callSiteArgument} from "../../shared/callSite";
+import {argumentIndexOf, callSiteArgument} from "../../shared/callSite";
 import {classPropsParameter, componentClassOfRender, thisPropsPath} from "../../symbols/classComponent";
 
 interface ResolvedParameterBinding {
@@ -194,7 +194,7 @@ function resolveParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identif
 }
 
 // a class component's props stand in for a parameter that is not in the list
-const parameterIndex = (fn: ts.FunctionLikeDeclaration, parameter: ts.ParameterDeclaration): number => Math.max(0, fn.parameters.indexOf(parameter));
+const parameterIndex = (fn: ts.FunctionLikeDeclaration, parameter: ts.ParameterDeclaration): number => Math.max(0, argumentIndexOf(fn, parameter));
 
 /** `this.props.name` in a class component: the props parameter and the path read off it. */
 function classPropRead(fn: ts.FunctionLikeDeclaration, expression: ts.Expression): ResolvedParameterBinding | null {

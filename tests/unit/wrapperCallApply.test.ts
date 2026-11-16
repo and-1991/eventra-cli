@@ -67,6 +67,33 @@ tracker.call("method.named.call");
     expect(events).toEqual(["method.named.call"]);
   });
 
+  // a TypeScript `this:` parameter is a type only, not an argument: the names used to be read one argument
+  // too far, so every event of such a wrapper was lost without a message
+  it("reads the right argument when the wrapper declares a `this:` parameter", async () => {
+    const { events } = await scan(`
+interface Ctx { id: number }
+declare const ctx: Ctx;
+function viaThis(this: Ctx, name: string) { sdk.track(name); }
+function second(this: Ctx, prefix: string, name: string) { sdk.track(name); }
+function direct(this: void, name: string) { sdk.track(name); }
+const later = function (this: void, name: string) { return () => sdk.track(name); };
+viaThis.call(ctx, "this.call");
+viaThis.apply(ctx, ["this.apply"]);
+second.call(ctx, "ignored", "this.second.call");
+second.apply(ctx, ["ignored", "this.second.apply"]);
+direct("this.direct");
+later("this.returned")();
+`);
+    expect(events).toEqual([
+      "this.apply",
+      "this.call",
+      "this.direct",
+      "this.returned",
+      "this.second.apply",
+      "this.second.call",
+    ]);
+  });
+
   it("ignores .call on something that is not a wrapper", async () => {
     const { events } = await scan(`
 function notAWrapper(name: string) { return name; }

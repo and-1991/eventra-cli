@@ -1,5 +1,6 @@
 import ts from "typescript";
 
+import {argumentIndexOf} from "../../shared/callSite";
 import {ReturnPropagation, ReturnSemanticInfo} from "../../shared/returnPropagation";
 
 function resolveParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identifier): ts.ParameterDeclaration | null {
@@ -35,7 +36,7 @@ export function analyzeReturnPropagation(fn: ts.FunctionLikeDeclaration): Return
       }
       propagations.push({
         parameter,
-        parameterIndex: fn.parameters.indexOf(parameter),
+        parameterIndex: argumentIndexOf(fn, parameter),
         returnExpression: expression,
       });
       return;
@@ -57,7 +58,7 @@ export function analyzeReturnPropagation(fn: ts.FunctionLikeDeclaration): Return
         }
         propagations.push({
           parameter,
-          parameterIndex: fn.parameters.indexOf(parameter),
+          parameterIndex: argumentIndexOf(fn, parameter),
           returnExpression: initializer,
         });
       }
@@ -75,7 +76,7 @@ export function analyzeReturnPropagation(fn: ts.FunctionLikeDeclaration): Return
         }
         propagations.push({
           parameter,
-          parameterIndex: fn.parameters.indexOf(parameter),
+          parameterIndex: argumentIndexOf(fn, parameter),
           returnExpression: expression,
         });
       }
