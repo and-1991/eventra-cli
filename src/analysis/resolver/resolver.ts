@@ -73,6 +73,46 @@ function resolveBoundObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker,
   return null;
 }
 
+const MAX_CONSTANT_OBJECT_HOPS = 8;
+
+// The object literal a chain such as `EVENTS.checkout` stands for when `EVENTS` is a `const` object
+// (in this file or imported), so `EVENTS.checkout.name` can be read one level deeper. Only a `const`
+// is followed: a `let` or a parameter may hold something else at runtime. Null when any step is
+// not a plain object literal the analysis can see into.
+function resolveConstantObjectNode(rawNode: ts.Expression, checker: ts.TypeChecker, exportCache: ResolvedExportCache, hops = 0): ts.ObjectLiteralExpression | null {
+  if (hops >= MAX_CONSTANT_OBJECT_HOPS) {
+    return null;
+  }
+  const node = unwrapExpression(rawNode);
+  if (ts.isObjectLiteralExpression(node)) {
+    return node;
+  }
+  if (ts.isIdentifier(node)) {
+    let symbol = getValueSymbol(node, checker);
+    if (symbol) {
+      symbol = resolveExportedSymbol(symbol, checker, exportCache) ?? symbol;
+    }
+    // a symbol from the checker always has a declarations array; the `?? []` is only the type's other case
+    /* v8 ignore next */
+    for (const declaration of symbol?.getDeclarations() ?? []) {
+      if (ts.isVariableDeclaration(declaration) && declaration.initializer && isConstDeclaration(declaration)) {
+        return resolveConstantObjectNode(declaration.initializer, checker, exportCache, hops + 1);
+      }
+    }
+    return null;
+  }
+  if (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node)) {
+    const propertyName = getPropertyName(node);
+    if (!propertyName) {
+      return null;
+    }
+    const holder = resolveConstantObjectNode(node.expression, checker, exportCache, hops + 1);
+    const value = holder ? objectPropertyValue(holder, propertyName, checker) : null;
+    return value ? resolveConstantObjectNode(value, checker, exportCache, hops + 1) : null;
+  }
+  return null;
+}
+
 // Walks up from a `this` reference to the class it's lexically inside of, so
 // `this.EVENT_NAME` can be resolved against that class's own property
 // declarations - the same idea as resolving a plain identifier against its
@@ -140,6 +180,18 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
     const bound = resolveBoundObjectNode(targetExpression, checker, context);
     if (bound && ts.isObjectLiteralExpression(bound)) {
       const initializer = objectPropertyValue(bound, propertyName, checker);
+      if (initializer) {
+        return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
+      }
+    }
+  }
+  // EVENTS.checkout.name
+  // const EVENTS = { checkout: { name: "checkout" } } (the object one level up is a nested constant)
+  {
+    const holderExpression = unwrapExpression(targetExpression);
+    if (ts.isPropertyAccessExpression(holderExpression) || ts.isPropertyAccessChain(holderExpression) || ts.isElementAccessExpression(holderExpression)) {
+      const holder = resolveConstantObjectNode(holderExpression, checker, exportCache);
+      const initializer = holder ? objectPropertyValue(holder, propertyName, checker) : null;
       if (initializer) {
         return resolveNodeValue(initializer, checker, context, visited, evaluationCache, resolvedCallCache, returnPropagationCache, exportCache);
       }

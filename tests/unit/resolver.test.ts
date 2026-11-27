@@ -820,6 +820,80 @@ describe("resolveNodeValue - property access", () => {
   });
 });
 
+describe("resolveNodeValue - nested const objects", () => {
+  const first = (files: Record<string, string>, file = "a.ts") => {
+    const project = buildProject(files);
+    try {
+      return resolve(project, findCallArgument(project.file(file), "track("));
+    } finally {
+      project.cleanup();
+    }
+  };
+
+  it("reads a property one level inside a const object", () => {
+    expect(
+      first({ "a.ts": `const E = { SEND: { name: "nested_send", channel: "x" } } as const; track(E.SEND.name);` }),
+    ).toEqual({ values: ["nested_send"], dynamic: false });
+  });
+
+  it("reads three levels and element access in the chain", () => {
+    expect(
+      first({ "a.ts": `const E = { A: { B: { name: "deep_name" } } } as const; track(E["A"].B["name"]);` }).values,
+    ).toEqual(["deep_name"]);
+  });
+
+  it("follows a const object imported from another file", () => {
+    expect(
+      first({
+        "events.ts": `export const LogEvents = { SendFeedback: { name: "imported_nested" } } as const;`,
+        "a.ts": `import { LogEvents } from "./events"; track(LogEvents.SendFeedback.name);`,
+      }).values,
+    ).toEqual(["imported_nested"]);
+  });
+
+  it("follows a re-export and a const renamed through another const", () => {
+    expect(
+      first({
+        "events.ts": `export const Base = { A: { name: "via_reexport" } };`,
+        "index.ts": `export { Base as Events } from "./events";`,
+        "a.ts": `import { Events } from "./index"; const Local = Events; track(Local.A.name);`,
+      }).values,
+    ).toEqual(["via_reexport"]);
+  });
+
+  it("follows a nested object that is a const of its own", () => {
+    expect(
+      first({ "a.ts": `const Inner = { name: "inner_const" }; const E = { A: Inner }; track(E.A.name);` }).values,
+    ).toEqual(["inner_const"]);
+  });
+
+  it("stays unresolved for a let, a missing key, a computed key and a value that is not an object", () => {
+    const dyn = { values: [], dynamic: true };
+    expect(first({ "a.ts": `let E = { A: { name: "x" } }; track(E.A.name);` })).toEqual(dyn);
+    expect(first({ "a.ts": `const E = { A: { name: "x" } }; track(E.A.other);` })).toEqual(dyn);
+    expect(first({ "a.ts": `const k = "name"; const E = { A: { name: "x" } }; track(E.A[k]);` })).toEqual(dyn);
+    expect(first({ "a.ts": `declare function make(): { name: string }; const E = { A: make() }; track(E.A.name);` })).toEqual(dyn);
+    expect(first({ "a.ts": `declare const p: { A: { name: string } }; track(p.A.name);` })).toEqual(dyn);
+  });
+
+  it("does not look through a spread of an unknown object", () => {
+    expect(
+      first({ "a.ts": `declare const u: object; const E = { A: { ...u, name: "x" } }; track(E.A.name);` }).values,
+    ).toEqual(["x"]);
+    expect(
+      first({ "a.ts": `declare const u: { name: string }; const E = { A: { name: "x" , ...u } }; track(E.A.name);` }),
+    ).toEqual({ values: [], dynamic: true });
+  });
+
+  it("gives up on constants that are each other's initializer", () => {
+    expect(first({ "a.ts": `const A: any = B; const B: any = A; track(A.x.name);` })).toEqual({ values: [], dynamic: true });
+  });
+
+  it("gives up on a chain of constants that refers back to itself", () => {
+    expect(first({ "a.ts": `const A: any = { x: B }; const B: any = { x: A }; track(A.x.x.name);` })).toEqual({ values: [], dynamic: true });
+  });
+});
+
 describe("resolveNodeValue - this-expression property access", () => {
   it("resolves this.FIELD to a class property's literal initializer", () => {
     const project = buildProject({
