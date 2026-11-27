@@ -8,7 +8,7 @@
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm version" src="https://img.shields.io/npm/v/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://www.npmjs.com/package/@eventra_dev/eventra-cli"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@eventra_dev/eventra-cli.svg?style=flat-square&color=blue"></a>
   <a href="https://github.com/and-1991/eventra-cli/actions/workflows/test.yml"><img alt="tests" src="https://img.shields.io/github/actions/workflow/status/and-1991/eventra-cli/test.yml?branch=main&label=tests&style=flat-square&logo=vitest&logoColor=white"></a>
-  <img alt="unit tests" src="https://img.shields.io/badge/unit-1470%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
+  <img alt="unit tests" src="https://img.shields.io/badge/unit-1490%20passing-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="e2e fixtures" src="https://img.shields.io/badge/e2e-14%20fixtures-brightgreen?style=flat-square">
   <img alt="coverage" src="https://img.shields.io/badge/coverage-100%25%20(unit)-brightgreen?style=flat-square&logo=vitest&logoColor=white">
   <img alt="node" src="https://img.shields.io/node/v/@eventra_dev/eventra-cli?style=flat-square&color=darkgreen&logo=node.js&logoColor=white">
@@ -93,7 +93,7 @@ function trackFeature(name: string) {
 trackFeature("purchase");
 ```
 
-The event name can also come from a property on the wrapper's parameter — plain access, optional chaining, element access, or destructuring (including aliased and nested):
+The event name can also come from a property on the wrapper's parameter - plain access, optional chaining, element access, or destructuring (including aliased and nested, and a rest tuple, `function track(...[event, props])`):
 
 ```ts
 function trackWrapper(payload: { event: string }) {
@@ -568,7 +568,7 @@ Scan time and memory grow with the project: a repository of several thousand fil
 
 ## Test Coverage
 
-Two test layers, **1470 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
+Two test layers, **1490 unit tests + 14 e2e fixtures + 3 `check` exit-code scenarios + 1 `watch` scenario**.
 
 **100% statement/branch/function/line coverage** (v8 provider, `pnpm test:coverage`), enforced via a `coverage.thresholds` block in `vitest.config.ts` so a regression fails the build instead of silently slipping under 100%. This measures the vitest unit layer only; the e2e/`check`/`watch` fixtures run against the compiled `dist/` binary via `tsx tests/run.ts` and aren't coverage-instrumented. A handful of genuinely unreachable defensive branches (TS-internal invariants — e.g. an aliased import symbol is always fully resolved before its own declarations are ever inspected — that don't hold a second outcome in practice) are marked with `/* v8 ignore */`, with an inline comment explaining why, rather than tested.
 
@@ -600,6 +600,7 @@ Two test layers, **1470 unit tests + 14 e2e fixtures + 3 `check` exit-code scena
 | `dynamic event reporter` | Dynamic vs. static call classification, end-to-end `registerDynamicEventReporter` invocation |
 | `load plugins` | Trusted-specifier allowlist (`^@eventra_dev\/cli-plugin-[a-z0-9]+(?:-[a-z0-9]+)*$`), accepted/rejected plugin shapes |
 | `Nuxt auto-import compatibility` | Ambient `declare const x: typeof import(...)` shape resolution - a hand-written fixture; a real `nuxt prepare` project was also verified manually, but that check is not automated |
+| `wrapper rest tuple` | `function track(...[event, props])`: the name at its place in the tuple (after other parameters, with a hole, through a local `const`, an object pattern inside the tuple, another wrapper), and what is not followed: a nested `...rest` in the tuple, an array pattern in it, a name that is not one of the tuple's |
 | `nested const objects` | `E.A.name` through a `const` object (any depth, `as const`, element access, imported, re-exported, renamed through another `const`), and what stays dynamic: `let`, a value from a call, a missing or computed key, a spread of an unknown object, constants that refer back to each other |
 | `property propagation` | Direct/optional/nested property access, destructured/aliased/nested-destructured params, element access, enum member access (same-file and cross-file), wrapper detection surviving a cast/non-null assertion, and direct object-literal payloads to `track()` staying ignored (including when cast) |
 | `send()` | Endpoint trust-on-first-use (TOFU): default-trusted, blocked-until-approved, approve-then-persists, re-block-on-change, env-var-bypasses-approval, an approval committed in `eventra.local.json` ignored |

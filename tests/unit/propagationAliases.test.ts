@@ -82,6 +82,32 @@ describe("analyzeWrapperPropagation: names that are a parameter in another form"
     expect(analyze("function wrapper({ track }) { const t = track; output(t); }")).toEqual([{ index: 0, path: ["track"], alias: true }]);
   });
 
+  // `{ a, ...rest }`: the rest holds every prop but `a`, so a read of `a` through it (or an alias of it) is not the prop
+  it("does not read a prop named beside a ...rest out of an alias of that rest", () => {
+    expect(analyze("function wrapper({ a, ...rest }) { const r = rest; output(r.a); }")).toBeUndefined();
+    expect(analyze("function wrapper({ a, ...rest }) { const r = rest; output(r.t); }")).toEqual([{ index: 0, path: ["t"], alias: true }]);
+    expect(analyze("function wrapper({ a, ...rest }) { output(rest.a); }")).toBeUndefined();
+  });
+
+  it("forgets the omitted names once the alias reads a property below the rest", () => {
+    // `a` is only omitted from the rest itself, not from `rest.m`
+    expect(analyze("function wrapper({ a, ...rest }) { const n = rest.m; output(n.a); }")).toEqual([{ index: 0, path: ["m", "a"], alias: true }]);
+    expect(analyze("function wrapper({ a, ...rest }) { const { m } = rest; output(m.a); }")).toEqual([{ index: 0, path: ["m", "a"], alias: true }]);
+  });
+
+  it("does not take a name from a spread of a ...rest that was set beside it", () => {
+    const event = [{ index: 0, propertyPath: ["event"] }];
+    expect(analyze("function wrapper({ event, ...rest }) { output({ ...rest }); }", event)).toBeUndefined();
+    expect(analyze("function wrapper({ event, ...rest }) { const r = rest; output({ ...r }); }", event)).toBeUndefined();
+    expect(analyze("function wrapper({ a, ...rest }) { output({ ...rest }); }", event)).toEqual([{ index: 0, path: ["event"], alias: true }]);
+    expect(analyze("function wrapper({ a, ...rest }) { const r = rest; output({ ...r }); }", event)).toEqual([{ index: 0, path: ["event"], alias: true }]);
+  });
+
+  it("forgets the omitted names when the spread is of a property below the rest", () => {
+    const event = [{ index: 0, propertyPath: ["event"] }];
+    expect(analyze("function wrapper({ event, ...rest }) { output({ ...rest.m }); }", event)).toEqual([{ index: 0, path: ["m", "event"], alias: true }]);
+  });
+
   it("follows aliases four deep and no further", () => {
     expect(analyze("function wrapper(p) { const a = p; const b = a; const c = b; const d = c; output(d); }")).toEqual([{ index: 0, path: [], alias: true }]);
     expect(analyze("function wrapper(p) { const a = p; const b = a; const c = b; const d = c; const e = d; output(e); }")).toBeUndefined();

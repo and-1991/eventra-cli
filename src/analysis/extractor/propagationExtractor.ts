@@ -117,10 +117,14 @@ function extractPropagation(propagation: WrapperPropagation, call: WrapperCallSi
     // returns nothing. Narrow to the leaf value ourselves via propertyPath,
     // then bind it to the destructured binding's own symbol (targetNode is
     // that binding's reference, e.g. `event` in `sdk.track(event)`).
-    if (propagation.propertyPath.length === 0) {
+    //
+    // A rest tuple (`function f(...[event, props])`) is the same, except that a name in it is the argument
+    // itself, so an empty path is the whole argument; a path inside an object pattern still needs a path.
+    const wholeArgument = propagation.propertyPath.length === 0 && ts.isArrayBindingPattern(propagation.sourceParameter.name);
+    if (propagation.propertyPath.length === 0 && !wholeArgument) {
       return;
     }
-    const resolvedPath = resolveObjectPath(argument, propagation.propertyPath, checker);
+    const resolvedPath = wholeArgument ? argument : resolveObjectPath(argument, propagation.propertyPath, checker);
     if (!resolvedPath) {
       return;
     }

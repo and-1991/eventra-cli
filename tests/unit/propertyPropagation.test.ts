@@ -327,3 +327,128 @@ describe("direct object-literal payloads to track() stay ignored", () => {
     expect(events).not.toContain("should_be_ignored_cast_object");
   });
 });
+
+// `function track(...[event, props]: [string, object?])`: the pattern's names are the arguments themselves,
+// the first one at the parameter's own position. This used to be missed without a word (not an event, not
+// a dynamic name), the worst way for a scan to be wrong.
+describe("wrapper rest tuple parameter", () => {
+  const sdk = `
+    import { Eventra } from "@eventra_dev/eventra-sdk";
+    const sdk = new Eventra({ apiKey: "k" });
+  `;
+
+  it("resolves the first name of a rest tuple", async () => {
+    const { events, wrappers } = await run({
+      "tracker.ts": `${sdk} export function trackRest(...[event, properties]: [string, object?]) { sdk.track(event); }`,
+      "app.ts": `import { trackRest } from "./tracker"; trackRest("rest_first", { a: 1 });`,
+    });
+    expect(wrappers).toContain("trackRest");
+    expect(events).toContain("rest_first");
+  });
+
+  it("takes the name from its own place in the tuple, not the first argument", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackSecond(...[user, event]: [string, string]) { sdk.track(event); }`,
+      "app.ts": `import { trackSecond } from "./tracker"; trackSecond("user_value_not_event", "rest_second");`,
+    });
+    expect(events).toContain("rest_second");
+    expect(events).not.toContain("user_value_not_event");
+  });
+
+  it("counts a hole in the pattern as an argument", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackHole(...[, event]: [string, string]) { sdk.track(event); }`,
+      "app.ts": `import { trackHole } from "./tracker"; trackHole("skipped", "rest_after_hole");`,
+    });
+    expect(events).toContain("rest_after_hole");
+    expect(events).not.toContain("skipped");
+  });
+
+  it("adds the position of the rest parameter to the position in the tuple", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackAfter(prefix: string, ...[event]: [string]) { sdk.track(event); }`,
+      "app.ts": `import { trackAfter } from "./tracker"; trackAfter("not_the_event", "rest_after_param");`,
+    });
+    expect(events).toContain("rest_after_param");
+    expect(events).not.toContain("not_the_event");
+  });
+
+  it("follows a local const that renames the tuple name", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackAlias(...[event]: [string]) { const name = event; sdk.track(name); }`,
+      "app.ts": `import { trackAlias } from "./tracker"; trackAlias("rest_alias");`,
+    });
+    expect(events).toContain("rest_alias");
+  });
+
+  it("keeps the tuple position through a local const that renames the name", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackAliasSecond(...[user, event]: [string, string]) { const name = event; sdk.track(name); }`,
+      "app.ts": `import { trackAliasSecond } from "./tracker"; trackAliasSecond("user_not_event", "rest_alias_second");`,
+    });
+    expect(events).toContain("rest_alias_second");
+    expect(events).not.toContain("user_not_event");
+  });
+
+  it("does not register a wrapper for a name inside an array pattern in the tuple", async () => {
+    const { events, wrappers } = await run({
+      "tracker.ts": `${sdk} export function trackNestedArray(...[[event]]: [[string]]) { sdk.track(event); }`,
+      "app.ts": `import { trackNestedArray } from "./tracker"; trackNestedArray(["nested_array_value"]);`,
+    });
+    expect(wrappers).not.toContain("trackNestedArray");
+    expect(events).not.toContain("nested_array_value");
+  });
+
+  it("reads a prop of an object inside the tuple", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackObject(...[{ event }, extra]: [{ event: string }, object?]) { sdk.track(event); }`,
+      "app.ts": `import { trackObject } from "./tracker"; trackObject({ note: "not_the_event", event: "rest_object" });`,
+    });
+    expect(events).toContain("rest_object");
+    expect(events).not.toContain("not_the_event");
+  });
+
+  it("is followed through another wrapper", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackInner(...[event]: [string]) { sdk.track(event); }`,
+      "outer.ts": `import { trackInner } from "./tracker"; export function trackOuter(name: string) { trackInner(name); }`,
+      "app.ts": `import { trackOuter } from "./outer"; trackOuter("rest_chain");`,
+    });
+    expect(events).toContain("rest_chain");
+  });
+
+  it("finds nothing when the call has fewer arguments than the name's place", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackShort(...[user, event]: [string, string]) { sdk.track(event); }`,
+      "app.ts": `import { trackShort } from "./tracker"; trackShort("only_user");`,
+    });
+    expect(events).not.toContain("only_user");
+  });
+
+  it("skips patterns inside the tuple that do not hold the name", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackSkip(...[{ other }, [first], event]: [{ other: string }, string[], string]) { sdk.track(event); }`,
+      "app.ts": `import { trackSkip } from "./tracker"; trackSkip({ other: "o" }, ["f"], "rest_third");`,
+    });
+    expect(events).toContain("rest_third");
+    expect(events).not.toContain("o");
+  });
+
+  it("ignores a name that is not one of the tuple's", async () => {
+    const { events, wrappers } = await run({
+      "tracker.ts": `${sdk} const fixed = "fixed_name"; export function trackOther(...[event]: [string]) { sdk.track(fixed); }`,
+      "app.ts": `import { trackOther } from "./tracker"; trackOther("never_the_name");`,
+    });
+    expect(wrappers).not.toContain("trackOther");
+    expect(events).not.toContain("never_the_name");
+  });
+
+  it("does not follow a rest inside the tuple", async () => {
+    const { events } = await run({
+      "tracker.ts": `${sdk} export function trackNestedRest(...[first, ...others]: [string, ...string[]]) { sdk.track(others[0]); }`,
+      "app.ts": `import { trackNestedRest } from "./tracker"; trackNestedRest("first_value", "other_value");`,
+    });
+    expect(events).not.toContain("first_value");
+    expect(events).not.toContain("other_value");
+  });
+});

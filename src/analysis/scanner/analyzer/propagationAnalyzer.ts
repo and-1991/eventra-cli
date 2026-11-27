@@ -13,6 +13,9 @@ interface ResolvedParameterBinding {
   readonly omitted?: readonly string[];
   // reached through a local `const` (`const { track } = props`) instead of the parameter itself
   readonly viaAlias?: boolean;
+  // `...[event, props]`: the parameter is a rest tuple, and this name is its element at this position,
+  // so the argument it reads is that many places after the parameter's own
+  readonly argumentOffset?: number;
 }
 
 function isPropertyAccessLike(node: ts.Expression): node is ts.PropertyAccessExpression | ts.PropertyAccessChain | ts.ElementAccessExpression {
@@ -86,6 +89,36 @@ function resolveObjectBinding(parameter: ts.ParameterDeclaration, pattern: ts.Ob
   return null;
 }
 
+/**
+ * `function track(...[event, props]: [string, object?])`: each name in the tuple pattern is one of the arguments,
+ * the first at the parameter's own position. A hole (`...[, props]`) still takes a place. A nested `...rest`
+ * inside the tuple is not followed.
+ */
+function resolveRestTuple(parameter: ts.ParameterDeclaration, pattern: ts.ArrayBindingPattern, identifier: ts.Identifier): ResolvedParameterBinding | null {
+  for (const [offset, element] of pattern.elements.entries()) {
+    if (ts.isOmittedExpression(element) || element.dotDotDotToken) {
+      continue;
+    }
+    if (ts.isIdentifier(element.name)) {
+      if (element.name.text === identifier.text) {
+        return {parameter, propertyPath: [], argumentOffset: offset};
+      }
+      continue;
+    }
+    // `...[{ event }, props]`: a prop of the object at this position
+    if (ts.isObjectBindingPattern(element.name)) {
+      const nested = resolveObjectBinding(parameter, element.name, identifier, []);
+      if (nested) {
+        return {...nested, argumentOffset: offset};
+      }
+    }
+  }
+  return null;
+}
+
+// Stryker disable next-line ConditionalExpression: equivalent for `false`, an offset of undefined is read as 0 (`?? 0`) exactly as no offset is
+const withOffset = (base: ResolvedParameterBinding): {argumentOffset?: number} => (base.argumentOffset === undefined ? {} : {argumentOffset: base.argumentOffset});
+
 /** What is read off a `...rest` can only be a prop that the pattern did not name. */
 const readable = (binding: ResolvedParameterBinding, tail: readonly string[]): boolean =>
   !binding.omitted || tail.length === 0 || !binding.omitted.includes(tail[0]);
@@ -107,6 +140,15 @@ function resolveDirectParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.I
     // function x({ event })
     if (ts.isObjectBindingPattern(parameter.name,)) {
       const resolved = resolveObjectBinding(parameter, parameter.name, identifier, []);
+      if (resolved) {
+        return resolved;
+      }
+    }
+    // rest tuple
+    // function x(...[event, props])
+    if (parameter.dotDotDotToken && ts.isArrayBindingPattern(parameter.name)) {
+      const resolved = resolveRestTuple(parameter, parameter.name, identifier);
+      // Stryker disable next-line ConditionalExpression: equivalent, a rest parameter is the last one, so returning null here is what the loop would end with
       if (resolved) {
         return resolved;
       }
@@ -186,7 +228,7 @@ function resolveLocalAlias(fn: ts.FunctionLikeDeclaration, identifier: ts.Identi
   if (!readable(base, tail)) {
     return null;
   }
-  return {parameter: base.parameter, propertyPath: [...base.propertyPath, ...tail], viaAlias: true, ...(tail.length === 0 && base.omitted ? {omitted: base.omitted} : {})};
+  return {parameter: base.parameter, propertyPath: [...base.propertyPath, ...tail], viaAlias: true, ...withOffset(base), ...(tail.length === 0 && base.omitted ? {omitted: base.omitted} : {})};
 }
 
 function resolveParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identifier, checker: ts.TypeChecker): ResolvedParameterBinding | null {
@@ -194,7 +236,7 @@ function resolveParameter(fn: ts.FunctionLikeDeclaration, identifier: ts.Identif
 }
 
 // a class component's props stand in for a parameter that is not in the list
-const parameterIndex = (fn: ts.FunctionLikeDeclaration, parameter: ts.ParameterDeclaration): number => Math.max(0, argumentIndexOf(fn, parameter));
+const parameterIndex = (fn: ts.FunctionLikeDeclaration, binding: ResolvedParameterBinding): number => Math.max(0, argumentIndexOf(fn, binding.parameter)) + (binding.argumentOffset ?? 0);
 
 /** `this.props.name` in a class component: the props parameter and the path read off it. */
 function classPropRead(fn: ts.FunctionLikeDeclaration, expression: ts.Expression): ResolvedParameterBinding | null {
@@ -219,7 +261,8 @@ function spreadSource(fn: ts.FunctionLikeDeclaration, expression: ts.Expression,
     root = unwrapExpression(root.expression);
   }
   const base = path && ts.isIdentifier(root) ? resolveParameter(fn, root, checker) : null;
-  return base && readable(base, path!) ? {parameter: base.parameter, propertyPath: [...base.propertyPath, ...path!], viaAlias: true, ...(path!.length === 0 && base.omitted ? {omitted: base.omitted} : {})} : null;
+  // Stryker disable next-line BooleanLiteral: equivalent, the caller marks every spread result as an alias itself and never reads this flag
+  return base && readable(base, path!) ? {parameter: base.parameter, propertyPath: [...base.propertyPath, ...path!], viaAlias: true, ...withOffset(base), ...(path!.length === 0 && base.omitted ? {omitted: base.omitted} : {})} : null;
 }
 
 function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly TrackSink[], checker: ts.TypeChecker,): readonly WrapperPropagation[] {
@@ -267,7 +310,7 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
 
         result.push({
           sourceParameter: parameter.parameter,
-          sourceParameterIndex: parameterIndex(fn, parameter.parameter),
+          sourceParameterIndex: parameterIndex(fn, parameter),
           propertyPath: [
             ...parameter.propertyPath,
             ...propertyPath,
@@ -293,7 +336,7 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
             if (source) {
               result.push({
                 sourceParameter: source.parameter,
-                sourceParameterIndex: parameterIndex(fn, source.parameter),
+                sourceParameterIndex: parameterIndex(fn, source),
                 propertyPath: [...source.propertyPath, ...tracked.propertyPath],
                 targetNode: property.expression,
                 viaAlias: true,
@@ -337,7 +380,7 @@ function collectPropagations(fn: ts.FunctionLikeDeclaration, sinks: readonly Tra
           }
           result.push({
             sourceParameter: parameter.parameter,
-            sourceParameterIndex: parameterIndex(fn, parameter.parameter),
+            sourceParameterIndex: parameterIndex(fn, parameter),
             propertyPath: [...parameter.propertyPath, ...readPath],
             targetNode: initializer,
             ...(parameter.viaAlias ? {viaAlias: true} : {}),

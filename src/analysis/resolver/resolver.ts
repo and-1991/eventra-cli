@@ -93,7 +93,7 @@ function resolveConstantObjectNode(rawNode: ts.Expression, checker: ts.TypeCheck
       symbol = resolveExportedSymbol(symbol, checker, exportCache) ?? symbol;
     }
     // a symbol from the checker always has a declarations array; the `?? []` is only the type's other case
-    /* v8 ignore next */
+    /* v8 ignore next */ // Stryker disable next-line ArrayDeclaration: unreachable, see the v8 ignore
     for (const declaration of symbol?.getDeclarations() ?? []) {
       if (ts.isVariableDeclaration(declaration) && declaration.initializer && isConstDeclaration(declaration)) {
         return resolveConstantObjectNode(declaration.initializer, checker, exportCache, hops + 1);
@@ -103,6 +103,7 @@ function resolveConstantObjectNode(rawNode: ts.Expression, checker: ts.TypeCheck
   }
   if (ts.isPropertyAccessExpression(node) || ts.isPropertyAccessChain(node) || ts.isElementAccessExpression(node)) {
     const propertyName = getPropertyName(node);
+    // Stryker disable next-line ConditionalExpression,BlockStatement: equivalent, no object has a property named null, so the lookup below ends in null too; the guard is for the type
     if (!propertyName) {
       return null;
     }
@@ -189,6 +190,7 @@ function resolvePropertyAccess(node: ts.PropertyAccessExpression | ts.PropertyAc
   // const EVENTS = { checkout: { name: "checkout" } } (the object one level up is a nested constant)
   {
     const holderExpression = unwrapExpression(targetExpression);
+    // Stryker disable next-line ConditionalExpression: equivalent, for a plain identifier the branches below read the same property of the same constant
     if (ts.isPropertyAccessExpression(holderExpression) || ts.isPropertyAccessChain(holderExpression) || ts.isElementAccessExpression(holderExpression)) {
       const holder = resolveConstantObjectNode(holderExpression, checker, exportCache);
       const initializer = holder ? objectPropertyValue(holder, propertyName, checker) : null;

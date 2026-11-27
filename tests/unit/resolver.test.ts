@@ -885,6 +885,36 @@ describe("resolveNodeValue - nested const objects", () => {
     ).toEqual({ values: [], dynamic: true });
   });
 
+  it("follows a chain of renamed constants up to the step limit and no further", () => {
+    const chain = (renames: number) => {
+      const lines = [`const E0 = { A: { name: "deep_alias" } };`];
+      for (let i = 1; i <= renames; i++) lines.push(`const E${i} = E${i - 1};`);
+      return first({ "a.ts": `${lines.join("\n")}\ntrack(E${renames}.A.name);` });
+    };
+    expect(chain(5).values).toEqual(["deep_alias"]);
+    expect(chain(6)).toEqual({ values: [], dynamic: true });
+  });
+
+  it("follows a chain of property reads up to the step limit and no further", () => {
+    const nested = (keys: number) => {
+      const path = Array.from({ length: keys }, (_, i) => `k${i}`);
+      const object = [...path].reverse().reduce((inner, key) => `{ ${key}: ${inner} }`, `{ name: "deep_keys" }`);
+      return first({ "a.ts": `const E = ${object};\ntrack(E.${path.join(".")}.name);` });
+    };
+    expect(nested(6).values).toEqual(["deep_keys"]);
+    expect(nested(7)).toEqual({ values: [], dynamic: true });
+  });
+
+  it("counts the steps of a property value that is itself a renamed constant", () => {
+    const viaValue = (renames: number) => {
+      const lines = [`const I0 = { name: "deep_value" };`];
+      for (let i = 1; i <= renames; i++) lines.push(`const I${i} = I${i - 1};`);
+      return first({ "a.ts": `${lines.join("\n")}\nconst E = { A: I${renames} };\ntrack(E.A.name);` });
+    };
+    expect(viaValue(5).values).toEqual(["deep_value"]);
+    expect(viaValue(6)).toEqual({ values: [], dynamic: true });
+  });
+
   it("gives up on constants that are each other's initializer", () => {
     expect(first({ "a.ts": `const A: any = B; const B: any = A; track(A.x.name);` })).toEqual({ values: [], dynamic: true });
   });
